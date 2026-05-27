@@ -1,0 +1,58 @@
+workflows:
+  telegram-user-client-simulator:
+    name: Telegram User Client Simulator
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: "TelegramUserClient.xcodeproj"
+        XCODE_SCHEME: "TelegramUserClient"
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+
+      - name: Validate TDLib artifacts
+        script: |
+          if [ ! -f "$CM_BUILD_DIR/ios-telegram-user-client/tdlib/lib/libtdjson.a" ]; then
+            echo "Missing tdlib/lib/libtdjson.a"
+            exit 1
+          fi
+          if [ ! -d "$CM_BUILD_DIR/ios-telegram-user-client/tdlib/include" ]; then
+            echo "Missing tdlib/include"
+            exit 1
+          fi
+
+      - name: Generate Xcode project
+        script: |
+          cd "$CM_BUILD_DIR/ios-telegram-user-client"
+          xcodegen generate --spec project.yml
+
+      - name: Build unsigned simulator app
+        script: |
+          cd "$CM_BUILD_DIR/ios-telegram-user-client"
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Pack simulator app
+        script: |
+          mkdir -p "$CM_BUILD_DIR/build"
+          APP_PATH=$(find "$HOME/Library/Developer/Xcode/DerivedData" -type d -path "*/Build/Products/Debug-iphonesimulator/*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Simulator .app not found"
+            exit 1
+          fi
+          cd "$(dirname "$APP_PATH")"
+          zip -r "$CM_BUILD_DIR/build/TelegramUserClient-simulator.zip" "$(basename "$APP_PATH")"
+    artifacts:
+      - build/*.zip
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
