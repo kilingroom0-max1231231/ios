@@ -5,6 +5,8 @@ enum TgAttachmentKind: String, Equatable {
     case video
     case voice
     case videoNote
+    case animation
+    case sticker
     case document
 }
 
@@ -21,6 +23,71 @@ struct TgAttachment: Identifiable, Equatable {
 struct TgChat: Identifiable, Equatable {
     let id: Int64
     let title: String
+    var lastMessagePreview: String?
+    var lastMessageId: Int64?
+    var lastMessageDate: Date?
+    var lastMessageOutgoing: Bool
+    var lastMessageRead: Bool
+    var avatarPath: String?
+    var statusText: String?
+    var isOnline: Bool?
+    var canSendMessages: Bool?
+    var sendRestrictionText: String?
+    var unreadCount: Int
+    var kind: ChatKind
+    var isPinned: Bool
+    var pinOrder: Int64?
+    var isMuted: Bool
+    var muteUntil: Date?
+    var isMarkedUnread: Bool
+    var draftText: String?
+    var typingText: String?
+
+    init(
+        id: Int64,
+        title: String,
+        lastMessagePreview: String? = nil,
+        lastMessageId: Int64? = nil,
+        lastMessageDate: Date? = nil,
+        lastMessageOutgoing: Bool = false,
+        lastMessageRead: Bool = false,
+        avatarPath: String? = nil,
+        statusText: String? = nil,
+        isOnline: Bool? = nil,
+        canSendMessages: Bool? = nil,
+        sendRestrictionText: String? = nil,
+        unreadCount: Int = 0,
+        kind: ChatKind = .unknown,
+        isPinned: Bool = false,
+        pinOrder: Int64? = nil,
+        isMuted: Bool = false,
+        muteUntil: Date? = nil,
+        isMarkedUnread: Bool = false,
+        draftText: String? = nil,
+        typingText: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.lastMessagePreview = lastMessagePreview
+        self.lastMessageId = lastMessageId
+        self.lastMessageDate = lastMessageDate
+        self.lastMessageOutgoing = lastMessageOutgoing
+        self.lastMessageRead = lastMessageRead
+        self.avatarPath = avatarPath
+        self.statusText = statusText
+        self.isOnline = isOnline
+        self.canSendMessages = canSendMessages
+        self.sendRestrictionText = sendRestrictionText
+        self.unreadCount = unreadCount
+        self.kind = kind
+        self.isPinned = isPinned
+        self.pinOrder = pinOrder
+        self.isMuted = isMuted
+        self.muteUntil = muteUntil
+        self.isMarkedUnread = isMarkedUnread
+        self.draftText = draftText
+        self.typingText = typingText
+    }
 }
 
 struct TgMessage: Identifiable, Equatable {
@@ -29,8 +96,75 @@ struct TgMessage: Identifiable, Equatable {
     let text: String
     let outgoing: Bool
     let createdAt: Date
+    let isEdited: Bool
+    let replyToMessageId: Int64?
     let isDeleted: Bool
     let attachments: [TgAttachment]
+}
+
+enum ChatKind: String, Equatable {
+    case `private`
+    case savedMessages
+    case basicGroup
+    case supergroup
+    case channel
+    case unknown
+}
+
+enum ChatMuteDuration: Equatable {
+    case off
+    case oneHour
+    case eightHours
+    case forever
+
+    var seconds: Int {
+        switch self {
+        case .off: return 0
+        case .oneHour: return 60 * 60
+        case .eightHours: return 8 * 60 * 60
+        case .forever: return 367 * 24 * 60 * 60
+        }
+    }
+}
+
+struct ChatProfile: Equatable {
+    let chatId: Int64
+    let title: String
+    let kind: ChatKind
+    let avatarPath: String?
+    let username: String?
+    let description: String?
+    let membersCount: Int?
+    let statusText: String?
+}
+
+struct ChatMember: Identifiable, Equatable {
+    let id: Int64
+    let title: String
+    let avatarPath: String?
+    let statusText: String?
+    let isOnline: Bool?
+    let role: String?
+}
+
+enum ChatMediaCategory: String, CaseIterable, Identifiable {
+    case photos
+    case videos
+    case voices
+    case files
+    case links
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .photos: return "Фото"
+        case .videos: return "Видео"
+        case .voices: return "Voice"
+        case .files: return "Files"
+        case .links: return "Links"
+        }
+    }
 }
 
 enum AuthState: Equatable {
@@ -43,6 +177,9 @@ enum AuthState: Equatable {
 enum TelegramEvent {
     case authChanged(AuthState)
     case newMessage(TgMessage)
+    case messageReplaced(chatId: Int64, oldMessageId: Int64, newMessage: TgMessage)
     case messagesDeleted(chatId: Int64, messageIds: [Int64])
     case chatsChanged
+    case chatChanged(Int64)
+    case chatTypingChanged(chatId: Int64, text: String?)
 }

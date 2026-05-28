@@ -24,9 +24,28 @@ targets:
         SUPPORTS_MACCATALYST: NO
         HEADER_SEARCH_PATHS:
           - "$(SRCROOT)/tdlib/include"
-        LIBRARY_SEARCH_PATHS:
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(SRCROOT)/tdlib/lib-iphoneos"
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(SRCROOT)/tdlib/lib"
-        OTHER_LDFLAGS:
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "-ltdjson_static"
+          - "-ltdjson_private"
+          - "-ltdclient"
+          - "-ltdcore"
+          - "-ltdapi"
+          - "-ltdactor"
+          - "-ltdutils"
+          - "-ltddb"
+          - "-ltdsqlite"
+          - "-ltdnet"
+          - "-ltdmtproto"
+          - "-ltde2e"
+          - "-lssl"
+          - "-lcrypto"
+          - "-lc++"
+          - "-lz"
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
           - "-ltdjson"
           - "-ltdjson_private"
           - "-ltdclient"
@@ -41,3 +60,5 @@ targets:
           - "-ltde2e"
           - "-lssl"
           - "-lcrypto"
+          - "-lc++"
+          - "-lz"

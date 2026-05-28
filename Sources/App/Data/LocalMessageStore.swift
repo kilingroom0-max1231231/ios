@@ -88,6 +88,8 @@ final class LocalMessageStore {
                         text: readText(stmt, 2),
                         outgoing: sqlite3_column_int(stmt, 3) == 1,
                         createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
+                        isEdited: false,
+                        replyToMessageId: nil,
                         isDeleted: sqlite3_column_int(stmt, 5) == 1,
                         attachments: try readAttachments(messageId: sqlite3_column_int64(stmt, 0))
                     )
@@ -114,6 +116,52 @@ final class LocalMessageStore {
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 7, userInfo: nil)
                 }
+            }
+        }
+    }
+
+    func deleteMessage(chatId: Int64, messageId: Int64) throws {
+        try queue.sync {
+            let sql = "DELETE FROM messages WHERE chat_id = ? AND message_id = ?;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw NSError(domain: "LocalMessageStore", code: 15, userInfo: nil)
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, chatId)
+            sqlite3_bind_int64(stmt, 2, messageId)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw NSError(domain: "LocalMessageStore", code: 16, userInfo: nil)
+            }
+        }
+    }
+
+    func cleanupTemporaryOutgoingDuplicates(chatId: Int64) throws {
+        try queue.sync {
+            // Removes old temporary outgoing messages replaced by server-confirmed copies.
+            let sql = """
+            DELETE FROM messages
+            WHERE chat_id = ?
+              AND message_id < 0
+              AND outgoing = 1
+              AND EXISTS (
+                SELECT 1
+                FROM messages AS confirmed
+                WHERE confirmed.chat_id = messages.chat_id
+                  AND confirmed.outgoing = messages.outgoing
+                  AND confirmed.text = messages.text
+                  AND confirmed.message_id > 0
+                  AND ABS(confirmed.created_at - messages.created_at) <= 10
+              );
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw NSError(domain: "LocalMessageStore", code: 17, userInfo: nil)
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, chatId)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw NSError(domain: "LocalMessageStore", code: 18, userInfo: nil)
             }
         }
     }
@@ -155,6 +203,8 @@ final class LocalMessageStore {
     }
 
     private func replaceAttachments(for messageId: Int64, attachments: [TgAttachment]) throws {
+        let existingLocalPaths = try readAttachmentLocalPaths(messageId: messageId)
+
         var deleteStmt: OpaquePointer?
         let deleteSQL = "DELETE FROM attachments WHERE message_id = ?;"
         guard sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStmt, nil) == SQLITE_OK else {
@@ -199,7 +249,8 @@ final class LocalMessageStore {
             } else {
                 sqlite3_bind_null(insertStmt, 6)
             }
-            if let localPath = attachment.localPath {
+            let localPath = attachment.localPath ?? attachment.fileId.flatMap { existingLocalPaths[$0] }
+            if let localPath {
                 sqlite3_bind_text(insertStmt, 7, (localPath as NSString).utf8String, -1, sqliteTransient)
             } else {
                 sqlite3_bind_null(insertStmt, 7)
@@ -254,6 +305,32 @@ final class LocalMessageStore {
         }
 
         return out
+    }
+
+    private func readAttachmentLocalPaths(messageId: Int64) throws -> [Int64: String] {
+        let sql = """
+        SELECT file_id, local_path
+        FROM attachments
+        WHERE message_id = ?
+          AND file_id IS NOT NULL
+          AND local_path IS NOT NULL
+          AND local_path != '';
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "LocalMessageStore", code: 19, userInfo: nil)
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_int64(stmt, 1, messageId)
+        var paths: [Int64: String] = [:]
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let fileId = sqlite3_column_int64(stmt, 0)
+            paths[fileId] = readText(stmt, 1)
+        }
+
+        return paths
     }
 
     func setAttachmentLocalPath(messageId: Int64, fileId: Int64, localPath: String) throws {
