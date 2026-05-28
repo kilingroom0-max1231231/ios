@@ -50,22 +50,11 @@ struct ChatDetailView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: chatId) {
-            await vm.beginChat(chatId)
+            vm.setChatVisible(chatId)
+            await vm.selectChat(chatId)
         }
         .onDisappear {
-            if vm.activeChatId == chatId {
-                vm.endChat()
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let banner = vm.incomingBanner, banner.chatId != chatId {
-                IncomingMessageBannerView(
-                    banner: banner,
-                    onOpen: { vm.openIncomingChat(banner.chatId) },
-                    onDismiss: { vm.incomingBanner = nil }
-                )
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+            vm.setChatVisible(nil)
         }
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
@@ -183,7 +172,8 @@ struct ChatDetailView: View {
                         MessageBubbleView(
                             message: message,
                             chatKind: selectedChat?.kind ?? .unknown,
-                            outgoingIsRead: vm.isOutgoingMessageRead(message, chatId: chatId),
+                            peerAvatarPath: selectedChat?.avatarPath,
+                            peerTitle: selectedChat?.title,
                             replyPreviewText: replyPreview,
                             onOpenAttachment: { attachment in
                                 let attachments = mediaAttachments
@@ -399,6 +389,7 @@ struct ChatDetailView: View {
                         isEdited: merged.isEdited || next.isEdited,
                         replyToMessageId: merged.replyToMessageId ?? next.replyToMessageId,
                         isDeleted: merged.isDeleted || next.isDeleted,
+                        isReadByPeer: merged.isReadByPeer || next.isReadByPeer,
                         attachments: attachments,
                         mediaAlbumId: albumId,
                         forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom,
@@ -406,8 +397,7 @@ struct ChatDetailView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
-                        isSending: merged.isSending || next.isSending
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
                     )
                 }
                 j += 1
@@ -423,6 +413,7 @@ struct ChatDetailView: View {
                     isEdited: merged.isEdited,
                     replyToMessageId: merged.replyToMessageId,
                     isDeleted: merged.isDeleted,
+                    isReadByPeer: merged.isReadByPeer,
                     attachments: attachments,
                     mediaAlbumId: albumId,
                     forwardedFrom: merged.forwardedFrom,
@@ -430,8 +421,7 @@ struct ChatDetailView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount,
-                    isSending: merged.isSending
+                    viewCount: merged.viewCount
                 )
             }
 

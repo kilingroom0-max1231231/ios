@@ -67,8 +67,16 @@ enum ChatListBackgroundStyle: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Slightly elevated surface so rows stay readable on tinted list backgrounds.
     func rowColor(_ scheme: ColorScheme) -> Color {
-        Color(.secondarySystemGroupedBackground)
+        switch self {
+        case .system:
+            return Color(.secondarySystemGroupedBackground)
+        default:
+            return scheme == .dark
+                ? Color.white.opacity(0.06)
+                : Color(.systemBackground).opacity(0.88)
+        }
     }
 }
 

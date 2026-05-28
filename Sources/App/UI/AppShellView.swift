@@ -18,28 +18,48 @@ struct AppShellView: View {
                     LoginView(vm: vm)
                 }
             case .main:
-                TabView(selection: $vm.selectedMainTab) {
-                    ChatListView(vm: vm)
-                        .tabItem {
-                            Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
-                        }
-                        .tag(0)
+                ZStack(alignment: .top) {
+                    TabView(selection: $vm.mainTabIndex) {
+                        ChatListView(vm: vm)
+                            .tag(0)
+                            .tabItem {
+                                Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
+                            }
 
-                    GlobalSearchView(vm: vm)
+                        NavigationStack {
+                            SearchView(vm: vm)
+                        }
+                        .tag(1)
                         .tabItem {
                             Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")
                         }
-                        .tag(1)
 
-                    NavigationStack {
-                        SettingsView(vm: vm)
+                        NavigationStack {
+                            SettingsView(vm: vm)
+                        }
+                        .tag(2)
+                        .tabItem {
+                            Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
+                        }
                     }
-                    .tabItem {
-                        Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
+                    .tint(appearance.accentColor)
+
+                    if let toast = vm.incomingToast {
+                        IncomingMessageToastView(
+                            toast: toast,
+                            onOpen: {
+                                Task { await vm.openIncomingToastChat() }
+                            },
+                            onDismiss: {
+                                vm.dismissIncomingToast()
+                            }
+                        )
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(10)
                     }
-                    .tag(2)
                 }
-                .tint(appearance.accentColor)
+                .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.incomingToast)
                 .onAppear {
                     ChromeAppearance.configureTabBar()
                     ChromeAppearance.configureNavigationBar()

@@ -113,6 +113,7 @@ struct ChatPeekView: View {
                         isEdited: merged.isEdited || next.isEdited,
                         replyToMessageId: merged.replyToMessageId ?? next.replyToMessageId,
                         isDeleted: merged.isDeleted || next.isDeleted,
+                        isReadByPeer: merged.isReadByPeer || next.isReadByPeer,
                         attachments: attachments,
                         mediaAlbumId: albumId,
                         forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom,
@@ -120,8 +121,7 @@ struct ChatPeekView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
-                        isSending: merged.isSending || next.isSending
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
                     )
                 }
                 nextIndex += 1
@@ -136,6 +136,7 @@ struct ChatPeekView: View {
                     isEdited: merged.isEdited,
                     replyToMessageId: merged.replyToMessageId,
                     isDeleted: merged.isDeleted,
+                    isReadByPeer: merged.isReadByPeer,
                     attachments: attachments,
                     mediaAlbumId: albumId,
                     forwardedFrom: merged.forwardedFrom,
@@ -143,8 +144,7 @@ struct ChatPeekView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount,
-                    isSending: merged.isSending
+                    viewCount: merged.viewCount
                 )
             }
             out.append(merged)

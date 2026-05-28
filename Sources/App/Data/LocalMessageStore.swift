@@ -33,10 +33,13 @@ final class LocalMessageStore {
             INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
-              text=excluded.text,
+              text=CASE
+                WHEN messages.is_deleted = 1 AND length(trim(excluded.text)) = 0 THEN messages.text
+                ELSE excluded.text
+              END,
               outgoing=excluded.outgoing,
               created_at=excluded.created_at,
-              is_deleted=excluded.is_deleted,
+              is_deleted=MAX(messages.is_deleted, excluded.is_deleted),
               media_album_id=excluded.media_album_id,
               forwarded_from=excluded.forwarded_from;
             """
@@ -46,8 +49,7 @@ final class LocalMessageStore {
             }
             defer { sqlite3_finalize(stmt) }
 
-            for incoming in messages {
-                let message = try mergedForStorage(incoming)
+            for message in messages {
                 sqlite3_reset(stmt)
                 sqlite3_bind_int64(stmt, 1, message.id)
                 sqlite3_bind_int64(stmt, 2, message.chatId)
@@ -73,72 +75,6 @@ final class LocalMessageStore {
                     try replaceAttachments(chatId: message.chatId, messageId: message.id, attachments: message.attachments)
                 }
             }
-        }
-    }
-
-    private func mergedForStorage(_ incoming: TgMessage) throws -> TgMessage {
-        guard let existing = try readMessage(chatId: incoming.chatId, messageId: incoming.id) else {
-            return incoming
-        }
-
-        let isDeleted = existing.isDeleted || incoming.isDeleted
-        guard isDeleted else { return incoming }
-
-        let text = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? existing.text
-            : incoming.text
-        let attachments = incoming.attachments.isEmpty ? existing.attachments : incoming.attachments
-
-        return TgMessage(
-            id: incoming.id,
-            chatId: incoming.chatId,
-            text: text,
-            outgoing: incoming.outgoing,
-            createdAt: incoming.createdAt,
-            isEdited: incoming.isEdited || existing.isEdited,
-            replyToMessageId: incoming.replyToMessageId ?? existing.replyToMessageId,
-            isDeleted: true,
-            attachments: attachments,
-            mediaAlbumId: incoming.mediaAlbumId ?? existing.mediaAlbumId,
-            forwardedFrom: incoming.forwardedFrom ?? existing.forwardedFrom,
-            senderUserId: incoming.senderUserId ?? existing.senderUserId,
-            senderName: incoming.senderName ?? existing.senderName,
-            senderAvatarPath: incoming.senderAvatarPath ?? existing.senderAvatarPath,
-            authorSignature: incoming.authorSignature ?? existing.authorSignature,
-            viewCount: incoming.viewCount ?? existing.viewCount,
-            isSending: incoming.isSending
-        )
-    }
-
-    func readMessage(chatId: Int64, messageId: Int64) throws -> TgMessage? {
-        try queue.sync {
-            let sql = """
-            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from
-            FROM messages
-            WHERE chat_id = ? AND message_id = ?
-            LIMIT 1;
-            """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw NSError(domain: "LocalMessageStore", code: 19, userInfo: nil)
-            }
-            defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_int64(stmt, 1, chatId)
-            sqlite3_bind_int64(stmt, 2, messageId)
-            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-            return TgMessage(
-                id: sqlite3_column_int64(stmt, 0),
-                chatId: sqlite3_column_int64(stmt, 1),
-                text: readText(stmt, 2),
-                outgoing: sqlite3_column_int(stmt, 3) == 1,
-                createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
-                isEdited: false,
-                replyToMessageId: nil,
-                isDeleted: sqlite3_column_int(stmt, 5) == 1,
-                attachments: try readAttachments(chatId: chatId, messageId: messageId),
-                mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6),
-                forwardedFrom: (sqlite3_column_type(stmt, 7) == SQLITE_NULL) ? nil : readText(stmt, 7)
-            )
         }
     }
 

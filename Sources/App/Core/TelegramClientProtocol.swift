@@ -31,12 +31,7 @@ protocol TelegramClientProtocol {
     func getMe() async throws -> TgUser
     func setUserBlocked(userId: Int64, isBlocked: Bool) async throws
     func fetchUserProfilePhotoPaths(userId: Int64, limit: Int) async throws -> [String]
-    func fetchPrivacyVisibility(for kind: UserPrivacySettingKind) async throws -> PrivacyVisibility
-    func setPrivacyVisibility(for kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws
-    func setMyName(firstName: String, lastName: String) async throws
-    func setMyUsername(_ username: String) async throws
-    func setProfilePhoto(localPath: String) async throws
     func searchChats(query: String, limit: Int) async throws -> [TgChat]
     func searchPublicChats(query: String) async throws -> [TgChat]
-    func searchMessagesGlobally(query: String, limit: Int) async throws -> [TgMessage]
+    func setName(firstName: String, lastName: String) async throws
 }

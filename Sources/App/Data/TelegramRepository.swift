@@ -21,7 +21,6 @@ final class TelegramRepository {
     var onTypingChanged: ((Int64, String?) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
     var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
-    var onChatReadOutboxChanged: ((Int64, Int64) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore) {
         self.client = client
@@ -33,19 +32,14 @@ final class TelegramRepository {
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
                 try? self.store.upsert(messages: [message])
-                try? self.store.cleanupTemporaryOutgoingDuplicates(chatId: message.chatId)
                 self.onIncomingMessage?(message)
                 self.onMessagesChanged?(message.chatId)
                 self.onChatChanged?(message.chatId)
             case .messageReplaced(let chatId, let oldMessageId, let newMessage):
                 try? self.store.deleteMessage(chatId: chatId, messageId: oldMessageId)
                 try? self.store.upsert(messages: [newMessage])
-                try? self.store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
                 self.onMessageReplaced?(chatId, oldMessageId, newMessage)
                 self.onMessagesChanged?(chatId)
-                self.onChatChanged?(chatId)
-            case .chatReadOutboxChanged(let chatId, let lastRead):
-                self.onChatReadOutboxChanged?(chatId, lastRead)
                 self.onChatChanged?(chatId)
             case .messagesDeleted(let chatId, let messageIds):
                 try? self.store.markDeleted(chatId: chatId, messageIds: messageIds)
@@ -92,7 +86,7 @@ final class TelegramRepository {
     }
 
     func loadChats() async throws -> [TgChat] {
-        try await client.fetchChats(limit: 500)
+        try await client.fetchChats(limit: 200)
     }
 
     static let initialMessagePageSize = 20
@@ -129,25 +123,36 @@ final class TelegramRepository {
         try await client.forwardMessages(fromChatId: fromChatId, toChatId: toChatId, messageIds: [messageId])
     }
 
-    func send(chatId: Int64, text: String) async throws -> [TgMessage] {
+    func send(chatId: Int64, text: String) async throws {
         try await client.sendMessage(chatId: chatId, text: text, replyToMessageId: nil)
-        return try await syncMessages(chatId: chatId)
     }
 
-    func sendReply(chatId: Int64, text: String, replyToMessageId: Int64) async throws -> [TgMessage] {
+    func sendReply(chatId: Int64, text: String, replyToMessageId: Int64) async throws {
         try await client.sendMessage(chatId: chatId, text: text, replyToMessageId: replyToMessageId)
-        return try await syncMessages(chatId: chatId)
     }
 
-    func edit(chatId: Int64, messageId: Int64, text: String) async throws -> [TgMessage] {
+    func edit(chatId: Int64, messageId: Int64, text: String) async throws {
         try await client.editMessage(chatId: chatId, messageId: messageId, text: text)
-        return try await syncMessages(chatId: chatId)
     }
 
-    func delete(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws -> [TgMessage] {
-        try store.markDeleted(chatId: chatId, messageIds: messageIds)
+    func delete(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws {
         try await client.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
-        return try store.read(chatId: chatId)
+    }
+
+    func storedMessages(chatId: Int64, limit: Int = 500) throws -> [TgMessage] {
+        try store.read(chatId: chatId, limit: limit)
+    }
+
+    func searchChats(query: String) async throws -> [TgChat] {
+        try await client.searchChats(query: query, limit: 30)
+    }
+
+    func searchPublicChats(query: String) async throws -> [TgChat] {
+        try await client.searchPublicChats(query: query)
+    }
+
+    func updateProfileName(firstName: String, lastName: String) async throws {
+        try await client.setName(firstName: firstName, lastName: lastName)
     }
 
     func downloadMedia(chatId: Int64) async throws -> [TgMessage] {
@@ -219,48 +224,6 @@ final class TelegramRepository {
 
     func setUserBlocked(userId: Int64, isBlocked: Bool) async throws {
         try await client.setUserBlocked(userId: userId, isBlocked: isBlocked)
-    }
-
-    func loadPrivacySettings() async throws -> [UserPrivacySettingValue] {
-        var values: [UserPrivacySettingValue] = []
-        for kind in UserPrivacySettingKind.allCases {
-            let visibility: PrivacyVisibility
-            do {
-                visibility = try await client.fetchPrivacyVisibility(for: kind)
-            } catch {
-                visibility = .contacts
-            }
-            values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
-        }
-        return values
-    }
-
-    func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
-        try await client.setPrivacyVisibility(for: kind, visibility: visibility)
-    }
-
-    func updateMyProfile(firstName: String, lastName: String, username: String) async throws -> TgUser {
-        try await client.setMyName(firstName: firstName, lastName: lastName)
-        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "@", with: "")
-        try await client.setMyUsername(normalizedUsername)
-        return try await client.getMe()
-    }
-
-    func setMyProfilePhoto(path: String) async throws {
-        try await client.setProfilePhoto(localPath: path)
-    }
-
-    func searchMyChats(query: String) async throws -> [TgChat] {
-        try await client.searchChats(query: query, limit: 30)
-    }
-
-    func searchPublicChats(query: String) async throws -> [TgChat] {
-        try await client.searchPublicChats(query: query)
-    }
-
-    func searchMessagesGlobally(query: String) async throws -> [TgMessage] {
-        try await client.searchMessagesGlobally(query: query, limit: 40)
     }
 }
 

@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import Security
-import UIKit
 
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -21,7 +20,9 @@ final class AppViewModel: ObservableObject {
 
     @Published var chats: [TgChat] = []
     @Published var selectedChatId: Int64?
+    @Published var visibleChatId: Int64?
     @Published var messages: [TgMessage] = []
+    @Published var incomingToast: IncomingMessageToast?
     @Published var me: TgUser?
     @Published var composeText = ""
     @Published var editingMessageId: Int64?
@@ -37,26 +38,12 @@ final class AppViewModel: ObservableObject {
     @Published var isBusy = false
     @Published var bootstrapError: String?
     @Published var navigationTargetChatId: Int64?
+    @Published var mainTabIndex = 0
     @Published var peekChatId: Int64?
     @Published var peekMessages: [TgMessage] = []
     @Published var isPeekLoading = false
-    @Published var activeChatId: Int64?
-    @Published var incomingBanner: IncomingMessageBanner?
-    @Published var privacySettings: [UserPrivacySettingValue] = []
-    @Published var isPrivacyLoading = false
-    @Published var isChatsBootstrapLoading = false
-    @Published var globalSearchQuery = ""
-    @Published var globalSearchScope: GlobalSearchScope = .myChats
-    @Published var globalSearchChats: [TgChat] = []
-    @Published var globalSearchMessageHits: [GlobalSearchMessageHit] = []
-    @Published var isGlobalSearching = false
-    @Published var selectedMainTab = 0
-
-    private static let initialChatLoadKey = "TelegramUserClient.hasCompletedInitialChatLoad"
 
     private var repository: TelegramRepository?
-    private var chatLoadToken = UUID()
-    private var incomingBannerDismissTask: Task<Void, Never>?
     private var mediaDownloadsInProgress: Set<Int64> = []
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
     private var profileLoadTask: Task<Void, Never>?
@@ -64,6 +51,7 @@ final class AppViewModel: ObservableObject {
     private let credentials = ApiCredentialsStore()
     private var isLoadingOlderMessages = false
     private var isLoadingPeekOlder = false
+    private var toastDismissTask: Task<Void, Never>?
 
     var filteredChats: [TgChat] {
         let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -214,12 +202,10 @@ final class AppViewModel: ObservableObject {
         chats = []
         messages = []
         selectedChatId = nil
-        isChatsBootstrapLoading = false
         authState = .waitPhone
         repository = nil
         isTdlibConfigured = false
         bootstrapError = nil
-        UserDefaults.standard.removeObject(forKey: Self.initialChatLoadKey)
         phase = .setup
         status = "Войдите снова — укажите API данные"
         Task { await start() }
@@ -244,170 +230,50 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func beginChat(_ chatId: Int64) async {
-        let token = UUID()
-        chatLoadToken = token
-        activeChatId = chatId
+    func setChatVisible(_ chatId: Int64?) {
+        visibleChatId = chatId
+    }
+
+    func selectChat(_ chatId: Int64) async {
         selectedChatId = chatId
         messages = []
-
-        await refreshMessages(replaceExisting: true, expectedChatId: chatId, loadToken: token)
-        guard chatLoadToken == token, activeChatId == chatId else { return }
-        await markChatRead(chatId)
+        await refreshMessages(replaceExisting: true)
+        if visibleChatId == chatId {
+            await markChatRead(chatId)
+        }
     }
 
-    func endChat() {
-        chatLoadToken = UUID()
-        activeChatId = nil
-        selectedChatId = nil
-    }
-
-    func lastReadOutboxMessageId(for chatId: Int64) -> Int64 {
-        chats.first(where: { $0.id == chatId })?.lastReadOutboxMessageId ?? 0
-    }
-
-    func isOutgoingMessageRead(_ message: TgMessage, chatId: Int64) -> Bool {
-        guard message.outgoing, !message.isSending else { return false }
-        return message.id > 0 && message.id <= lastReadOutboxMessageId(for: chatId)
-    }
-
-    func refreshMessages(
-        replaceExisting: Bool = false,
-        expectedChatId: Int64? = nil,
-        loadToken: UUID? = nil
-    ) async {
+    func refreshMessages(replaceExisting: Bool = false) async {
         guard let repository, let chatId = selectedChatId else { return }
-        let token = loadToken ?? chatLoadToken
         isBusy = true
         defer { isBusy = false }
         do {
-            let syncedMessages = try await repository.syncMessages(chatId: chatId)
-            guard chatLoadToken == token, activeChatId == chatId else { return }
-            if let expectedChatId, expectedChatId != chatId { return }
             if replaceExisting || messages.isEmpty {
-                messages = syncedMessages
+                let syncedMessages = try await repository.syncMessages(chatId: chatId)
+                messages = applyReadState(deduplicatedMessages(syncedMessages), chatId: chatId)
             } else {
-                messages = Self.mergeMessages(messages, syncedMessages)
+                await reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
             }
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
-            guard chatLoadToken == token, activeChatId == chatId else { return }
             status = error.localizedDescription
         }
     }
 
-    func runGlobalSearch() async {
-        let query = globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let repository, authState == .ready else { return }
-        guard query.count >= 2 else {
-            globalSearchChats = []
-            globalSearchMessageHits = []
-            return
-        }
-
-        isGlobalSearching = true
-        defer { isGlobalSearching = false }
-
+    func reloadMessagesFromStore(chatId: Int64, mergeWithExisting: Bool = false) async {
+        guard let repository else { return }
         do {
-            switch globalSearchScope {
-            case .myChats:
-                let local = chats.filter {
-                    $0.title.localizedCaseInsensitiveContains(query)
-                        || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(query) ?? false)
-                }
-                let remote = try await repository.searchMyChats(query: query)
-                var merged: [Int64: TgChat] = [:]
-                for chat in local + remote {
-                    merged[chat.id] = chat
-                }
-                globalSearchChats = sortChats(Array(merged.values))
-                globalSearchMessageHits = []
-            case .telegram:
-                let publicChats = try await repository.searchPublicChats(query: query)
-                globalSearchChats = publicChats
-                let foundMessages = try await repository.searchMessagesGlobally(query: query)
-                globalSearchMessageHits = foundMessages.map { message in
-                    let title = chats.first(where: { $0.id == message.chatId })?.title
-                        ?? AppText.tr("Чат", "Chat")
-                    return GlobalSearchMessageHit(
-                        id: "\(message.chatId)-\(message.id)",
-                        message: message,
-                        chatTitle: title
-                    )
-                }
+            let stored = try repository.storedMessages(chatId: chatId)
+            let normalized = applyReadState(deduplicatedMessages(stored), chatId: chatId)
+            if mergeWithExisting {
+                let existingIds = Set(messages.map(\.id))
+                let newOnes = normalized.filter { !existingIds.contains($0.id) }
+                messages = deduplicatedMessages(messages + newOnes)
+            } else {
+                messages = normalized
             }
         } catch {
             status = error.localizedDescription
-            globalSearchChats = []
-            globalSearchMessageHits = []
-        }
-    }
-
-    func openChatFromSearch(_ chatId: Int64) {
-        selectedMainTab = 0
-        navigationTargetChatId = chatId
-    }
-
-    private static func mergeMessages(_ existing: [TgMessage], _ incoming: [TgMessage]) -> [TgMessage] {
-        var byId: [Int64: TgMessage] = [:]
-        for message in existing { byId[message.id] = message }
-        for message in incoming {
-            if let current = byId[message.id] {
-                byId[message.id] = preserveDeletedContent(existing: current, incoming: message)
-            } else {
-                byId[message.id] = message
-            }
-        }
-        return byId.values.sorted { lhs, rhs in
-            if lhs.createdAt == rhs.createdAt { return lhs.id < rhs.id }
-            return lhs.createdAt < rhs.createdAt
-        }
-    }
-
-    private static func preserveDeletedContent(existing: TgMessage, incoming: TgMessage) -> TgMessage {
-        let isDeleted = existing.isDeleted || incoming.isDeleted
-        guard isDeleted else { return incoming }
-
-        let text = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? existing.text
-            : incoming.text
-        let attachments = incoming.attachments.isEmpty ? existing.attachments : incoming.attachments
-
-        return TgMessage(
-            id: incoming.id,
-            chatId: incoming.chatId,
-            text: text,
-            outgoing: incoming.outgoing,
-            createdAt: incoming.createdAt,
-            isEdited: incoming.isEdited || existing.isEdited,
-            replyToMessageId: incoming.replyToMessageId ?? existing.replyToMessageId,
-            isDeleted: true,
-            attachments: attachments,
-            mediaAlbumId: incoming.mediaAlbumId ?? existing.mediaAlbumId,
-            forwardedFrom: incoming.forwardedFrom ?? existing.forwardedFrom,
-            senderUserId: incoming.senderUserId ?? existing.senderUserId,
-            senderName: incoming.senderName ?? existing.senderName,
-            senderAvatarPath: incoming.senderAvatarPath ?? existing.senderAvatarPath,
-            authorSignature: incoming.authorSignature ?? existing.authorSignature,
-            viewCount: incoming.viewCount ?? existing.viewCount,
-            isSending: incoming.isSending
-        )
-    }
-
-    private func applyMessageReplaced(chatId: Int64, oldMessageId: Int64, newMessage: TgMessage) {
-        guard selectedChatId == chatId else { return }
-        var updated = messages.filter { $0.id != oldMessageId }
-        updated = Self.mergeMessages(updated, [newMessage])
-        messages = updated
-    }
-
-    private func applyReadOutbox(chatId: Int64, lastReadMessageId: Int64) {
-        guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
-        chats[index].lastReadOutboxMessageId = max(chats[index].lastReadOutboxMessageId, lastReadMessageId)
-        if let lastId = chats[index].lastMessageId,
-           chats[index].lastMessageOutgoing,
-           lastId <= chats[index].lastReadOutboxMessageId {
-            chats[index].lastMessageRead = true
         }
     }
 
@@ -428,7 +294,7 @@ final class AppViewModel: ObservableObject {
             guard !older.isEmpty else { return }
             let existingIds = Set(messages.map(\.id))
             let newOnes = older.filter { !existingIds.contains($0.id) }
-            messages = newOnes + messages
+            messages = applyReadState(deduplicatedMessages(newOnes + messages), chatId: chatId)
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             status = error.localizedDescription
@@ -478,14 +344,14 @@ final class AppViewModel: ObservableObject {
     }
 
     func openChat(chatId: Int64) async {
+        mainTabIndex = 0
+        selectedChatId = chatId
         navigationTargetChatId = chatId
-        await beginChat(chatId)
-    }
-
-    func openIncomingChat(_ chatId: Int64) {
-        incomingBanner = nil
-        incomingBannerDismissTask?.cancel()
-        navigationTargetChatId = chatId
+        messages = []
+        await refreshMessages(replaceExisting: true)
+        if visibleChatId == chatId {
+            await markChatRead(chatId)
+        }
     }
 
     func loadProfilePhotoPaths(userId: Int64) async -> [String] {
@@ -523,7 +389,7 @@ final class AppViewModel: ObservableObject {
         do {
             let downloadedMessages = try await repository.downloadMedia(chatId: chatId)
             if selectedChatId == chatId {
-                messages = downloadedMessages
+                messages = applyReadState(deduplicatedMessages(downloadedMessages), chatId: chatId)
             }
         } catch {
             status = error.localizedDescription
@@ -539,15 +405,13 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
         do {
             if let editingMessageId {
-                messages = try await repository.edit(chatId: chatId, messageId: editingMessageId, text: text)
+                try await repository.edit(chatId: chatId, messageId: editingMessageId, text: text)
                 self.editingMessageId = nil
                 self.replyingToMessageId = nil
+            } else if let replyId = replyingToMessageId {
+                try await repository.sendReply(chatId: chatId, text: text, replyToMessageId: replyId)
             } else {
-                if let replyId = replyingToMessageId {
-                    messages = try await repository.sendReply(chatId: chatId, text: text, replyToMessageId: replyId)
-                } else {
-            messages = try await repository.send(chatId: chatId, text: text)
-                }
+                try await repository.send(chatId: chatId, text: text)
             }
             composeText = ""
             replyingToMessageId = nil
@@ -572,14 +436,16 @@ final class AppViewModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
-            messages = try await repository.delete(chatId: chatId, messageIds: [message.id], revoke: revoke)
+            try await repository.delete(chatId: chatId, messageIds: [message.id], revoke: revoke)
+            await reloadMessagesFromStore(chatId: chatId)
             await refreshChats()
         } catch {
             status = error.localizedDescription
         }
     }
 
-    func markChatRead(_ chatId: Int64) async {
+    func markChatRead(_ chatId: Int64, force: Bool = false) async {
+        guard force || visibleChatId == chatId else { return }
         guard let repository else { return }
         let needsServerUpdate = chats.first(where: { $0.id == chatId }).map {
             $0.unreadCount > 0 || $0.isMarkedUnread
@@ -804,26 +670,35 @@ final class AppViewModel: ObservableObject {
     private func handleIncomingMessage(_ message: TgMessage) {
         guard !message.outgoing, phase == .main else { return }
         guard let chat = chats.first(where: { $0.id == message.chatId }) else { return }
+        guard visibleChatId != message.chatId else { return }
         guard !chat.isMuted else { return }
-        guard activeChatId != message.chatId else { return }
 
-        NotificationSoundPlayer.playMessageReceived()
-
-        let preview = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayPreview = preview.isEmpty ? AppText.tr("Новое сообщение", "New message") : preview
-        incomingBanner = IncomingMessageBanner(
+        let preview = messagePreviewText(message)
+        incomingToast = IncomingMessageToast(
             chatId: message.chatId,
             title: chat.title,
-            preview: displayPreview,
+            preview: preview,
             avatarPath: chat.avatarPath
         )
-        incomingBannerDismissTask?.cancel()
-        let bannerChatId = message.chatId
-        incomingBannerDismissTask = Task { @MainActor [weak self] in
+        toastDismissTask?.cancel()
+        toastDismissTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 4_500_000_000)
-            guard let self, self.incomingBanner?.chatId == bannerChatId else { return }
-            self.incomingBanner = nil
+            if incomingToast?.chatId == message.chatId {
+                incomingToast = nil
+            }
         }
+        NotificationSoundPlayer.playMessageReceived()
+    }
+
+    func dismissIncomingToast() {
+        incomingToast = nil
+        toastDismissTask?.cancel()
+    }
+
+    func openIncomingToastChat() async {
+        guard let toast = incomingToast else { return }
+        dismissIncomingToast()
+        await openChat(chatId: toast.chatId)
     }
 
     private func reloadPeekMessages(chatId: Int64) async {
@@ -856,13 +731,12 @@ final class AppViewModel: ObservableObject {
 
         repository.onMessageReplaced = { [weak self] chatId, oldMessageId, newMessage in
             Task { @MainActor in
-                self?.applyMessageReplaced(chatId: chatId, oldMessageId: oldMessageId, newMessage: newMessage)
-            }
-        }
-
-        repository.onChatReadOutboxChanged = { [weak self] chatId, lastRead in
-            Task { @MainActor in
-                self?.applyReadOutbox(chatId: chatId, lastReadMessageId: lastRead)
+                guard let self, self.selectedChatId == chatId else { return }
+                if let index = self.messages.firstIndex(where: { $0.id == oldMessageId }) {
+                    self.messages[index] = newMessage
+                } else {
+                    self.messages = self.deduplicatedMessages(self.messages + [newMessage])
+                }
             }
         }
 
@@ -872,9 +746,11 @@ final class AppViewModel: ObservableObject {
                 if self.peekChatId == chatId {
                     await self.reloadPeekMessages(chatId: chatId)
                 }
-                if self.activeChatId == chatId {
-                    await self.refreshMessages()
-                    await self.markChatRead(chatId)
+                if self.selectedChatId == chatId {
+                    await self.reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
+                    if self.visibleChatId == chatId {
+                        await self.markChatRead(chatId)
+                    }
                 }
             }
         }
@@ -888,7 +764,8 @@ final class AppViewModel: ObservableObject {
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
                 await self?.refreshChats()
-                if self?.activeChatId == chatId {
+                self?.updateOutgoingReadReceipts(for: chatId)
+                if self?.visibleChatId == chatId {
                     await self?.markChatRead(chatId)
                 }
             }
@@ -904,18 +781,9 @@ final class AppViewModel: ObservableObject {
     private func applyPhase(for state: AuthState) async {
         switch state {
         case .ready:
+            phase = .main
             status = ""
-            let isFirstChatLoad = !UserDefaults.standard.bool(forKey: Self.initialChatLoadKey)
-            if isFirstChatLoad {
-                isChatsBootstrapLoading = true
-                await refreshMe()
-                UserDefaults.standard.set(true, forKey: Self.initialChatLoadKey)
-                isChatsBootstrapLoading = false
-                phase = .main
-            } else {
-                phase = .main
-                await refreshMe()
-            }
+            await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
             status = ""
@@ -932,82 +800,6 @@ final class AppViewModel: ObservableObject {
         } catch {
             // Non-critical for core UX; keep Settings usable even if this fails.
             me = nil
-        }
-    }
-
-    func loadPrivacySettings() async {
-        guard let repository, authState == .ready else { return }
-        privacySettings = UserPrivacySettingKind.allCases.map {
-            UserPrivacySettingValue(kind: $0, visibility: .contacts)
-        }
-        isPrivacyLoading = true
-        defer { isPrivacyLoading = false }
-        do {
-            privacySettings = try await repository.loadPrivacySettings()
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    func uploadMyProfilePhoto(from image: UIImage) async {
-        guard let repository else { return }
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let path = try writeTemporaryJPEG(image)
-            try await repository.setMyProfilePhoto(path: path)
-            me = try await repository.loadMe()
-            status = AppText.tr("Фото профиля обновлено", "Profile photo updated")
-            await refreshChats()
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    private func writeTemporaryJPEG(_ image: UIImage) throws -> String {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("profile-\(UUID().uuidString).jpg")
-        guard let data = image.jpegData(compressionQuality: 0.92) else {
-            throw NSError(domain: "AppViewModel", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: AppText.tr("Не удалось обработать фото", "Could not process photo")
-            ])
-        }
-        try data.write(to: url, options: .atomic)
-        return url.path
-    }
-
-    func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async {
-        guard let repository else { return }
-        do {
-            try await repository.updatePrivacySetting(kind, visibility: visibility)
-            if let index = privacySettings.firstIndex(where: { $0.kind == kind }) {
-                privacySettings[index].visibility = visibility
-            }
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    func updateMyProfile(firstName: String, lastName: String, username: String) async {
-        guard let repository else { return }
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            me = try await repository.updateMyProfile(
-                firstName: firstName,
-                lastName: lastName,
-                username: username
-            )
-            status = AppText.tr("Профиль обновлён", "Profile updated")
-            await refreshChats()
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    func preloadProfilePhotoPaths(_ paths: [String]) {
-        for path in paths {
-            _ = LocalImageCache.shared.image(path: path)
         }
     }
 
@@ -1131,6 +923,99 @@ final class AppViewModel: ObservableObject {
     private func updateLocalChat(_ chatId: Int64, mutate: (inout TgChat) -> Void) {
         guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
         mutate(&chats[index])
+    }
+
+    func searchLocalChats(query: String) -> [TgChat] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return chats }
+        return chats.filter {
+            $0.title.localizedCaseInsensitiveContains(trimmed)
+                || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(trimmed) ?? false)
+        }
+    }
+
+    func searchTelegram(query: String) async -> [TgChat] {
+        guard let repository else { return [] }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        do {
+            async let local = repository.searchChats(query: trimmed)
+            async let remote = repository.searchPublicChats(query: trimmed)
+            let (localChats, publicChats) = try await (local, remote)
+            var seen = Set<Int64>()
+            return (localChats + publicChats).filter { seen.insert($0.id).inserted }
+        } catch {
+            status = error.localizedDescription
+            return []
+        }
+    }
+
+    func updateProfileName(firstName: String, lastName: String) async {
+        guard let repository else { return }
+        do {
+            try await repository.updateProfileName(firstName: firstName, lastName: lastName)
+            await refreshMe()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func deduplicatedMessages(_ items: [TgMessage]) -> [TgMessage] {
+        var seen = Set<Int64>()
+        return items
+            .sorted { $0.createdAt < $1.createdAt }
+            .filter { seen.insert($0.id).inserted }
+    }
+
+    private func applyReadState(_ items: [TgMessage], chatId: Int64) -> [TgMessage] {
+        let lastRead = chats.first(where: { $0.id == chatId })?.lastReadOutboxMessageId ?? 0
+        return items.map { message in
+            guard message.outgoing else { return message }
+            let isRead = message.id > 0 && message.id <= lastRead
+            guard isRead != message.isReadByPeer else { return message }
+            return TgMessage(
+                id: message.id,
+                chatId: message.chatId,
+                text: message.text,
+                outgoing: message.outgoing,
+                createdAt: message.createdAt,
+                isEdited: message.isEdited,
+                replyToMessageId: message.replyToMessageId,
+                isDeleted: message.isDeleted,
+                isReadByPeer: isRead,
+                attachments: message.attachments,
+                mediaAlbumId: message.mediaAlbumId,
+                forwardedFrom: message.forwardedFrom,
+                senderUserId: message.senderUserId,
+                senderName: message.senderName,
+                senderAvatarPath: message.senderAvatarPath,
+                authorSignature: message.authorSignature,
+                viewCount: message.viewCount
+            )
+        }
+    }
+
+    private func updateOutgoingReadReceipts(for chatId: Int64) {
+        guard selectedChatId == chatId, !messages.isEmpty else { return }
+        messages = applyReadState(messages, chatId: chatId)
+    }
+
+    private func messagePreviewText(_ message: TgMessage) -> String {
+        if message.isDeleted {
+            return AppText.tr("Удалённое сообщение", "Deleted message")
+        }
+        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        if let first = message.attachments.first {
+            switch first.kind {
+            case .photo: return AppText.tr("Фото", "Photo")
+            case .video: return AppText.tr("Видео", "Video")
+            case .voice: return AppText.tr("Голосовое", "Voice message")
+            case .document: return first.fileName ?? AppText.tr("Файл", "File")
+            default: return AppText.tr("Медиа", "Media")
+            }
+        }
+        return AppText.tr("Новое сообщение", "New message")
     }
 
     private func sortChats(_ items: [TgChat]) -> [TgChat] {

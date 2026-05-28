@@ -116,7 +116,6 @@ struct ChatProfileView: View {
                         } else if let avatarPath = profile.avatarPath {
                             profilePhotoPaths = [avatarPath]
                         }
-                        vm.preloadProfilePhotoPaths(profilePhotoPaths)
                         showAvatar = true
                     }
                 }

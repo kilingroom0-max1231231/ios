@@ -115,46 +115,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
-    func searchChats(query: String, limit: Int = 20) async throws -> [TgChat] {
+    func fetchChats(limit: Int = 50) async throws -> [TgChat] {
         let response = try await sendRequest([
-            "@type": "searchChats",
-            "query": query,
+            "@type": "getChats",
+            "chat_list": ["@type": "chatListMain"],
             "limit": limit
         ])
-        let ids = response["chat_ids"] as? [Any] ?? []
-        return try await loadChats(from: ids)
-    }
+        guard let ids = response["chat_ids"] as? [Any] else { return [] }
 
-    func searchPublicChats(query: String) async throws -> [TgChat] {
-        let response = try await sendRequest([
-            "@type": "searchPublicChats",
-            "query": query
-        ])
-        let ids = response["chat_ids"] as? [Any] ?? []
-        return try await loadChats(from: ids)
-    }
-
-    func searchMessagesGlobally(query: String, limit: Int = 30) async throws -> [TgMessage] {
-        let response = try await sendRequest([
-            "@type": "searchMessages",
-            "query": query,
-            "offset": "",
-            "limit": limit,
-            "filter": ["@type": "searchMessagesFilterEmpty"],
-            "min_date": 0,
-            "max_date": 0
-        ])
-        let items: [[String: Any]]
-        if (response["@type"] as? String) == "foundChatMessages" {
-            items = response["messages"] as? [[String: Any]] ?? []
-        } else {
-            items = response["messages"] as? [[String: Any]] ?? []
-        }
-        let parsed = items.compactMap { parseMessage($0, fallbackChatId: 0) }
-        return try await enrichMessagesWithSenderInfo(parsed)
-    }
-
-    private func loadChats(from ids: [Any]) async throws -> [TgChat] {
         var chats: [TgChat] = []
         for anyId in ids {
             guard let id = int64Value(anyId) else { continue }
@@ -169,17 +137,6 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return chats.sorted(by: chatSort)
     }
 
-    func fetchChats(limit: Int = 50) async throws -> [TgChat] {
-        let response = try await sendRequest([
-            "@type": "getChats",
-            "chat_list": ["@type": "chatListMain"],
-            "limit": limit
-        ])
-        guard let ids = response["chat_ids"] as? [Any] else { return [] }
-
-        return try await loadChats(from: ids)
-    }
-
     func fetchMessages(chatId: Int64, limit: Int = 500) async throws -> [TgMessage] {
         let response = try await sendRequest([
             "@type": "getChatHistory",
@@ -191,8 +148,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
         guard let items = response["messages"] as? [[String: Any]] else { return [] }
         let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
-        return try await enrichMessagesWithSenderInfo(parsed)
-            .sorted(by: { $0.createdAt < $1.createdAt })
+        let enriched = try await enrichMessagesWithSenderInfo(parsed)
+        let withReadState = try await applyReadOutboxStatus(messages: enriched, chatId: chatId)
+        return withReadState.sorted(by: { $0.createdAt < $1.createdAt })
     }
 
     func fetchOlderMessages(chatId: Int64, fromMessageId: Int64, limit: Int = 200) async throws -> [TgMessage] {
@@ -206,8 +164,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
         guard let items = response["messages"] as? [[String: Any]] else { return [] }
         let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
-        return try await enrichMessagesWithSenderInfo(parsed)
-            .sorted(by: { $0.createdAt < $1.createdAt })
+        let enriched = try await enrichMessagesWithSenderInfo(parsed)
+        let withReadState = try await applyReadOutboxStatus(messages: enriched, chatId: chatId)
+        return withReadState.sorted(by: { $0.createdAt < $1.createdAt })
     }
 
     func forwardMessages(fromChatId: Int64, toChatId: Int64, messageIds: [Int64]) async throws {
@@ -558,119 +517,110 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return []
         }
 
-        return await withTaskGroup(of: (Int, String?).self) { group in
+        return try await withThrowingTaskGroup(of: (Int, String?).self) { group in
             for (index, photo) in photoItems.enumerated() {
                 group.addTask { [weak self] in
                     guard let self else { return (index, nil) }
-                    let path = try? await self.resolveProfilePhotoFilePath(photo)
+                    let path = try await self.resolveProfilePhotoFilePath(photo)
                     return (index, path)
                 }
             }
-
             var indexed: [(Int, String)] = []
-            for await result in group {
-                if let path = result.1, !path.isEmpty {
-                    indexed.append((result.0, path))
+            for try await item in group {
+                if let path = item.1 {
+                    indexed.append((item.0, path))
                 }
             }
             return indexed.sorted { $0.0 < $1.0 }.map(\.1)
         }
     }
 
-    func fetchPrivacyVisibility(for kind: UserPrivacySettingKind) async throws -> PrivacyVisibility {
+    private func applyReadOutboxStatus(messages: [TgMessage], chatId: Int64) async throws -> [TgMessage] {
+        let chat = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        let lastReadOutbox = int64Value(chat["last_read_outbox_message_id"]) ?? 0
+        return messages.map { message in
+            guard message.outgoing else { return message }
+            let isRead = message.id <= lastReadOutbox
+            guard isRead != message.isReadByPeer else { return message }
+            return TgMessage(
+                id: message.id,
+                chatId: message.chatId,
+                text: message.text,
+                outgoing: message.outgoing,
+                createdAt: message.createdAt,
+                isEdited: message.isEdited,
+                replyToMessageId: message.replyToMessageId,
+                isDeleted: message.isDeleted,
+                isReadByPeer: isRead,
+                attachments: message.attachments,
+                mediaAlbumId: message.mediaAlbumId,
+                forwardedFrom: message.forwardedFrom,
+                senderUserId: message.senderUserId,
+                senderName: message.senderName,
+                senderAvatarPath: message.senderAvatarPath,
+                authorSignature: message.authorSignature,
+                viewCount: message.viewCount
+            )
+        }
+    }
+
+    func searchChats(query: String, limit: Int = 30) async throws -> [TgChat] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
         let response = try await sendRequest([
-            "@type": "getUserPrivacySettingRules",
-            "setting": ["@type": kind.tdlibType]
+            "@type": "searchChats",
+            "query": trimmed,
+            "limit": limit
         ])
-        let rules = response["rules"] as? [[String: Any]] ?? []
-        return parsePrivacyVisibility(from: rules)
-    }
-
-    func setPrivacyVisibility(for kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
-        _ = try await sendRequest([
-            "@type": "setUserPrivacySettingRules",
-            "setting": ["@type": kind.tdlibType],
-            "rules": [privacyRule(for: visibility)]
-        ])
-    }
-
-    func setMyName(firstName: String, lastName: String) async throws {
-        do {
-            _ = try await sendRequest([
-                "@type": "setName",
-                "first_name": [
-                    "@type": "formattedText",
-                    "text": firstName
-                ],
-                "last_name": [
-                    "@type": "formattedText",
-                    "text": lastName
-                ]
+        let chatIds = (response["chat_ids"] as? [Any] ?? []).compactMap(int64Value)
+        var chats: [TgChat] = []
+        for chatId in chatIds {
+            let chat = try await sendRequest([
+                "@type": "getChat",
+                "chat_id": chatId
             ])
-        } catch {
-            _ = try await sendRequest([
-                "@type": "setName",
-                "first_name": firstName,
-                "last_name": lastName
-            ])
-        }
-    }
-
-    func setProfilePhoto(localPath: String) async throws {
-        _ = try await sendRequest([
-            "@type": "setProfilePhoto",
-            "photo": [
-                "@type": "inputChatPhotoStatic",
-                "photo": [
-                    "@type": "inputFileLocal",
-                    "path": localPath
-                ]
-            ]
-        ])
-    }
-
-    func setMyUsername(_ username: String) async throws {
-        _ = try await sendRequest([
-            "@type": "setUsername",
-            "username": username
-        ])
-    }
-
-    private func privacyRule(for visibility: PrivacyVisibility) -> [String: Any] {
-        switch visibility {
-        case .everybody:
-            return ["@type": "userPrivacySettingRuleAllowAll"]
-        case .contacts:
-            return ["@type": "userPrivacySettingRuleAllowContacts"]
-        case .nobody:
-            return ["@type": "userPrivacySettingRuleRestrictAll"]
-        }
-    }
-
-    private func parsePrivacyVisibility(from rules: [[String: Any]]) -> PrivacyVisibility {
-        for rule in rules {
-            guard let type = rule["@type"] as? String else { continue }
-            if type == "userPrivacySettingRuleAllowAll" {
-                return .everybody
-            }
-            if type == "userPrivacySettingRuleRestrictAll" {
-                return .nobody
+            if let summary = try await parseChatSummary(chat) {
+                chats.append(summary)
             }
         }
-        return .contacts
+        return chats
+    }
+
+    func searchPublicChats(query: String) async throws -> [TgChat] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let response = try await sendRequest([
+            "@type": "searchPublicChats",
+            "query": trimmed
+        ])
+        let chatIds = (response["chat_ids"] as? [Any] ?? []).compactMap(int64Value)
+        var chats: [TgChat] = []
+        for chatId in chatIds {
+            let chat = try await sendRequest([
+                "@type": "getChat",
+                "chat_id": chatId
+            ])
+            if let summary = try await parseChatSummary(chat) {
+                chats.append(summary)
+            }
+        }
+        return chats
+    }
+
+    func setName(firstName: String, lastName: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setName",
+            "first_name": firstName,
+            "last_name": lastName
+        ])
     }
 
     private func resolveProfilePhotoFilePath(_ photo: [String: Any]) async throws -> String? {
-        if let sizes = photo["sizes"] as? [[String: Any]], !sizes.isEmpty {
-            let fileInfo = extractFileInfo(from: sizes)
-            if let path = fileInfo.localPath, !path.isEmpty {
-                return path
-            }
-            if let fileId = fileInfo.id {
-                return try await downloadFile(fileId: fileId)
-            }
-        }
-
         let file = preferredAvatarFile(from: photo, preferBig: true)
         guard let file else { return nil }
 
@@ -906,15 +856,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return
         }
 
-        if type == "updateChatReadOutbox",
-           let chatId = int64Value(obj["chat_id"]),
-           let lastRead = int64Value(obj["last_read_outbox_message_id"]) {
-            eventHandler?(.chatReadOutboxChanged(chatId: chatId, lastReadOutboxMessageId: lastRead))
-            return
-        }
-
         if [
             "updateChatReadInbox",
+            "updateChatReadOutbox",
             "updateChatUnreadMentionCount",
             "updateChatUnreadReactionCount",
             "updateChatNotificationSettings",
@@ -958,13 +902,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         var text = ""
-        var isDeletedContent = false
         if let content = obj["content"] as? [String: Any],
            let contentType = content["@type"] as? String {
-            if contentType == "messageDeleted" {
-                isDeletedContent = true
-                text = ""
-            } else if contentType == "messageText",
+            if contentType == "messageText",
                let textObj = content["text"] as? [String: Any],
                let rawText = textObj["text"] as? String {
                 text = rawText
@@ -997,8 +937,6 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let signature = (authorSignature?.isEmpty == false) ? authorSignature : nil
 
-        let isSending = (obj["sending_state"] as? [String: Any]) != nil
-
         return TgMessage(
             id: id,
             chatId: chatId,
@@ -1007,14 +945,13 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             createdAt: Date(timeIntervalSince1970: dateUnix),
             isEdited: isEdited,
             replyToMessageId: replyToMessageId,
-            isDeleted: isDeletedContent,
-            attachments: isDeletedContent ? [] : parseAttachments(obj["content"] as? [String: Any]),
+            isDeleted: false,
+            attachments: parseAttachments(obj["content"] as? [String: Any]),
             mediaAlbumId: mediaAlbumId,
             forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any]),
             senderUserId: senderUserId,
             authorSignature: signature,
-            viewCount: viewCount,
-            isSending: isSending
+            viewCount: viewCount
         )
     }
 
@@ -1057,6 +994,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 isEdited: message.isEdited,
                 replyToMessageId: message.replyToMessageId,
                 isDeleted: message.isDeleted,
+                isReadByPeer: message.isReadByPeer,
                 attachments: message.attachments,
                 mediaAlbumId: message.mediaAlbumId,
                 forwardedFrom: message.forwardedFrom,
@@ -1064,8 +1002,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 senderName: message.senderName ?? cached.name,
                 senderAvatarPath: message.senderAvatarPath ?? cached.avatarPath,
                 authorSignature: message.authorSignature,
-                viewCount: message.viewCount,
-                isSending: message.isSending
+                viewCount: message.viewCount
             )
         }
     }

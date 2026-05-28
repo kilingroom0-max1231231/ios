@@ -40,13 +40,13 @@ struct SettingsView: View {
 
             Section(AppText.tr("Аккаунт", "Account")) {
                 NavigationLink {
-                    PrivacySettingsView(vm: vm)
+                    ProfilePrivacySettingsView(vm: vm)
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: "hand.raised.fill")
+                        Image(systemName: "person.crop.circle")
                             .foregroundStyle(AppColors.accent)
                             .frame(width: 28)
-                        Text(AppText.tr("Приватность и профиль", "Privacy & profile"))
+                        Text(AppText.tr("Профиль и приватность", "Profile & privacy"))
                     }
                 }
             }

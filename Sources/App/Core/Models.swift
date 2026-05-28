@@ -111,6 +111,7 @@ struct TgMessage: Identifiable, Equatable {
     let isEdited: Bool
     let replyToMessageId: Int64?
     let isDeleted: Bool
+    let isReadByPeer: Bool
     let attachments: [TgAttachment]
     let mediaAlbumId: Int64?
     let forwardedFrom: String?
@@ -119,7 +120,6 @@ struct TgMessage: Identifiable, Equatable {
     let senderAvatarPath: String?
     let authorSignature: String?
     let viewCount: Int?
-    let isSending: Bool
 
     init(
         id: Int64,
@@ -130,6 +130,7 @@ struct TgMessage: Identifiable, Equatable {
         isEdited: Bool,
         replyToMessageId: Int64?,
         isDeleted: Bool,
+        isReadByPeer: Bool = false,
         attachments: [TgAttachment],
         mediaAlbumId: Int64?,
         forwardedFrom: String?,
@@ -137,8 +138,7 @@ struct TgMessage: Identifiable, Equatable {
         senderName: String? = nil,
         senderAvatarPath: String? = nil,
         authorSignature: String? = nil,
-        viewCount: Int? = nil,
-        isSending: Bool = false
+        viewCount: Int? = nil
     ) {
         self.id = id
         self.chatId = chatId
@@ -148,6 +148,7 @@ struct TgMessage: Identifiable, Equatable {
         self.isEdited = isEdited
         self.replyToMessageId = replyToMessageId
         self.isDeleted = isDeleted
+        self.isReadByPeer = isReadByPeer
         self.attachments = attachments
         self.mediaAlbumId = mediaAlbumId
         self.forwardedFrom = forwardedFrom
@@ -156,16 +157,7 @@ struct TgMessage: Identifiable, Equatable {
         self.senderAvatarPath = senderAvatarPath
         self.authorSignature = authorSignature
         self.viewCount = viewCount
-        self.isSending = isSending
     }
-}
-
-struct IncomingMessageBanner: Equatable, Identifiable {
-    let id = UUID()
-    let chatId: Int64
-    let title: String
-    let preview: String
-    let avatarPath: String?
 }
 
 struct TgUser: Identifiable, Equatable {
@@ -281,31 +273,19 @@ enum ChatMediaCategory: String, CaseIterable, Identifiable {
     }
 }
 
-struct GlobalSearchMessageHit: Identifiable, Equatable {
-    let id: String
-    let message: TgMessage
-    let chatTitle: String
-}
-
-enum GlobalSearchScope: String, CaseIterable, Identifiable {
-    case myChats
-    case telegram
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .myChats: return AppText.tr("Мои чаты", "My chats")
-        case .telegram: return AppText.tr("Telegram", "Telegram")
-        }
-    }
-}
-
 enum AuthState: Equatable {
     case waitPhone
     case waitCode
     case waitPassword
     case ready
+}
+
+struct IncomingMessageToast: Identifiable, Equatable {
+    let id = UUID()
+    let chatId: Int64
+    let title: String
+    let preview: String
+    let avatarPath: String?
 }
 
 enum TelegramEvent {
@@ -316,5 +296,4 @@ enum TelegramEvent {
     case chatsChanged
     case chatChanged(Int64)
     case chatTypingChanged(chatId: Int64, text: String?)
-    case chatReadOutboxChanged(chatId: Int64, lastReadOutboxMessageId: Int64)
 }

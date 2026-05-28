@@ -5,7 +5,6 @@ import UIKit
 
 struct MessageAttachmentPreview: View {
     let attachment: TgAttachment
-    var compact: Bool = false
     var onOpen: (() -> Void)?
     @State private var inlinePlayer: AVPlayer?
     @State private var isInlinePlaying = false
@@ -42,8 +41,8 @@ struct MessageAttachmentPreview: View {
                     loadingPlaceholder(systemImage: "photo", title: "Фото загружается")
                 }
             }
-            .frame(height: compact ? 132 : 180)
-            .frame(maxWidth: compact ? 220 : .infinity)
+            .frame(height: 180)
+            .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 if attachment.localURL == nil {
@@ -66,8 +65,8 @@ struct MessageAttachmentPreview: View {
                         .clipShape(Circle())
                 } else {
                     videoPreviewContent(title: attachment.kind == .animation ? "GIF загружается" : "Видео загружается")
-                        .frame(height: compact ? 132 : 180)
-                        .frame(maxWidth: compact ? 220 : .infinity)
+                        .frame(height: 180)
+                        .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
@@ -182,7 +181,7 @@ struct MessageAttachmentPreview: View {
                     loadingPlaceholder(systemImage: "face.smiling", title: "Стикер загружается")
                 }
             }
-            .frame(width: compact ? 112 : 150, height: compact ? 112 : 150)
+            .frame(width: 150, height: 150)
         }
         .buttonStyle(.plain)
         .disabled(attachment.localURL == nil)
@@ -524,25 +523,26 @@ struct FullscreenAvatarOverlay: View {
                 .onTapGesture { close() }
 
             TabView(selection: $selection) {
-                ForEach(Array(imagePaths.enumerated()), id: \.element) { index, path in
+                ForEach(Array(imagePaths.enumerated()), id: \.offset) { index, path in
                     Group {
                         if let image = LocalImageCache.shared.image(path: path) {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFit()
                         } else {
-                            ProgressView()
-                                .tint(.white)
+                            MissingMediaView(title: AppText.tr("Не удалось открыть", "Could not open"))
                         }
                     }
                     .tag(index)
                     .padding(18)
-                    .task(id: path) {
-                        _ = LocalImageCache.shared.image(path: path)
-                    }
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: imagePaths.count > 1 ? .automatic : .never))
+            .task(id: imagePaths) {
+                for path in imagePaths {
+                    _ = LocalImageCache.shared.image(path: path)
+                }
+            }
             .offset(dragOffset)
             .scaleEffect(scale * max(0.84, 1 - abs(dragOffset.height) / 820))
             .gesture(zoomGesture)
@@ -583,11 +583,6 @@ struct FullscreenAvatarOverlay: View {
             }
         }
         .transition(.opacity)
-        .task(id: imagePaths) {
-            for path in imagePaths {
-                _ = LocalImageCache.shared.image(path: path)
-            }
-        }
     }
 
     private var dragGesture: some Gesture {
