@@ -274,67 +274,92 @@ struct ChatDetailView: View {
                 composerBar
             }
         }
+        .background(Color.clear)
     }
 
     private var composerBar: some View {
         VStack(spacing: 8) {
-            if let reply = vm.replyPreviewText(), vm.replyingToMessageId != nil {
-                replyPreview(reply)
-            }
+            HStack(alignment: .bottom, spacing: 8) {
+                composerSideButton(systemName: "paperclip") {
+                    // Attachment picker — later
+                }
+                .opacity(canSend ? 1 : 0.4)
+                .disabled(!canSend)
 
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField(AppText.tr("Сообщение", "Message"), text: $vm.composeText, axis: .vertical)
-                    .lineLimit(1...4)
-                    .focused($isComposerFocused)
-                    .textFieldStyle(.plain)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 4)
+                messageInputIsland
 
                 if vm.editingMessageId != nil {
-                    Button {
+                    composerSideButton(systemName: "xmark") {
                         vm.cancelEditing()
                         isComposerFocused = false
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
                     .disabled(vm.isBusy)
+                    sendIslandButton
+                } else if isComposeTextEmpty {
+                    composerSideButton(systemName: "mic.fill") {
+                        // Voice message — later
+                    }
+                    .opacity(canSend ? 1 : 0.4)
+                    .disabled(!canSend)
+                } else {
+                    sendIslandButton
                 }
-
-                sendButton
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private var messageInputIsland: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let reply = vm.replyPreviewText(), vm.replyingToMessageId != nil {
+                replyPreview(reply)
+                Divider()
+                    .padding(.horizontal, 12)
+            }
+
+            TextField(AppText.tr("Сообщение", "Message"), text: $vm.composeText, axis: .vertical)
+                .lineLimit(1...6)
+                .focused($isComposerFocused)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .disabled(!canSend)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassContainer(cornerRadius: 22)
+    }
+
+    private func composerSideButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+        .composerIslandButton()
     }
 
     private var isComposeTextEmpty: Bool {
         vm.composeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    @ViewBuilder
-    private var sendButton: some View {
+    private var sendIslandButton: some View {
         Button {
             Task {
                 await vm.sendMessage()
                 isComposerFocused = false
             }
         } label: {
-            Image(systemName: "paperplane.fill")
-                .font(.system(size: 15, weight: .semibold))
+            Image(systemName: "arrow.up")
+                .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 42, height: 42)
-                .background(
-                    Circle()
-                        .fill(isComposeTextEmpty ? Color.secondary.opacity(0.35) : AppColors.accent)
-                )
         }
         .buttonStyle(.plain)
-        .disabled(vm.isBusy || isComposeTextEmpty)
-        .opacity(vm.isBusy || isComposeTextEmpty ? 0.75 : 1)
+        .frame(width: 44, height: 44)
+        .background(AppColors.accent, in: Circle())
+        .disabled(vm.isBusy || isComposeTextEmpty || !canSend)
+        .opacity(vm.isBusy || !canSend ? 0.6 : 1)
     }
 
     private func replyPreview(_ text: String) -> some View {
@@ -367,10 +392,8 @@ struct ChatDetailView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

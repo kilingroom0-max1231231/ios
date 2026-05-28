@@ -51,7 +51,7 @@ struct ChatPeekView: View {
             .background(ChatScreenBackground().ignoresSafeArea())
             .navigationTitle(chat?.title ?? AppText.tr("Чат", "Chat"))
             .navigationBarTitleDisplayMode(.inline)
-            .glassNavigationBar()
+            .frostedNavigationBar()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 2) {

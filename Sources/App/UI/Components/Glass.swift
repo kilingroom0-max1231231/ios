@@ -95,4 +95,10 @@ extension View {
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
     }
+
+    /// Circular floating control (attach / mic).
+    func composerIslandButton(diameter: CGFloat = 44) -> some View {
+        frame(width: diameter, height: diameter)
+            .glassContainer(cornerRadius: diameter / 2)
+    }
 }
