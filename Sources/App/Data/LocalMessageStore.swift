@@ -181,18 +181,22 @@ final class LocalMessageStore {
     }
 
     private func createSchema() throws {
+        if try requiresScopedSchemaRebuild() {
+            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS attachments;", nil, nil, nil)
+            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS messages;", nil, nil, nil)
+        }
+
         let sql = """
         CREATE TABLE IF NOT EXISTS messages(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER NOT NULL,
             chat_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
             text TEXT NOT NULL,
             outgoing INTEGER NOT NULL,
-            created_at DOUBLE NOT NULL,
+            created_at REAL NOT NULL,
             is_deleted INTEGER NOT NULL DEFAULT 0,
             media_album_id INTEGER,
             forwarded_from TEXT,
-            PRIMARY KEY(chat_id, message_id)
+            PRIMARY KEY (chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
         CREATE TABLE IF NOT EXISTS attachments(
@@ -205,20 +209,26 @@ final class LocalMessageStore {
             mime_type TEXT,
             local_path TEXT,
             size INTEGER,
-            FOREIGN KEY(chat_id, message_id) REFERENCES messages(chat_id, message_id) ON DELETE CASCADE
+            FOREIGN KEY (chat_id, message_id) REFERENCES messages(chat_id, message_id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(chat_id, message_id);
         """
-        if try requiresScopedSchemaRebuild() {
-            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS attachments;", nil, nil, nil)
-            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS messages;", nil, nil, nil)
-        }
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw NSError(domain: "LocalMessageStore", code: 5, userInfo: nil)
+
+        let result = sqlite3_exec(db, sql, nil, nil, nil)
+        guard result == SQLITE_OK else {
+            throw NSError(
+                domain: "LocalMessageStore",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: sqliteErrorMessage(result)]
+            )
         }
     }
 
     private func requiresScopedSchemaRebuild() throws -> Bool {
+        guard tableExists("messages") else {
+            return tableExists("attachments")
+        }
+
         let sql = "PRAGMA table_info(messages);"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -226,18 +236,51 @@ final class LocalMessageStore {
         }
         defer { sqlite3_finalize(stmt) }
 
-        var hasRows = false
         var chatIdPk = false
         var messageIdPk = false
         while sqlite3_step(stmt) == SQLITE_ROW {
-            hasRows = true
             let name = readText(stmt, 1)
             let pk = sqlite3_column_int(stmt, 5)
             if name == "chat_id", pk > 0 { chatIdPk = true }
             if name == "message_id", pk > 0 { messageIdPk = true }
         }
-        if !hasRows { return false }
-        return !(chatIdPk && messageIdPk)
+
+        if !(chatIdPk && messageIdPk) {
+            return true
+        }
+
+        if tableExists("attachments"), !columnExists("attachments", "chat_id") {
+            return true
+        }
+
+        return false
+    }
+
+    private func tableExists(_ name: String) -> Bool {
+        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1;"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, sqliteTransient)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private func columnExists(_ table: String, _ column: String) -> Bool {
+        let sql = "PRAGMA table_info(\(table));"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if readText(stmt, 1) == column { return true }
+        }
+        return false
+    }
+
+    private func sqliteErrorMessage(_ code: Int32) -> String {
+        if let message = sqlite3_errmsg(db) {
+            return String(cString: message)
+        }
+        return "sqlite error \(code)"
     }
 
     private func readText(_ stmt: OpaquePointer?, _ col: Int32) -> String {
