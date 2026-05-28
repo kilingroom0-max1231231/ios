@@ -25,12 +25,12 @@ struct LoginView: View {
                         .textContentType(.telephoneNumber)
                         .glassField()
                 case .waitCode:
-                    TextField("Код из Telegram", text: $vm.code)
+                    TextField(AppText.tr("Код из Telegram", "Code from Telegram"), text: $vm.code)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
                         .glassField()
                 case .waitPassword:
-                    SecureField("Пароль 2FA", text: $vm.password)
+                    SecureField(AppText.tr("Пароль 2FA", "2FA password"), text: $vm.password)
                         .textContentType(.password)
                         .glassField()
                 case .ready:
@@ -57,7 +57,7 @@ struct LoginView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(vm.isBusy ? "Проверка…" : "Войти")
+                    Text(vm.isBusy ? AppText.tr("Проверка…", "Checking…") : AppText.tr("Войти", "Log in"))
                         .fontWeight(.semibold)
                 }
             }
@@ -70,7 +70,7 @@ struct LoginView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("API") {
+                Button(AppText.tr("API", "API")) {
                     vm.phase = .setup
                 }
             }

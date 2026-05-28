@@ -9,7 +9,7 @@ struct ChatDetailView: View {
     @State private var forwardingMessage: TgMessage?
 
     private var title: String {
-        vm.chats.first(where: { $0.id == chatId })?.title ?? "Чат"
+        vm.chats.first(where: { $0.id == chatId })?.title ?? AppText.tr("Чат", "Chat")
     }
 
     private var selectedChat: TgChat? {
@@ -17,8 +17,8 @@ struct ChatDetailView: View {
     }
 
     private var subtitle: String {
-        if vm.isBusy { return "обновление..." }
-        return selectedChat?.statusText ?? "был(а) недавно"
+        if vm.isBusy { return AppText.tr("обновление...", "updating...") }
+        return selectedChat?.statusText ?? AppText.tr("был(а) недавно", "last seen recently")
     }
 
     private var canSend: Bool {
@@ -77,7 +77,7 @@ struct ChatDetailView: View {
                         ProgressView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        Text("Не удалось загрузить профиль")
+                        Text(AppText.tr("Не удалось загрузить профиль", "Failed to load profile"))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -119,11 +119,11 @@ struct ChatDetailView: View {
                         .disabled(target.canSendMessages == false)
                     }
                 }
-                .navigationTitle("Переслать в...")
+                .navigationTitle(AppText.tr("Переслать в...", "Forward to..."))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Закрыть") {
+                        Button(AppText.tr("Закрыть", "Close")) {
                             forwardingMessage = nil
                         }
                     }
@@ -189,7 +189,7 @@ struct ChatDetailView: View {
                                     vm.quoteMessage(message)
                                     isComposerFocused = true
                                 } label: {
-                                    Label("Цитата", systemImage: "arrowshape.turn.up.left")
+                                    Label(AppText.tr("Цитата", "Quote"), systemImage: "arrowshape.turn.up.left")
                                 }
                                 .tint(AppColors.accent)
                             }
@@ -247,7 +247,7 @@ struct ChatDetailView: View {
             }
 
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Сообщение", text: $vm.composeText, axis: .vertical)
+                TextField(AppText.tr("Сообщение", "Message"), text: $vm.composeText, axis: .vertical)
                     .lineLimit(1...4)
                     .focused($isComposerFocused)
                     .glassField()
@@ -301,7 +301,7 @@ struct ChatDetailView: View {
 
     private func replyPreview(_ text: String) -> some View {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previewText = trimmedText.isEmpty ? "Сообщение" : trimmedText
+        let previewText = trimmedText.isEmpty ? AppText.tr("Сообщение", "Message") : trimmedText
 
         return HStack(alignment: .top, spacing: 10) {
             Capsule()
@@ -309,7 +309,7 @@ struct ChatDetailView: View {
                 .frame(width: 3)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Ответ")
+                Text(AppText.tr("Ответ", "Reply"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AppColors.accent)
                 Text(previewText)

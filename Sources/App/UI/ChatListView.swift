@@ -25,7 +25,7 @@ struct ChatListView: View {
             .scrollContentBackground(.hidden)
             .background(AppColors.screenBackground)
             .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
-            .navigationTitle("Chats")
+            .navigationTitle(AppText.tr("Чаты", "Chats"))
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Int64.self) { chatId in
                 ChatDetailView(vm: vm, chatId: chatId)
@@ -73,7 +73,7 @@ struct ChatListView: View {
             Button {
                 Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned) }
             } label: {
-                Label(chat.isPinned ? "Unpin" : "Pin", systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
+                Label(chat.isPinned ? AppText.tr("Открепить", "Unpin") : AppText.tr("Закрепить", "Pin"), systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
             }
             .tint(.orange)
 
@@ -86,7 +86,7 @@ struct ChatListView: View {
                     }
                 }
             } label: {
-                Label(chat.unreadCount > 0 || chat.isMarkedUnread ? "Read" : "Unread", systemImage: chat.unreadCount > 0 || chat.isMarkedUnread ? "envelope.open" : "envelope.badge")
+                Label(chat.unreadCount > 0 || chat.isMarkedUnread ? AppText.tr("Прочитано", "Read") : AppText.tr("Не прочитано", "Unread"), systemImage: chat.unreadCount > 0 || chat.isMarkedUnread ? "envelope.open" : "envelope.badge")
             }
             .tint(AppColors.accent)
         }
@@ -106,7 +106,7 @@ struct ChatListView: View {
             Button {
                 Task { await vm.setChatMute(chat.id, duration: chat.isMuted ? .off : .forever) }
             } label: {
-                Label(chat.isMuted ? "Unmute" : "Mute", systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                Label(chat.isMuted ? AppText.tr("Со звуком", "Unmute") : AppText.tr("Без звука", "Mute"), systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
             }
             .tint(.indigo)
         }
@@ -208,26 +208,12 @@ struct ChatListView: View {
         }
     }
 
-    private var pullDetector: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .preference(
-                    key: ChatListPullOffsetKey.self,
-                    value: proxy.frame(in: .named("chat-list-scroll")).minY
-                )
-        }
-        .frame(height: 1)
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets())
-    }
-
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
 
-            TextField("Search", text: $vm.chatSearch)
+            TextField(AppText.tr("Поиск", "Search"), text: $vm.chatSearch)
                 .focused($searchFocused)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -356,16 +342,6 @@ private struct ChatCardView: View {
         case .basicGroup, .supergroup: return "Группа"
         case .channel: return "Канал"
         case .unknown: return "Чат"
-        }
-    }
-
-    private func iconName(for kind: ChatKind) -> String {
-        switch kind {
-        case .savedMessages: return "bookmark.fill"
-        case .private: return "person.fill"
-        case .basicGroup, .supergroup: return "person.2.fill"
-        case .channel: return "megaphone.fill"
-        case .unknown: return "bubble.left.fill"
         }
     }
 

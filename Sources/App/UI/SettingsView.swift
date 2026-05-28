@@ -21,7 +21,7 @@ struct SettingsView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(vm.me?.displayName ?? "Telegram User Client")
+                        Text(vm.me?.displayName ?? AppText.tr("Telegram User Client", "Telegram User Client"))
                             .font(.headline)
 
                         if let username = vm.me?.username, !username.isEmpty {
@@ -38,22 +38,22 @@ struct SettingsView: View {
                 .padding(.vertical, 6)
             }
 
-            Section("Application") {
-                settingsRow(icon: "sparkles", title: "Interface", value: "Native Apple")
-                settingsRow(icon: "lock.shield", title: "Storage", value: "Local TDLib database")
-                settingsRow(icon: "photo.on.rectangle", title: "Media", value: "Inline previews")
+            Section(AppText.tr("Приложение", "Application")) {
+                settingsRow(icon: "sparkles", title: AppText.tr("Интерфейс", "Interface"), value: AppText.tr("Нативный Apple", "Native Apple"))
+                settingsRow(icon: "lock.shield", title: AppText.tr("Хранилище", "Storage"), value: AppText.tr("Локальная база TDLib", "Local TDLib database"))
+                settingsRow(icon: "photo.on.rectangle", title: AppText.tr("Медиа", "Media"), value: AppText.tr("Встроенный просмотр", "Inline previews"))
             }
 
             Section {
                 Button(role: .destructive) {
                     vm.signOut()
                 } label: {
-                    Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+                    Label(AppText.tr("Выйти", "Logout"), systemImage: "rectangle.portrait.and.arrow.right")
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Settings")
+        .navigationTitle(AppText.tr("Настройки", "Settings"))
         .background(AppColors.screenBackground.ignoresSafeArea())
         .task {
             await vm.refreshMe()
@@ -62,8 +62,8 @@ struct SettingsView: View {
 
     private var statusText: String {
         switch vm.authState {
-        case .ready: return "Connected"
-        case .waitPhone, .waitCode, .waitPassword: return "Authorization required"
+        case .ready: return AppText.tr("Подключено", "Connected")
+        case .waitPhone, .waitCode, .waitPassword: return AppText.tr("Требуется авторизация", "Authorization required")
         }
     }
 

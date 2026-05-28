@@ -22,14 +22,14 @@ struct AppShellView: View {
                         ChatListView(vm: vm)
                     }
                     .tabItem {
-                        Label("Chats", systemImage: "bubble.left.and.bubble.right")
+                        Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
                     }
 
                     NavigationStack {
                         SettingsView(vm: vm)
                     }
                     .tabItem {
-                        Label("Settings", systemImage: "gearshape")
+                        Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                     }
                 }
                 .tint(AppColors.accent)
@@ -45,7 +45,7 @@ private struct LoadingView: View {
     var body: some View {
         VStack(spacing: 16) {
             ProgressView()
-            Text("Запуск TDLib…")
+            Text(AppText.tr("Запуск TDLib…", "Starting TDLib…"))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

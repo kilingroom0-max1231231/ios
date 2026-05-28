@@ -10,9 +10,9 @@ struct SetupCredentialsView: View {
                     Image(systemName: "paperplane.circle.fill")
                         .font(.system(size: 72))
                         .foregroundStyle(AppColors.accent)
-                    Text("Telegram User Client")
+                    Text(AppText.tr("Telegram User Client", "Telegram User Client"))
                         .font(.title2.bold())
-                    Text("Подключение через TDLib")
+                    Text(AppText.tr("Подключение через TDLib", "Connect via TDLib"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -29,19 +29,19 @@ struct SetupCredentialsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("API credentials")
+                    Text(AppText.tr("Данные API", "API credentials"))
                         .font(.headline)
 
-                    Text("Получите на my.telegram.org → API development tools")
+                    Text(AppText.tr("Получите на my.telegram.org → API development tools", "Get them at my.telegram.org → API development tools"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    TextField("API ID", text: $vm.apiIdText)
+                    TextField(AppText.tr("API ID", "API ID"), text: $vm.apiIdText)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
                         .glassField()
 
-                    TextField("API Hash", text: $vm.apiHash)
+                    TextField(AppText.tr("API Hash", "API Hash"), text: $vm.apiHash)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .glassField()
@@ -57,7 +57,7 @@ struct SetupCredentialsView: View {
                             ProgressView()
                                 .tint(.white)
                         }
-                        Text(vm.isBusy ? "Подключение…" : "Продолжить")
+                        Text(vm.isBusy ? AppText.tr("Подключение…", "Connecting…") : AppText.tr("Продолжить", "Continue"))
                             .fontWeight(.semibold)
                     }
                 }
