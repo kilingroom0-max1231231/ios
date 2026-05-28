@@ -677,7 +677,7 @@ private struct FullscreenCloseButton: View {
             Image(systemName: "xmark")
         }
         .buttonStyle(.bordered)
-        .buttonBorderShape(.circle)
+        .clipShape(Circle())
         .controlSize(.large)
         .tint(.white)
     }

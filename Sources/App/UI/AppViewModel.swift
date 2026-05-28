@@ -124,7 +124,7 @@ final class AppViewModel: ObservableObject {
 
         do {
             if !isTdlibConfigured {
-                try await repository.setup(apiId: apiId, apiHash: apiHash)
+            try await repository.setup(apiId: apiId, apiHash: apiHash)
                 isTdlibConfigured = true
             }
             authState = repository.authState()
@@ -285,7 +285,7 @@ final class AppViewModel: ObservableObject {
                 if let replyId = replyingToMessageId {
                     messages = try await repository.sendReply(chatId: chatId, text: text, replyToMessageId: replyId)
                 } else {
-                    messages = try await repository.send(chatId: chatId, text: text)
+            messages = try await repository.send(chatId: chatId, text: text)
                 }
             }
             composeText = ""

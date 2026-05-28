@@ -197,7 +197,7 @@ struct ChatDetailView: View {
                         Image(systemName: "xmark")
                     }
                     .buttonStyle(.bordered)
-                    .buttonBorderShape(.circle)
+                    .clipShape(Circle())
                     .controlSize(.large)
                     .disabled(vm.isBusy)
                 }
@@ -224,7 +224,7 @@ struct ChatDetailView: View {
         } label: {
             Image(systemName: "paperplane.fill")
         }
-        .buttonBorderShape(.circle)
+        .clipShape(Circle())
         .controlSize(.large)
         .disabled(vm.isBusy || isComposeTextEmpty)
 
