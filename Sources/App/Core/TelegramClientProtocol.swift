@@ -29,4 +29,6 @@ protocol TelegramClientProtocol {
     func leaveChat(chatId: Int64) async throws
 
     func getMe() async throws -> TgUser
+    func setUserBlocked(userId: Int64, isBlocked: Bool) async throws
+    func fetchUserProfilePhotoPaths(userId: Int64, limit: Int) async throws -> [String]
 }

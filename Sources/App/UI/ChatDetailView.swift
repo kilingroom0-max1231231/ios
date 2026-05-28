@@ -8,15 +8,31 @@ struct ChatDetailView: View {
     @State private var mediaSelection: MediaViewerSelection?
     @State private var forwardingMessage: TgMessage?
 
-    private var title: String {
-        vm.chats.first(where: { $0.id == chatId })?.title ?? AppText.tr("Чат", "Chat")
-    }
-
     private var selectedChat: TgChat? {
         vm.chats.first(where: { $0.id == chatId })
     }
 
+    private var title: String {
+        if selectedChat?.kind == .savedMessages {
+            return AppText.tr("Избранное", "Saved Messages")
+        }
+        return selectedChat?.title ?? AppText.tr("Чат", "Chat")
+    }
+
+    private var isSavedMessages: Bool {
+        selectedChat?.kind == .savedMessages
+    }
+
     private var subtitle: String {
+        if isSavedMessages {
+            return AppText.tr("ваши сохранённые сообщения", "your saved messages")
+        }
+        if selectedChat?.isBlockedByMe == true {
+            return AppText.tr("Вы заблокировали", "You blocked them")
+        }
+        if selectedChat?.isBlockedByPeer == true {
+            return AppText.tr("Ограничил(а) вас", "Restricted you")
+        }
         if vm.isBusy { return AppText.tr("обновление...", "updating...") }
         return selectedChat?.statusText ?? AppText.tr("был(а) недавно", "last seen recently")
     }
@@ -30,7 +46,7 @@ struct ChatDetailView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 bottomBar
             }
-        .background(AppColors.chatBackground.ignoresSafeArea())
+        .background(ChatScreenBackground().ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -50,7 +66,8 @@ struct ChatDetailView: View {
                             title: title,
                             identifier: chatId,
                             imagePath: selectedChat?.avatarPath,
-                            size: 30
+                            size: 30,
+                            isSavedMessages: isSavedMessages
                         )
                         VStack(alignment: .leading, spacing: 0) {
                             Text(title)
@@ -66,7 +83,7 @@ struct ChatDetailView: View {
             }
         }
         .refreshable {
-            await vm.refreshMessages()
+            await vm.refreshMessages(replaceExisting: true)
         }
         .sheet(isPresented: $showProfile) {
             NavigationStack {
@@ -152,8 +169,7 @@ struct ChatDetailView: View {
                         }
                         MessageBubbleView(
                             message: message,
-                            incomingAvatarPath: selectedChat?.avatarPath,
-                            incomingTitle: title,
+                            chatKind: selectedChat?.kind ?? .unknown,
                             replyPreviewText: replyPreview,
                             onOpenAttachment: { attachment in
                                 let attachments = mediaAttachments
@@ -197,7 +213,7 @@ struct ChatDetailView: View {
                 }
                 .padding(.vertical, 8)
         }
-        .background(AppColors.chatBackground)
+        .background(ChatScreenBackground())
         .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
@@ -371,7 +387,12 @@ struct ChatDetailView: View {
                         isDeleted: merged.isDeleted || next.isDeleted,
                         attachments: attachments,
                         mediaAlbumId: albumId,
-                        forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom
+                        forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom,
+                        senderUserId: merged.senderUserId ?? next.senderUserId,
+                        senderName: merged.senderName ?? next.senderName,
+                        senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
+                        authorSignature: merged.authorSignature ?? next.authorSignature,
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
                     )
                 }
                 j += 1
@@ -389,7 +410,12 @@ struct ChatDetailView: View {
                     isDeleted: merged.isDeleted,
                     attachments: attachments,
                     mediaAlbumId: albumId,
-                    forwardedFrom: merged.forwardedFrom
+                    forwardedFrom: merged.forwardedFrom,
+                    senderUserId: merged.senderUserId,
+                    senderName: merged.senderName,
+                    senderAvatarPath: merged.senderAvatarPath,
+                    authorSignature: merged.authorSignature,
+                    viewCount: merged.viewCount
                 )
             }
 

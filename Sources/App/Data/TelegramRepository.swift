@@ -19,6 +19,7 @@ final class TelegramRepository {
     var onChatsChanged: (() -> Void)?
     var onChatChanged: ((Int64) -> Void)?
     var onTypingChanged: ((Int64, String?) -> Void)?
+    var onIncomingMessage: ((TgMessage) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore) {
         self.client = client
@@ -30,6 +31,7 @@ final class TelegramRepository {
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
                 try? self.store.upsert(messages: [message])
+                self.onIncomingMessage?(message)
                 self.onMessagesChanged?(message.chatId)
                 self.onChatChanged?(message.chatId)
             case .messageReplaced(let chatId, let oldMessageId, let newMessage):
@@ -85,20 +87,34 @@ final class TelegramRepository {
         try await client.fetchChats(limit: 200)
     }
 
-    func syncMessages(chatId: Int64) async throws -> [TgMessage] {
-        let remote = try await client.fetchMessages(chatId: chatId, limit: 500)
+    static let initialMessagePageSize = 20
+    static let olderMessagePageSize = 40
+    static let peekMessagePageSize = 20
+
+    func syncMessages(chatId: Int64, limit: Int = TelegramRepository.initialMessagePageSize) async throws -> [TgMessage] {
+        let remote = try await client.fetchMessages(chatId: chatId, limit: limit)
         try store.upsert(messages: remote)
         try store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
-        return try store.read(chatId: chatId, limit: 5000)
+        return remote.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func peekMessages(chatId: Int64, limit: Int = TelegramRepository.peekMessagePageSize) async throws -> [TgMessage] {
+        try await client.fetchMessages(chatId: chatId, limit: limit)
+    }
+
+    func peekOlderMessages(chatId: Int64, beforeMessageId: Int64, limit: Int = TelegramRepository.olderMessagePageSize) async throws -> [TgMessage] {
+        try await client.fetchOlderMessages(chatId: chatId, fromMessageId: beforeMessageId, limit: limit)
     }
 
     func loadOlderMessages(chatId: Int64, beforeMessageId: Int64) async throws -> [TgMessage] {
-        let older = try await client.fetchOlderMessages(chatId: chatId, fromMessageId: beforeMessageId, limit: 300)
-        guard !older.isEmpty else {
-            return try store.read(chatId: chatId, limit: 5000)
-        }
+        let older = try await client.fetchOlderMessages(chatId: chatId, fromMessageId: beforeMessageId, limit: Self.olderMessagePageSize)
+        guard !older.isEmpty else { return [] }
         try store.upsert(messages: older)
-        return try store.read(chatId: chatId, limit: 5000)
+        return older.sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func loadUserProfilePhotoPaths(userId: Int64) async throws -> [String] {
+        try await client.fetchUserProfilePhotoPaths(userId: userId, limit: 100)
     }
 
     func forwardMessage(fromChatId: Int64, toChatId: Int64, messageId: Int64) async throws {
@@ -191,6 +207,10 @@ final class TelegramRepository {
 
     func loadMe() async throws -> TgUser {
         try await client.getMe()
+    }
+
+    func setUserBlocked(userId: Int64, isBlocked: Bool) async throws {
+        try await client.setUserBlocked(userId: userId, isBlocked: isBlocked)
     }
 }
 

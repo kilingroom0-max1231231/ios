@@ -35,6 +35,10 @@ final class AppViewModel: ObservableObject {
     @Published var authState: AuthState = .waitPhone
     @Published var isBusy = false
     @Published var bootstrapError: String?
+    @Published var navigationTargetChatId: Int64?
+    @Published var peekChatId: Int64?
+    @Published var peekMessages: [TgMessage] = []
+    @Published var isPeekLoading = false
 
     private var repository: TelegramRepository?
     private var mediaDownloadsInProgress: Set<Int64> = []
@@ -43,6 +47,7 @@ final class AppViewModel: ObservableObject {
     private var isTdlibConfigured = false
     private let credentials = ApiCredentialsStore()
     private var isLoadingOlderMessages = false
+    private var isLoadingPeekOlder = false
 
     var filteredChats: [TgChat] {
         let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -223,18 +228,25 @@ final class AppViewModel: ObservableObject {
 
     func selectChat(_ chatId: Int64) async {
         selectedChatId = chatId
-        await refreshMessages()
+        messages = []
+        await refreshMessages(replaceExisting: true)
         await markChatRead(chatId)
     }
 
-    func refreshMessages() async {
+    func refreshMessages(replaceExisting: Bool = false) async {
         guard let repository, let chatId = selectedChatId else { return }
         isBusy = true
         defer { isBusy = false }
         do {
             let syncedMessages = try await repository.syncMessages(chatId: chatId)
-            messages = syncedMessages
-            scheduleMediaDownloadIfNeeded(chatId: chatId, messages: syncedMessages)
+            if replaceExisting || messages.isEmpty {
+                messages = syncedMessages
+            } else {
+                let existingIds = Set(messages.map(\.id))
+                let newOnes = syncedMessages.filter { !existingIds.contains($0.id) }
+                messages = messages + newOnes
+            }
+            scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             status = error.localizedDescription
         }
@@ -253,9 +265,74 @@ final class AppViewModel: ObservableObject {
         defer { isLoadingOlderMessages = false }
 
         do {
-            messages = try await repository.loadOlderMessages(chatId: chatId, beforeMessageId: oldest)
+            let older = try await repository.loadOlderMessages(chatId: chatId, beforeMessageId: oldest)
+            guard !older.isEmpty else { return }
+            let existingIds = Set(messages.map(\.id))
+            let newOnes = older.filter { !existingIds.contains($0.id) }
+            messages = newOnes + messages
+            scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             status = error.localizedDescription
+        }
+    }
+
+    func openChatPeek(chatId: Int64) async {
+        guard let repository else { return }
+        peekChatId = chatId
+        peekMessages = []
+        isPeekLoading = true
+        defer { isPeekLoading = false }
+        do {
+            peekMessages = try await repository.peekMessages(chatId: chatId)
+        } catch {
+            status = error.localizedDescription
+            peekChatId = nil
+        }
+    }
+
+    func closeChatPeek() {
+        peekChatId = nil
+        peekMessages = []
+    }
+
+    func loadPeekOlderIfNeeded(chatId: Int64, triggerMessageId: Int64) async {
+        guard
+            let repository,
+            peekChatId == chatId,
+            !isLoadingPeekOlder,
+            let oldest = peekMessages.first?.id,
+            oldest == triggerMessageId
+        else { return }
+
+        isLoadingPeekOlder = true
+        defer { isLoadingPeekOlder = false }
+
+        do {
+            let older = try await repository.peekOlderMessages(chatId: chatId, beforeMessageId: oldest)
+            guard !older.isEmpty else { return }
+            let existingIds = Set(peekMessages.map(\.id))
+            let newOnes = older.filter { !existingIds.contains($0.id) }
+            peekMessages = newOnes + peekMessages
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func openChat(chatId: Int64) async {
+        selectedChatId = chatId
+        navigationTargetChatId = chatId
+        messages = []
+        await refreshMessages(replaceExisting: true)
+        await markChatRead(chatId)
+    }
+
+    func loadProfilePhotoPaths(userId: Int64) async -> [String] {
+        guard let repository else { return [] }
+        do {
+            let paths = try await repository.loadUserProfilePhotoPaths(userId: userId)
+            return paths.isEmpty ? [] : paths
+        } catch {
+            return []
         }
     }
 
@@ -456,6 +533,53 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func setUserBlocked(chatId: Int64, blocked: Bool) async {
+        guard let repository else { return }
+        let userId = chats.first(where: { $0.id == chatId })?.privateUserId
+            ?? chatProfile?.userId
+        guard let userId else {
+            status = AppText.tr("Не удалось определить пользователя", "Could not resolve user")
+            return
+        }
+
+        do {
+            try await repository.setUserBlocked(userId: userId, isBlocked: blocked)
+            updateLocalChat(chatId) { chat in
+                chat.isBlockedByMe = blocked
+                chat.isBlockedByPeer = blocked ? false : chat.isBlockedByPeer
+                if blocked {
+                    chat.statusText = AppText.tr("Заблокирован вами", "Blocked by you")
+                    chat.canSendMessages = false
+                    chat.sendRestrictionText = AppText.tr("Вы заблокировали этого пользователя", "You blocked this user")
+                }
+            }
+            if var profile = chatProfile, profile.chatId == chatId {
+                profile = ChatProfile(
+                    chatId: profile.chatId,
+                    title: profile.title,
+                    kind: profile.kind,
+                    avatarPath: profile.avatarPath,
+                    username: profile.username,
+                    description: profile.description,
+                    membersCount: profile.membersCount,
+                    statusText: blocked
+                        ? AppText.tr("Заблокирован вами", "Blocked by you")
+                        : profile.statusText,
+                    userId: profile.userId,
+                    isBlockedByMe: blocked,
+                    isBlockedByPeer: profile.isBlockedByPeer
+                )
+                chatProfile = profile
+            }
+            await refreshChats()
+            if selectedChatId == chatId {
+                await loadProfile(chatId: chatId)
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
     func movePinnedChats(from source: IndexSet, to destination: Int) async {
         guard let repository else { return }
         var pinned = chats.filter(\.isPinned)
@@ -515,6 +639,28 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func handleIncomingMessage(_ message: TgMessage) {
+        guard !message.outgoing, phase == .main else { return }
+        guard let chat = chats.first(where: { $0.id == message.chatId }) else { return }
+        guard !chat.isMuted else { return }
+        guard selectedChatId != message.chatId else { return }
+        NotificationSoundPlayer.playMessageReceived()
+    }
+
+    private func reloadPeekMessages(chatId: Int64) async {
+        guard let repository, peekChatId == chatId else { return }
+        do {
+            let latest = try await repository.peekMessages(chatId: chatId)
+            let existingIds = Set(peekMessages.map(\.id))
+            let newOnes = latest.filter { !existingIds.contains($0.id) }
+            if !newOnes.isEmpty {
+                peekMessages = peekMessages + newOnes
+            }
+        } catch {
+            // Keep silent during peek preview.
+        }
+    }
+
     private func wireRepository(_ repository: TelegramRepository) {
         repository.onAuthStateChanged = { [weak self] state in
             Task { @MainActor in
@@ -523,9 +669,18 @@ final class AppViewModel: ObservableObject {
             }
         }
 
+        repository.onIncomingMessage = { [weak self] message in
+            Task { @MainActor in
+                self?.handleIncomingMessage(message)
+            }
+        }
+
         repository.onMessagesChanged = { [weak self] chatId in
             guard let self else { return }
             Task { @MainActor in
+                if self.peekChatId == chatId {
+                    await self.reloadPeekMessages(chatId: chatId)
+                }
                 if self.selectedChatId == chatId {
                     await self.refreshMessages()
                     await self.markChatRead(chatId)
@@ -560,7 +715,6 @@ final class AppViewModel: ObservableObject {
         case .ready:
             phase = .main
             status = ""
-            await refreshChats()
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
@@ -572,6 +726,9 @@ final class AppViewModel: ObservableObject {
         guard let repository, authState == .ready else { return }
         do {
             me = try await repository.loadMe()
+            if phase == .main {
+                await refreshChats()
+            }
         } catch {
             // Non-critical for core UX; keep Settings usable even if this fails.
             me = nil

@@ -3,60 +3,90 @@ import UIKit
 
 struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var appearance: AppAppearanceStore
     @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
+    @State private var navigationPath = NavigationPath()
 
     var body: some View {
-        ZStack(alignment: .top) {
-            List {
-                pullDetector
+        NavigationStack(path: $navigationPath) {
+            chatListContent
+        }
+        .onChange(of: vm.navigationTargetChatId) { target in
+            guard let target else { return }
+            navigationPath.append(target)
+            vm.navigationTargetChatId = nil
+        }
+    }
 
-                ForEach(visiblePinnedChats) { chat in
-                    chatRow(chat)
-                }
-                .onMove { source, destination in
-                    guard vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                    Task { await vm.movePinnedChats(from: source, to: destination) }
-                }
-
-                ForEach(visibleOtherChats) { chat in
-                    chatRow(chat)
-                }
+    private var chatListContent: some View {
+        List {
+            ForEach(visiblePinnedChats) { chat in
+                chatRow(chat)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .coordinateSpace(name: "chat-list-scroll")
-            .background(AppColors.screenBackground)
-            .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
-            .navigationTitle(AppText.tr("Чаты", "Chats"))
-            .navigationBarTitleDisplayMode(.inline)
+            .onMove { source, destination in
+                guard vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                Task { await vm.movePinnedChats(from: source, to: destination) }
+            }
+
+            ForEach(visibleOtherChats) { chat in
+                chatRow(chat)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(ChatListScreenBackground())
+        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
+        .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Int64.self) { chatId in
                 ChatDetailView(vm: vm, chatId: chatId)
             }
-            .overlay {
-                if vm.chats.isEmpty && !vm.isBusy {
-                    emptyChatsView
-                }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if searchVisible || !vm.chatSearch.isEmpty {
+                searchField
             }
-            .refreshable {
-                await vm.refreshChats()
+        }
+        .overlay {
+            if vm.chats.isEmpty && !vm.isBusy {
+                emptyChatsView
             }
-            .toolbar {
-                if !visiblePinnedChats.isEmpty && vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        EditButton()
+        }
+        .refreshable {
+            await vm.refreshChats()
+        }
+        .sheet(isPresented: peekSheetPresented) {
+            if let chatId = vm.peekChatId {
+                ChatPeekView(vm: vm, chatId: chatId)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        searchVisible.toggle()
                     }
+                    if searchVisible {
+                        searchFocused = true
+                    } else {
+                        searchFocused = false
+                        if vm.chatSearch.isEmpty {
+                            vm.chatSearch = ""
+                        }
+                    }
+                } label: {
+                    Text(AppText.tr("Чаты", "Chats"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
                 }
+                .buttonStyle(.plain)
             }
 
-            searchField
-        }
-        .onPreferenceChange(ChatListPullOffsetKey.self) { value in
-            if value > 24 {
-                searchVisible = true
-            } else if value < -6 && vm.chatSearch.isEmpty {
-                searchVisible = false
-                searchFocused = false
+            if !visiblePinnedChats.isEmpty && vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    EditButton()
+                }
             }
         }
     }
@@ -69,6 +99,17 @@ struct ChatListView: View {
         vm.filteredChats.filter { !$0.isPinned }
     }
 
+    private var peekSheetPresented: Binding<Bool> {
+        Binding(
+            get: { vm.peekChatId != nil },
+            set: { isPresented in
+                if !isPresented {
+                    vm.closeChatPeek()
+                }
+            }
+        )
+    }
+
     private func chatRow(_ chat: TgChat) -> some View {
         NavigationLink(value: chat.id) {
             ChatCardView(chat: chat)
@@ -77,8 +118,19 @@ struct ChatListView: View {
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45)
+                .onEnded { _ in
+                    Task { await vm.openChatPeek(chatId: chat.id) }
+                }
+        )
         .contextMenu {
             chatContextMenu(for: chat)
+            Button {
+                Task { await vm.openChatPeek(chatId: chat.id) }
+            } label: {
+                Label(AppText.tr("Просмотр", "Preview"), systemImage: "eye")
+            }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
@@ -117,7 +169,7 @@ struct ChatListView: View {
             Button {
                 Task { await vm.setChatMute(chat.id, duration: chat.isMuted ? .off : .forever) }
             } label: {
-                Label(chat.isMuted ? AppText.tr("Со звуком", "Unmute") : AppText.tr("Без звука", "Mute"), systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                Label(chat.isMuted ? AppText.tr("Со звуком", "Unmute") : AppText.tr("Без звука", "Mute"), systemImage: chat.isMuted ? "bell.slash.fill" : "bell.fill")
             }
             .tint(.indigo)
         }
@@ -128,42 +180,55 @@ struct ChatListView: View {
         Button {
             Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned) }
         } label: {
-            Label(chat.isPinned ? "Unpin Chat" : "Pin Chat", systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
+            Label(chat.isPinned ? AppText.tr("Открепить", "Unpin") : AppText.tr("Закрепить", "Pin"), systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
         }
 
         if chat.isMuted {
             Button {
                 Task { await vm.setChatMute(chat.id, duration: .off) }
             } label: {
-                Label("Unmute", systemImage: "bell.fill")
+                Label(AppText.tr("Со звуком", "Unmute"), systemImage: "bell.fill")
             }
         } else {
             Menu {
-                Button("1 hour") {
+                Button(AppText.tr("1 час", "1 hour")) {
                     Task { await vm.setChatMute(chat.id, duration: .oneHour) }
                 }
-                Button("8 hours") {
+                Button(AppText.tr("8 часов", "8 hours")) {
                     Task { await vm.setChatMute(chat.id, duration: .eightHours) }
                 }
-                Button("Forever") {
+                Button(AppText.tr("Навсегда", "Forever")) {
                     Task { await vm.setChatMute(chat.id, duration: .forever) }
                 }
             } label: {
-                Label("Mute", systemImage: "bell.slash.fill")
+                Label(AppText.tr("Без звука", "Mute"), systemImage: "bell.slash.fill")
             }
         }
 
         Button {
             Task { await vm.markChatRead(chat.id) }
         } label: {
-            Label("Mark as Read", systemImage: "envelope.open")
+            Label(AppText.tr("Прочитано", "Read"), systemImage: "envelope.open")
         }
 
         if chat.kind == .private || chat.kind == .savedMessages {
             Button {
                 Task { await vm.markChatUnread(chat.id) }
             } label: {
-                Label("Mark as Unread", systemImage: "envelope.badge")
+                Label(AppText.tr("Не прочитано", "Unread"), systemImage: "envelope.badge")
+            }
+        }
+
+        if chat.kind == .private, chat.privateUserId != nil {
+            Button(role: .destructive) {
+                Task { await vm.setUserBlocked(chatId: chat.id, blocked: !chat.isBlockedByMe) }
+            } label: {
+                Label(
+                    chat.isBlockedByMe
+                        ? AppText.tr("Разблокировать", "Unblock")
+                        : AppText.tr("Заблокировать", "Block"),
+                    systemImage: chat.isBlockedByMe ? "hand.raised.slash" : "hand.raised.fill"
+                )
             }
         }
 
@@ -173,64 +238,43 @@ struct ChatListView: View {
             Button(role: .destructive) {
                 Task { await vm.clearChatHistory(chat.id) }
             } label: {
-                Label("Clear History", systemImage: "eraser")
+                Label(AppText.tr("Очистить историю", "Clear History"), systemImage: "eraser")
             }
 
             if chat.kind == .private {
                 Button(role: .destructive) {
                     Task { await vm.deleteChat(chat.id) }
                 } label: {
-                    Label("Delete Chat", systemImage: "trash")
+                    Label(AppText.tr("Удалить чат", "Delete Chat"), systemImage: "trash")
                 }
             }
         } else if chat.kind == .channel {
             Button(role: .destructive) {
                 Task { await vm.leaveChat(chat.id) }
             } label: {
-                Label("Leave Channel", systemImage: "rectangle.portrait.and.arrow.right")
+                Label(AppText.tr("Покинуть канал", "Leave Channel"), systemImage: "rectangle.portrait.and.arrow.right")
             }
         } else {
             Button(role: .destructive) {
                 Task { await vm.clearChatHistory(chat.id) }
             } label: {
-                Label("Clear History", systemImage: "eraser")
+                Label(AppText.tr("Очистить историю", "Clear History"), systemImage: "eraser")
             }
             Button(role: .destructive) {
                 Task { await vm.leaveChat(chat.id) }
             } label: {
-                Label("Leave Group", systemImage: "rectangle.portrait.and.arrow.right")
-            }
-            Button(role: .destructive) {
-                Task { await vm.leaveChat(chat.id) }
-            } label: {
-                Label("Delete and Leave", systemImage: "trash")
+                Label(AppText.tr("Покинуть группу", "Leave Group"), systemImage: "rectangle.portrait.and.arrow.right")
             }
         }
     }
 
     private func deleteTitle(for chat: TgChat) -> String {
         switch chat.kind {
-        case .channel:
-            return "Leave"
-        case .basicGroup, .supergroup:
-            return "Leave"
+        case .channel, .basicGroup, .supergroup:
+            return AppText.tr("Выйти", "Leave")
         default:
-            return "Delete"
+            return AppText.tr("Удалить", "Delete")
         }
-    }
-
-    private var pullDetector: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .preference(
-                    key: ChatListPullOffsetKey.self,
-                    value: proxy.frame(in: .named("chat-list-scroll")).minY
-                )
-        }
-        .frame(height: 1)
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets())
     }
 
     private var searchField: some View {
@@ -253,35 +297,29 @@ struct ChatListView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .frame(maxWidth: 360)
-        .glassContainer(cornerRadius: 18)
-        .padding(.horizontal, 18)
-        .padding(.top, 8)
-        .opacity(searchVisible || !vm.chatSearch.isEmpty ? 1 : 0)
-        .offset(y: searchVisible || !vm.chatSearch.isEmpty ? 0 : -22)
-        .allowsHitTesting(searchVisible || !vm.chatSearch.isEmpty)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: searchVisible)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.chatSearch.isEmpty)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 2)
     }
 
     @ViewBuilder
     private var emptyChatsView: some View {
         if #available(iOS 17.0, *) {
             ContentUnavailableView(
-                "Нет чатов",
+                AppText.tr("Нет чатов", "No chats"),
                 systemImage: "bubble.left.and.bubble.right",
-                description: Text("Потяните вниз для обновления")
+                description: Text(AppText.tr("Потяните вниз для обновления", "Pull down to refresh"))
             )
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right")
                     .font(.system(size: 34))
                     .foregroundStyle(.secondary)
-                Text("Нет чатов")
+                Text(AppText.tr("Нет чатов", "No chats"))
                     .font(.headline)
-                Text("Потяните вниз для обновления")
+                Text(AppText.tr("Потяните вниз для обновления", "Pull down to refresh"))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -297,15 +335,23 @@ private struct ChatCardView: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                AvatarView(title: chat.title, identifier: chat.id, imagePath: chat.avatarPath, size: 52)
-                Circle()
-                    .fill((chat.isOnline ?? false) ? Color.green : Color.gray.opacity(0.75))
-                    .frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-                    .offset(x: 1, y: 1)
+                AvatarView(
+                    title: chat.title,
+                    identifier: chat.id,
+                    imagePath: chat.avatarPath,
+                    size: 52,
+                    isSavedMessages: chat.kind == .savedMessages
+                )
+                if chat.kind != .savedMessages {
+                    Circle()
+                        .fill((chat.isOnline ?? false) ? Color.green : Color.gray.opacity(0.75))
+                        .frame(width: 12, height: 12)
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                        .offset(x: 1, y: 1)
+                }
             }
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(chat.title)
                         .font(.headline)
@@ -342,14 +388,21 @@ private struct ChatCardView: View {
                     }
                 }
 
-                HStack(spacing: 6) {
-                    Text(previewText)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(previewText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-                if let status = chat.statusText, !status.isEmpty {
+                if chat.isBlockedByMe || chat.isBlockedByPeer {
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.raised.fill")
+                            .font(.caption2)
+                        Text(blockStatusText(for: chat))
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                } else if let status = chat.statusText, !status.isEmpty, chat.kind != .savedMessages {
                     Text(status)
                         .font(.caption)
                         .foregroundStyle((chat.isOnline ?? false) ? .green : .secondary)
@@ -357,9 +410,10 @@ private struct ChatCardView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppColors.screenBackground)
+        .background(ChatListScreenBackground())
     }
 
     private var previewText: String {
@@ -367,25 +421,25 @@ private struct ChatCardView: View {
             return preview
         }
         switch chat.kind {
-        case .savedMessages: return "Saved Messages"
-        case .private: return "Личное сообщение"
-        case .basicGroup, .supergroup: return "Группа"
-        case .channel: return "Канал"
-        case .unknown: return "Чат"
+        case .savedMessages: return AppText.tr("Сохранённые сообщения", "Saved messages")
+        case .private: return AppText.tr("Личное сообщение", "Private chat")
+        case .basicGroup, .supergroup: return AppText.tr("Группа", "Group")
+        case .channel: return AppText.tr("Канал", "Channel")
+        case .unknown: return AppText.tr("Чат", "Chat")
         }
     }
 
     private func unreadText(_ value: Int) -> String {
         value > 99 ? "99+" : "\(value)"
     }
-}
 
-// Intentionally removed the "pull to reveal search" behavior.
-// Search is always visible at the top.
-private struct ChatListPullOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    private func blockStatusText(for chat: TgChat) -> String {
+        if chat.isBlockedByMe {
+            return AppText.tr("Заблокирован вами", "Blocked by you")
+        }
+        if chat.isBlockedByPeer {
+            return AppText.tr("Ограничил(а) вас", "Restricted you")
+        }
+        return ""
     }
 }

@@ -231,43 +231,73 @@ struct MediaViewerView: View {
             .tabViewStyle(.page(indexDisplayMode: attachments.count > 1 ? .automatic : .never))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            FullscreenCloseButton {
-                dismiss()
-            }
-            .padding(.top, 18)
-            .padding(.trailing, 18)
+            VStack {
+                HStack {
+                    if let currentURL = currentLocalURL {
+                        HStack(spacing: 14) {
+                            ShareLink(item: currentURL) {
+                                mediaToolbarLabel(
+                                    title: AppText.tr("Поделиться", "Share"),
+                                    systemImage: "square.and.arrow.up"
+                                )
+                            }
 
-            if let currentURL = currentLocalURL {
-                HStack(spacing: 10) {
-                    ShareLink(item: currentURL) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Color.black.opacity(0.34))
-                            .clipShape(Circle())
+                            Button {
+                                saveCurrentToLibrary()
+                            } label: {
+                                mediaToolbarLabel(
+                                    title: AppText.tr("Сохранить", "Save"),
+                                    systemImage: "arrow.down.circle.fill"
+                                )
+                            }
+                        }
                     }
-
-                    Button {
-                        saveCurrentToLibrary()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Color.black.opacity(0.34))
-                            .clipShape(Circle())
+                    Spacer()
+                    mediaCloseButton {
+                        dismiss()
                     }
                 }
-                .padding(.top, 18)
-                .padding(.leading, 18)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                Spacer()
             }
         }
         .onDisappear { pauseAll() }
         .alert(AppText.tr("Сохранено", "Saved"), isPresented: $saveConfirmationShown) {
             Button(AppText.tr("OK", "OK"), role: .cancel) {}
         }
+    }
+
+    @ViewBuilder
+    private func mediaToolbarLabel(title: String, systemImage: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.title3.weight(.semibold))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .frame(minWidth: 72, minHeight: 56)
+        .background(Color.black.opacity(0.42))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func mediaCloseButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.bold))
+                Text(AppText.tr("Закрыть", "Close"))
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.42))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private func player(for index: Int) -> AVPlayer? {
@@ -315,7 +345,7 @@ struct MediaViewerView: View {
             break
         }
     }
-    }
+}
 
 private struct MediaViewerPage: View {
     let attachment: TgAttachment
@@ -462,39 +492,58 @@ private struct FullscreenImageContent: View {
 }
 
 struct FullscreenAvatarOverlay: View {
-    let imagePath: String
+    let imagePaths: [String]
     let title: String
     let namespace: Namespace.ID
     let id: String
     @Binding var isPresented: Bool
+    @State private var selection = 0
     @State private var dragOffset: CGSize = .zero
     @State private var scale: CGFloat = 1
     @State private var committedScale: CGFloat = 1
 
+    init(
+        imagePath: String,
+        imagePaths: [String] = [],
+        title: String,
+        namespace: Namespace.ID,
+        id: String,
+        isPresented: Binding<Bool>
+    ) {
+        let merged = imagePaths.isEmpty ? [imagePath] : imagePaths
+        self.imagePaths = merged
+        self.title = title
+        self.namespace = namespace
+        self.id = id
+        self._isPresented = isPresented
+    }
+
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .top) {
             Color.black
                 .opacity(max(0.28, 0.92 - abs(dragOffset.height) / 430))
                 .ignoresSafeArea()
                 .background(.ultraThinMaterial)
-                .onTapGesture {
-                    close()
-                }
+                .onTapGesture { close() }
 
-            Group {
-                if let image = LocalImageCache.shared.image(path: imagePath) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    MissingMediaView(title: "Не удалось открыть изображение")
+            TabView(selection: $selection) {
+                ForEach(Array(imagePaths.enumerated()), id: \.offset) { index, path in
+                    Group {
+                        if let image = LocalImageCache.shared.image(path: path) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                        } else {
+                            MissingMediaView(title: AppText.tr("Не удалось открыть", "Could not open"))
+                        }
+                    }
+                    .tag(index)
+                    .padding(18)
                 }
             }
-            .matchedGeometryEffect(id: id, in: namespace)
-            .padding(18)
+            .tabViewStyle(.page(indexDisplayMode: imagePaths.count > 1 ? .automatic : .never))
             .offset(dragOffset)
             .scaleEffect(scale * max(0.84, 1 - abs(dragOffset.height) / 820))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .gesture(zoomGesture)
             .simultaneousGesture(dragGesture)
             .onTapGesture(count: 2) {
@@ -505,11 +554,36 @@ struct FullscreenAvatarOverlay: View {
             }
             .accessibilityLabel(title)
 
-            FullscreenCloseButton {
-                close()
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: close) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "xmark")
+                                .font(.body.weight(.bold))
+                            Text(AppText.tr("Закрыть", "Close"))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.42))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+
+                if imagePaths.count > 1 {
+                    Text("\(selection + 1) / \(imagePaths.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.top, 6)
+                }
+
+                Spacer()
             }
-            .padding(.top, 18)
-            .padding(.trailing, 18)
         }
         .transition(.opacity)
     }

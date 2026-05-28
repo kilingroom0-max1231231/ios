@@ -8,6 +8,7 @@ struct ChatProfileView: View {
     @State private var selectedMediaCategory: ChatMediaCategory = .photos
     @State private var mediaSelection: MediaViewerSelection?
     @State private var showAvatar = false
+    @State private var profilePhotoPaths: [String] = []
 
     private var hasAvatar: Bool {
         guard let avatarPath = profile.avatarPath else { return false }
@@ -48,17 +49,23 @@ struct ChatProfileView: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
-            .background(AppColors.screenBackground.ignoresSafeArea())
+            .background(ChatListScreenBackground().ignoresSafeArea())
 
-            if showAvatar, let avatarPath = profile.avatarPath {
-                FullscreenAvatarOverlay(
-                    imagePath: avatarPath,
-                    title: profile.title,
-                    namespace: avatarNamespace,
-                    id: "profile-avatar",
-                    isPresented: $showAvatar
-                )
-                .zIndex(10)
+            if showAvatar {
+                let paths = profilePhotoPaths.isEmpty
+                    ? [profile.avatarPath].compactMap { $0 }
+                    : profilePhotoPaths
+                if let first = paths.first {
+                    FullscreenAvatarOverlay(
+                        imagePath: first,
+                        imagePaths: paths,
+                        title: profile.title,
+                        namespace: avatarNamespace,
+                        id: "profile-avatar",
+                        isPresented: $showAvatar
+                    )
+                    .zIndex(10)
+                }
             }
         }
         .navigationTitle("Профиль")
@@ -98,7 +105,19 @@ struct ChatProfileView: View {
         VStack(spacing: 12) {
             Button {
                 if hasAvatar {
-                    showAvatar = true
+                    Task {
+                        if let userId = profile.userId {
+                            let loaded = await vm.loadProfilePhotoPaths(userId: userId)
+                            if !loaded.isEmpty {
+                                profilePhotoPaths = loaded
+                            } else if let avatarPath = profile.avatarPath {
+                                profilePhotoPaths = [avatarPath]
+                            }
+                        } else if let avatarPath = profile.avatarPath {
+                            profilePhotoPaths = [avatarPath]
+                        }
+                        showAvatar = true
+                    }
                 }
             } label: {
                 AvatarView(
@@ -127,17 +146,50 @@ struct ChatProfileView: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
 
-            Text(profile.statusText?.isEmpty == false ? profile.statusText ?? "" : kindText(profile.kind))
-                .font(.subheadline)
-                .foregroundStyle(statusColor(profile.statusText))
-                .lineLimit(1)
+            if profile.isBlockedByMe || profile.isBlockedByPeer {
+                Label(blockBannerText, systemImage: "hand.raised.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.orange)
+            } else {
+                Text(profile.statusText?.isEmpty == false ? profile.statusText ?? "" : kindText(profile.kind))
+                    .font(.subheadline)
+                    .foregroundStyle(statusColor(profile.statusText))
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity)
     }
 
+    private var blockBannerText: String {
+        if profile.isBlockedByMe {
+            return AppText.tr("Вы заблокировали этого пользователя", "You blocked this user")
+        }
+        if profile.isBlockedByPeer {
+            return AppText.tr("Пользователь ограничил вас", "This user restricted you")
+        }
+        return ""
+    }
+
     @ViewBuilder
     private var overviewSections: some View {
-        Section("Информация") {
+        if profile.kind == .private, profile.userId != nil {
+            Section {
+                Button(role: profile.isBlockedByMe ? .none : .destructive) {
+                    Task {
+                        await vm.setUserBlocked(chatId: profile.chatId, blocked: !profile.isBlockedByMe)
+                    }
+                } label: {
+                    Label(
+                        profile.isBlockedByMe
+                            ? AppText.tr("Разблокировать", "Unblock")
+                            : AppText.tr("Заблокировать", "Block"),
+                        systemImage: profile.isBlockedByMe ? "hand.raised.slash" : "hand.raised.fill"
+                    )
+                }
+            }
+        }
+
+        Section(AppText.tr("Информация", "Info")) {
             if let username = profile.username, !username.isEmpty {
                 profileRow(icon: "at", title: "Username", value: "@\(username)")
             }
@@ -433,13 +485,30 @@ private struct MediaMessageRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(visibleAttachments) { attachment in
+            let gridItems = visibleAttachments.filter {
+                switch $0.kind {
+                case .photo, .video, .animation: return true
+                default: return false
+                }
+            }
+            let otherItems = visibleAttachments.filter { !gridItems.contains($0) }
+
+            if !gridItems.isEmpty {
+                MessageMediaGridView(
+                    attachments: gridItems,
+                    maxWidth: UIScreen.main.bounds.width - 48,
+                    onOpen: onOpen
+                )
+            }
+
+            ForEach(otherItems) { attachment in
                 MessageAttachmentPreview(attachment: attachment) {
                     onOpen(attachment)
                 }
             }
 
-            if category == .links || !message.text.isEmpty {
+            let caption = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if category == .links || !caption.isEmpty {
                 Text(message.text)
                     .font(.subheadline)
                     .foregroundStyle(category == .links ? AppColors.accent : .secondary)

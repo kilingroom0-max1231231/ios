@@ -42,6 +42,9 @@ struct TgChat: Identifiable, Equatable {
     var isMarkedUnread: Bool
     var draftText: String?
     var typingText: String?
+    var privateUserId: Int64?
+    var isBlockedByMe: Bool
+    var isBlockedByPeer: Bool
 
     init(
         id: Int64,
@@ -64,7 +67,10 @@ struct TgChat: Identifiable, Equatable {
         muteUntil: Date? = nil,
         isMarkedUnread: Bool = false,
         draftText: String? = nil,
-        typingText: String? = nil
+        typingText: String? = nil,
+        privateUserId: Int64? = nil,
+        isBlockedByMe: Bool = false,
+        isBlockedByPeer: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -87,6 +93,9 @@ struct TgChat: Identifiable, Equatable {
         self.isMarkedUnread = isMarkedUnread
         self.draftText = draftText
         self.typingText = typingText
+        self.privateUserId = privateUserId
+        self.isBlockedByMe = isBlockedByMe
+        self.isBlockedByPeer = isBlockedByPeer
     }
 }
 
@@ -102,6 +111,47 @@ struct TgMessage: Identifiable, Equatable {
     let attachments: [TgAttachment]
     let mediaAlbumId: Int64?
     let forwardedFrom: String?
+    let senderUserId: Int64?
+    let senderName: String?
+    let senderAvatarPath: String?
+    let authorSignature: String?
+    let viewCount: Int?
+
+    init(
+        id: Int64,
+        chatId: Int64,
+        text: String,
+        outgoing: Bool,
+        createdAt: Date,
+        isEdited: Bool,
+        replyToMessageId: Int64?,
+        isDeleted: Bool,
+        attachments: [TgAttachment],
+        mediaAlbumId: Int64?,
+        forwardedFrom: String?,
+        senderUserId: Int64? = nil,
+        senderName: String? = nil,
+        senderAvatarPath: String? = nil,
+        authorSignature: String? = nil,
+        viewCount: Int? = nil
+    ) {
+        self.id = id
+        self.chatId = chatId
+        self.text = text
+        self.outgoing = outgoing
+        self.createdAt = createdAt
+        self.isEdited = isEdited
+        self.replyToMessageId = replyToMessageId
+        self.isDeleted = isDeleted
+        self.attachments = attachments
+        self.mediaAlbumId = mediaAlbumId
+        self.forwardedFrom = forwardedFrom
+        self.senderUserId = senderUserId
+        self.senderName = senderName
+        self.senderAvatarPath = senderAvatarPath
+        self.authorSignature = authorSignature
+        self.viewCount = viewCount
+    }
 }
 
 struct TgUser: Identifiable, Equatable {
@@ -157,6 +207,35 @@ struct ChatProfile: Equatable {
     let description: String?
     let membersCount: Int?
     let statusText: String?
+    let userId: Int64?
+    let isBlockedByMe: Bool
+    let isBlockedByPeer: Bool
+
+    init(
+        chatId: Int64,
+        title: String,
+        kind: ChatKind,
+        avatarPath: String?,
+        username: String?,
+        description: String?,
+        membersCount: Int?,
+        statusText: String?,
+        userId: Int64? = nil,
+        isBlockedByMe: Bool = false,
+        isBlockedByPeer: Bool = false
+    ) {
+        self.chatId = chatId
+        self.title = title
+        self.kind = kind
+        self.avatarPath = avatarPath
+        self.username = username
+        self.description = description
+        self.membersCount = membersCount
+        self.statusText = statusText
+        self.userId = userId
+        self.isBlockedByMe = isBlockedByMe
+        self.isBlockedByPeer = isBlockedByPeer
+    }
 }
 
 struct ChatMember: Identifiable, Equatable {

@@ -66,7 +66,7 @@ struct LoginView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
         }
-        .background(AppColors.screenBackground)
+        .background(ChatListScreenBackground())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {

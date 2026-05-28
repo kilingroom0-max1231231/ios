@@ -29,5 +29,7 @@
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Выбор изображения для обоев чата.</string>
 </dict>
 </plist>

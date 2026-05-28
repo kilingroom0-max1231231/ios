@@ -10,6 +10,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private var receiveLoopTask: Task<Void, Never>?
     private var pendingResponses: [String: CheckedContinuation<[String: Any], Error>] = [:]
     private var authorizationWaiters: [AuthStateWaiter] = []
+    private var cachedMyUserId: Int64?
+    private var userInfoCache: [Int64: (name: String, avatarPath: String?)] = [:]
 
     init() throws {
         self.bridge = try TDLibBridge()
@@ -145,7 +147,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             "only_local": false
         ])
         guard let items = response["messages"] as? [[String: Any]] else { return [] }
-        return items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+        let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+        return try await enrichMessagesWithSenderInfo(parsed)
             .sorted(by: { $0.createdAt < $1.createdAt })
     }
 
@@ -159,7 +162,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             "only_local": false
         ])
         guard let items = response["messages"] as? [[String: Any]] else { return [] }
-        return items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+        let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+        return try await enrichMessagesWithSenderInfo(parsed)
             .sorted(by: { $0.createdAt < $1.createdAt })
     }
 
@@ -277,6 +281,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 ])
                 let username = (user["usernames"] as? [String: Any]).flatMap { $0["active_usernames"] as? [String] }?.first
                     ?? (user["username"] as? String)
+                let blockState = try await resolvePrivateUserBlockState(userId: userId)
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
@@ -285,7 +290,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     username: username,
                     description: nil,
                     membersCount: nil,
-                    statusText: statusInfo.text
+                    statusText: blockState.statusText ?? statusInfo.text,
+                    userId: userId,
+                    isBlockedByMe: blockState.blockedByMe,
+                    isBlockedByPeer: blockState.blockedByPeer
                 )
             }
             fallthrough
@@ -494,6 +502,71 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
+    func fetchUserProfilePhotoPaths(userId: Int64, limit: Int = 100) async throws -> [String] {
+        let response = try await sendRequest([
+            "@type": "getUserProfilePhotos",
+            "user_id": userId,
+            "offset": 0,
+            "limit": limit
+        ])
+
+        let photoItems = response["photos"] as? [[String: Any]] ?? []
+        guard !photoItems.isEmpty else {
+            return []
+        }
+
+        var paths: [String] = []
+        for photo in photoItems {
+            if let path = try await resolveProfilePhotoFilePath(photo) {
+                paths.append(path)
+            }
+        }
+        return paths
+    }
+
+    private func resolveProfilePhotoFilePath(_ photo: [String: Any]) async throws -> String? {
+        let file = preferredAvatarFile(from: photo, preferBig: true)
+        guard let file else { return nil }
+
+        if
+            let local = file["local"] as? [String: Any],
+            let path = local["path"] as? String,
+            !path.isEmpty {
+            return path
+        }
+
+        if let fileId = int64Value(file["id"]) {
+            return try await downloadFile(fileId: fileId)
+        }
+        return nil
+    }
+
+    func setUserBlocked(userId: Int64, isBlocked: Bool) async throws {
+        let sender: [String: Any] = [
+            "@type": "messageSenderUser",
+            "user_id": userId
+        ]
+        do {
+            _ = try await sendRequest([
+                "@type": "toggleMessageSenderIsBlocked",
+                "sender_id": sender,
+                "is_blocked": isBlocked
+            ])
+        } catch {
+            if isBlocked {
+                _ = try await sendRequest([
+                    "@type": "blockUser",
+                    "user_id": userId
+                ])
+            } else {
+                _ = try await sendRequest([
+                    "@type": "unblockUser",
+                    "user_id": userId
+                ])
+            }
+        }
+    }
+
     func getMe() async throws -> TgUser {
         let user = try await sendRequest([
             "@type": "getMe"
@@ -505,6 +578,15 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let username = user["username"] as? String
         let phoneNumber = user["phone_number"] as? String
         let avatarPath = try await resolveUserAvatarPath(user)
+
+        cachedMyUserId = id
+        userInfoCache[id] = (
+            name: [firstName, lastName]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " "),
+            avatarPath: avatarPath
+        )
 
         return TgUser(
             id: id,
@@ -637,7 +719,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         if type == "updateNewMessage",
            let messageObj = obj["message"] as? [String: Any],
            let message = parseMessage(messageObj, fallbackChatId: 0) {
-            eventHandler?(.newMessage(message))
+            Task {
+                let enriched = (try? await self.enrichMessagesWithSenderInfo([message]))?.first ?? message
+                self.eventHandler?(.newMessage(enriched))
+            }
             return
         }
 
@@ -645,7 +730,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
            let oldMessageId = int64Value(obj["old_message_id"]),
            let messageObj = obj["message"] as? [String: Any],
            let message = parseMessage(messageObj, fallbackChatId: 0) {
-            eventHandler?(.messageReplaced(chatId: message.chatId, oldMessageId: oldMessageId, newMessage: message))
+            Task {
+                let enriched = (try? await self.enrichMessagesWithSenderInfo([message]))?.first ?? message
+                self.eventHandler?(.messageReplaced(chatId: enriched.chatId, oldMessageId: oldMessageId, newMessage: enriched))
+            }
             return
         }
 
@@ -734,6 +822,25 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             }
         }
 
+        var senderUserId: Int64?
+        if let sender = obj["sender_id"] as? [String: Any],
+           (sender["@type"] as? String) == "messageSenderUser" {
+            senderUserId = int64Value(sender["user_id"])
+        }
+
+        var viewCount: Int?
+        if let interaction = obj["interaction_info"] as? [String: Any] {
+            if let views = interaction["view_count"] as? Int {
+                viewCount = views
+            } else if let views = int64Value(interaction["view_count"]) {
+                viewCount = Int(views)
+            }
+        }
+
+        let authorSignature = (obj["author_signature"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let signature = (authorSignature?.isEmpty == false) ? authorSignature : nil
+
         return TgMessage(
             id: id,
             chatId: chatId,
@@ -745,8 +852,62 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             isDeleted: false,
             attachments: parseAttachments(obj["content"] as? [String: Any]),
             mediaAlbumId: mediaAlbumId,
-            forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any])
+            forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any]),
+            senderUserId: senderUserId,
+            authorSignature: signature,
+            viewCount: viewCount
         )
+    }
+
+    private func enrichMessagesWithSenderInfo(_ messages: [TgMessage]) async throws -> [TgMessage] {
+        var missingUserIds = Set<Int64>()
+        for message in messages where !message.outgoing {
+            if let userId = message.senderUserId, userInfoCache[userId] == nil {
+                missingUserIds.insert(userId)
+            }
+        }
+
+        for userId in missingUserIds {
+            let user = try await sendRequest([
+                "@type": "getUser",
+                "user_id": userId
+            ])
+            let firstName = user["first_name"] as? String ?? ""
+            let lastName = user["last_name"] as? String ?? ""
+            let name = [firstName, lastName]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            let username = (user["username"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
+            let displayName = name.isEmpty ? (username ?? "User") : name
+            let avatarPath = try await resolveUserAvatarPath(user)
+            userInfoCache[userId] = (name: displayName, avatarPath: avatarPath)
+        }
+
+        return messages.map { message in
+            guard let userId = message.senderUserId,
+                  let cached = userInfoCache[userId] else {
+                return message
+            }
+            return TgMessage(
+                id: message.id,
+                chatId: message.chatId,
+                text: message.text,
+                outgoing: message.outgoing,
+                createdAt: message.createdAt,
+                isEdited: message.isEdited,
+                replyToMessageId: message.replyToMessageId,
+                isDeleted: message.isDeleted,
+                attachments: message.attachments,
+                mediaAlbumId: message.mediaAlbumId,
+                forwardedFrom: message.forwardedFrom,
+                senderUserId: message.senderUserId,
+                senderName: message.senderName ?? cached.name,
+                senderAvatarPath: message.senderAvatarPath ?? cached.avatarPath,
+                authorSignature: message.authorSignature,
+                viewCount: message.viewCount
+            )
+        }
     }
 
     private func forwardedFromText(_ forwardInfo: [String: Any]?) -> String? {
@@ -1006,12 +1167,44 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let statusInfo = try await resolveChatStatusInfo(chat)
         let sendInfo = try await resolveChatSendPermissions(chat)
         var kind = try await resolveChatKind(chat)
+        var privateUserId: Int64?
+        var isBlockedByMe = false
+        var isBlockedByPeer = false
+
+        if kind == .private,
+           let chatType = chat["type"] as? [String: Any],
+           let userId = int64Value(chatType["user_id"]) {
+            privateUserId = userId
+            let blockState = try await resolvePrivateUserBlockState(userId: userId)
+            isBlockedByMe = blockState.blockedByMe
+            isBlockedByPeer = blockState.blockedByPeer
+        }
 
         if (chat["is_saved_messages"] as? Bool) == true {
             kind = .savedMessages
+        } else if kind == .private,
+                  let chatType = chat["type"] as? [String: Any],
+                  let userId = int64Value(chatType["user_id"]),
+                  userId == cachedMyUserId {
+            kind = .savedMessages
         }
 
-        let effectiveTitle = (kind == .savedMessages) ? "Избранное" : title
+        let effectiveTitle = (kind == .savedMessages) ? AppText.tr("Избранное", "Saved Messages") : title
+        let avatarPath: String? = (kind == .savedMessages) ? nil : (try await resolveChatAvatarPath(chat))
+
+        var finalSendInfo = sendInfo
+        if isBlockedByMe {
+            finalSendInfo = (false, AppText.tr("Вы заблокировали этого пользователя", "You blocked this user"))
+        } else if isBlockedByPeer {
+            finalSendInfo = (false, AppText.tr("Пользователь ограничил вас", "This user restricted you"))
+        }
+
+        var displayStatus = statusInfo.text
+        if isBlockedByMe {
+            displayStatus = AppText.tr("Заблокирован вами", "Blocked by you")
+        } else if isBlockedByPeer {
+            displayStatus = AppText.tr("Ограничил(а) вас", "Restricted you")
+        }
 
         return TgChat(
             id: id,
@@ -1021,11 +1214,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             lastMessageDate: lastMessage?.createdAt,
             lastMessageOutgoing: lastMessage?.outgoing ?? false,
             lastMessageRead: (lastMessage?.outgoing == true) && ((lastMessage?.id ?? 0) <= lastReadOutboxMessageId),
-            avatarPath: try await resolveChatAvatarPath(chat),
-            statusText: statusInfo.text,
-            isOnline: statusInfo.isOnline,
-            canSendMessages: sendInfo.canSend,
-            sendRestrictionText: sendInfo.reason,
+            avatarPath: avatarPath,
+            statusText: displayStatus,
+            isOnline: isBlockedByMe || isBlockedByPeer ? false : statusInfo.isOnline,
+            canSendMessages: finalSendInfo.canSend,
+            sendRestrictionText: finalSendInfo.reason,
             unreadCount: unreadCount,
             kind: kind,
             isPinned: position.isPinned,
@@ -1034,7 +1227,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             muteUntil: notification.muteUntil,
             isMarkedUnread: (chat["is_marked_as_unread"] as? Bool) ?? false,
             draftText: draftText(from: chat["draft_message"] as? [String: Any]),
-            typingText: nil
+            typingText: nil,
+            privateUserId: privateUserId,
+            isBlockedByMe: isBlockedByMe,
+            isBlockedByPeer: isBlockedByPeer
         )
     }
 
@@ -1252,8 +1448,71 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return (true, nil)
         }
 
-        // 3) Private chats: allow.
+        // 3) Private chats: check block state.
+        if
+            let type = chat["type"] as? [String: Any],
+            let typeName = type["@type"] as? String,
+            typeName == "chatTypePrivate",
+            let userId = int64Value(type["user_id"])
+        {
+            let blockState = try await resolvePrivateUserBlockState(userId: userId)
+            if blockState.blockedByMe {
+                return (false, AppText.tr("Вы заблокировали этого пользователя", "You blocked this user"))
+            }
+            if blockState.blockedByPeer {
+                return (false, AppText.tr("Пользователь ограничил вас", "This user restricted you"))
+            }
+        }
+
         return (true, nil)
+    }
+
+    private struct PrivateUserBlockState {
+        let blockedByMe: Bool
+        let blockedByPeer: Bool
+        let statusText: String?
+    }
+
+    private func resolvePrivateUserBlockState(userId: Int64) async throws -> PrivateUserBlockState {
+        if userId == cachedMyUserId {
+            return PrivateUserBlockState(blockedByMe: false, blockedByPeer: false, statusText: nil)
+        }
+
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        let haveAccess = (user["have_access"] as? Bool) ?? true
+
+        let fullInfo = try await sendRequest([
+            "@type": "getUserFullInfo",
+            "user_id": userId
+        ])
+        let blockedByMe = (fullInfo["is_blocked"] as? Bool) ?? false
+
+        var blockedByPeer = false
+        if !haveAccess {
+            blockedByPeer = true
+        }
+
+        if let restrictions = user["restriction_reason"] as? [[String: Any]], !restrictions.isEmpty {
+            blockedByPeer = true
+        }
+
+        let statusText: String?
+        if blockedByMe {
+            statusText = AppText.tr("Заблокирован вами", "Blocked by you")
+        } else if blockedByPeer {
+            statusText = AppText.tr("Ограничил(а) вас", "Restricted you")
+        } else {
+            statusText = nil
+        }
+
+        return PrivateUserBlockState(
+            blockedByMe: blockedByMe,
+            blockedByPeer: blockedByPeer,
+            statusText: statusText
+        )
     }
 
     private func mapUserStatus(_ status: [String: Any]) -> (text: String, isOnline: Bool) {

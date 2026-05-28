@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AppShellView: View {
     @StateObject private var vm = AppViewModel()
+    @StateObject private var appearance = AppAppearanceStore.shared
 
     var body: some View {
         Group {
@@ -18,9 +19,7 @@ struct AppShellView: View {
                 }
             case .main:
                 TabView {
-                    NavigationStack {
-                        ChatListView(vm: vm)
-                    }
+                    ChatListView(vm: vm)
                     .tabItem {
                         Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
                     }
@@ -32,9 +31,10 @@ struct AppShellView: View {
                         Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                     }
                 }
-                .tint(AppColors.accent)
+                .tint(appearance.accentColor)
             }
         }
+        .environmentObject(appearance)
         .task {
             await vm.start()
         }
@@ -50,6 +50,6 @@ private struct LoadingView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppColors.screenBackground)
+        .background(ChatListScreenBackground())
     }
 }

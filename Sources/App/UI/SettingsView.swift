@@ -39,6 +39,19 @@ struct SettingsView: View {
             }
 
             Section(AppText.tr("Приложение", "Application")) {
+                NavigationLink {
+                    AppearanceSettingsView(appearance: AppAppearanceStore.shared)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "paintpalette.fill")
+                            .foregroundStyle(AppColors.accent)
+                            .frame(width: 28)
+                        Text(AppText.tr("Оформление", "Appearance"))
+                    }
+                }
+            }
+
+            Section(AppText.tr("О приложении", "About")) {
                 settingsRow(icon: "sparkles", title: AppText.tr("Интерфейс", "Interface"), value: AppText.tr("Нативный Apple", "Native Apple"))
                 settingsRow(icon: "lock.shield", title: AppText.tr("Хранилище", "Storage"), value: AppText.tr("Локальная база TDLib", "Local TDLib database"))
                 settingsRow(icon: "photo.on.rectangle", title: AppText.tr("Медиа", "Media"), value: AppText.tr("Встроенный просмотр", "Inline previews"))
@@ -54,7 +67,7 @@ struct SettingsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle(AppText.tr("Настройки", "Settings"))
-        .background(AppColors.screenBackground.ignoresSafeArea())
+        .background(ChatListScreenBackground().ignoresSafeArea())
         .task {
             await vm.refreshMe()
         }

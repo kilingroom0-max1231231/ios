@@ -73,6 +73,6 @@ struct SetupCredentialsView: View {
             }
             .padding()
         }
-        .background(AppColors.screenBackground)
+        .background(ChatListScreenBackground())
     }
 }

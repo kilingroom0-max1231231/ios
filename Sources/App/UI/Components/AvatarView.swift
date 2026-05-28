@@ -6,10 +6,19 @@ struct AvatarView: View {
     let identifier: Int64
     let imagePath: String?
     var size: CGFloat = 50
+    var isSavedMessages: Bool = false
 
     var body: some View {
         Group {
-            if let image = loadAvatarImage() {
+            if isSavedMessages {
+                Circle()
+                    .fill(LinearGradient(colors: [Color(red: 0.35, green: 0.62, blue: 0.98), Color(red: 0.22, green: 0.48, blue: 0.92)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay {
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: size * 0.38, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+            } else if let image = loadAvatarImage() {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
