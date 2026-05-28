@@ -32,7 +32,7 @@ final class LocalMessageStore {
             let sql = """
             INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(message_id) DO UPDATE SET
+            ON CONFLICT(chat_id, message_id) DO UPDATE SET
               text=excluded.text,
               outgoing=excluded.outgoing,
               created_at=excluded.created_at,
@@ -68,7 +68,7 @@ final class LocalMessageStore {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
 
-                try replaceAttachments(for: message.id, attachments: message.attachments)
+                try replaceAttachments(chatId: message.chatId, messageId: message.id, attachments: message.attachments)
             }
         }
     }
@@ -103,7 +103,7 @@ final class LocalMessageStore {
                         isEdited: false,
                         replyToMessageId: nil,
                         isDeleted: sqlite3_column_int(stmt, 5) == 1,
-                        attachments: try readAttachments(messageId: sqlite3_column_int64(stmt, 0)),
+                        attachments: try readAttachments(chatId: chatId, messageId: sqlite3_column_int64(stmt, 0)),
                         mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6),
                         forwardedFrom: (sqlite3_column_type(stmt, 7) == SQLITE_NULL) ? nil : readText(stmt, 7)
                     )
@@ -184,18 +184,20 @@ final class LocalMessageStore {
         let sql = """
         CREATE TABLE IF NOT EXISTS messages(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER NOT NULL UNIQUE,
+            message_id INTEGER NOT NULL,
             chat_id INTEGER NOT NULL,
             text TEXT NOT NULL,
             outgoing INTEGER NOT NULL,
             created_at DOUBLE NOT NULL,
             is_deleted INTEGER NOT NULL DEFAULT 0,
             media_album_id INTEGER,
-            forwarded_from TEXT
+            forwarded_from TEXT,
+            PRIMARY KEY(chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
         CREATE TABLE IF NOT EXISTS attachments(
             id TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
             kind TEXT NOT NULL,
             file_id INTEGER,
@@ -203,16 +205,39 @@ final class LocalMessageStore {
             mime_type TEXT,
             local_path TEXT,
             size INTEGER,
-            FOREIGN KEY(message_id) REFERENCES messages(message_id) ON DELETE CASCADE
+            FOREIGN KEY(chat_id, message_id) REFERENCES messages(chat_id, message_id) ON DELETE CASCADE
         );
-        CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
+        CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(chat_id, message_id);
         """
+        if try requiresScopedSchemaRebuild() {
+            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS attachments;", nil, nil, nil)
+            _ = sqlite3_exec(db, "DROP TABLE IF EXISTS messages;", nil, nil, nil)
+        }
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw NSError(domain: "LocalMessageStore", code: 5, userInfo: nil)
         }
-        _ = sqlite3_exec(db, "ALTER TABLE attachments ADD COLUMN local_path TEXT;", nil, nil, nil)
-        _ = sqlite3_exec(db, "ALTER TABLE messages ADD COLUMN media_album_id INTEGER;", nil, nil, nil)
-        _ = sqlite3_exec(db, "ALTER TABLE messages ADD COLUMN forwarded_from TEXT;", nil, nil, nil)
+    }
+
+    private func requiresScopedSchemaRebuild() throws -> Bool {
+        let sql = "PRAGMA table_info(messages);"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var hasRows = false
+        var chatIdPk = false
+        var messageIdPk = false
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            hasRows = true
+            let name = readText(stmt, 1)
+            let pk = sqlite3_column_int(stmt, 5)
+            if name == "chat_id", pk > 0 { chatIdPk = true }
+            if name == "message_id", pk > 0 { messageIdPk = true }
+        }
+        if !hasRows { return false }
+        return !(chatIdPk && messageIdPk)
     }
 
     private func readText(_ stmt: OpaquePointer?, _ col: Int32) -> String {
@@ -220,15 +245,16 @@ final class LocalMessageStore {
         return String(cString: c)
     }
 
-    private func replaceAttachments(for messageId: Int64, attachments: [TgAttachment]) throws {
-        let existingLocalPaths = try readAttachmentLocalPaths(messageId: messageId)
+    private func replaceAttachments(chatId: Int64, messageId: Int64, attachments: [TgAttachment]) throws {
+        let existingLocalPaths = try readAttachmentLocalPaths(chatId: chatId, messageId: messageId)
 
         var deleteStmt: OpaquePointer?
-        let deleteSQL = "DELETE FROM attachments WHERE message_id = ?;"
+        let deleteSQL = "DELETE FROM attachments WHERE chat_id = ? AND message_id = ?;"
         guard sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStmt, nil) == SQLITE_OK else {
             throw NSError(domain: "LocalMessageStore", code: 8, userInfo: nil)
         }
-        sqlite3_bind_int64(deleteStmt, 1, messageId)
+        sqlite3_bind_int64(deleteStmt, 1, chatId)
+        sqlite3_bind_int64(deleteStmt, 2, messageId)
         guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
             sqlite3_finalize(deleteStmt)
             throw NSError(domain: "LocalMessageStore", code: 9, userInfo: nil)
@@ -238,8 +264,8 @@ final class LocalMessageStore {
         guard !attachments.isEmpty else { return }
 
         let insertSQL = """
-        INSERT INTO attachments(id, message_id, kind, file_id, file_name, mime_type, local_path, size)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO attachments(id, chat_id, message_id, kind, file_id, file_name, mime_type, local_path, size)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         var insertStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else {
@@ -250,33 +276,34 @@ final class LocalMessageStore {
         for attachment in attachments {
             sqlite3_reset(insertStmt)
             sqlite3_bind_text(insertStmt, 1, (attachment.id as NSString).utf8String, -1, sqliteTransient)
-            sqlite3_bind_int64(insertStmt, 2, messageId)
-            sqlite3_bind_text(insertStmt, 3, (attachment.kind.rawValue as NSString).utf8String, -1, sqliteTransient)
+            sqlite3_bind_int64(insertStmt, 2, chatId)
+            sqlite3_bind_int64(insertStmt, 3, messageId)
+            sqlite3_bind_text(insertStmt, 4, (attachment.kind.rawValue as NSString).utf8String, -1, sqliteTransient)
             if let fileId = attachment.fileId {
-                sqlite3_bind_int64(insertStmt, 4, fileId)
-            } else {
-                sqlite3_bind_null(insertStmt, 4)
-            }
-            if let fileName = attachment.fileName {
-                sqlite3_bind_text(insertStmt, 5, (fileName as NSString).utf8String, -1, sqliteTransient)
+                sqlite3_bind_int64(insertStmt, 5, fileId)
             } else {
                 sqlite3_bind_null(insertStmt, 5)
             }
-            if let mimeType = attachment.mimeType {
-                sqlite3_bind_text(insertStmt, 6, (mimeType as NSString).utf8String, -1, sqliteTransient)
+            if let fileName = attachment.fileName {
+                sqlite3_bind_text(insertStmt, 6, (fileName as NSString).utf8String, -1, sqliteTransient)
             } else {
                 sqlite3_bind_null(insertStmt, 6)
             }
-            let localPath = attachment.localPath ?? attachment.fileId.flatMap { existingLocalPaths[$0] }
-            if let localPath {
-                sqlite3_bind_text(insertStmt, 7, (localPath as NSString).utf8String, -1, sqliteTransient)
+            if let mimeType = attachment.mimeType {
+                sqlite3_bind_text(insertStmt, 7, (mimeType as NSString).utf8String, -1, sqliteTransient)
             } else {
                 sqlite3_bind_null(insertStmt, 7)
             }
-            if let size = attachment.size {
-                sqlite3_bind_int64(insertStmt, 8, size)
+            let localPath = attachment.localPath ?? attachment.fileId.flatMap { existingLocalPaths[$0] }
+            if let localPath {
+                sqlite3_bind_text(insertStmt, 8, (localPath as NSString).utf8String, -1, sqliteTransient)
             } else {
                 sqlite3_bind_null(insertStmt, 8)
+            }
+            if let size = attachment.size {
+                sqlite3_bind_int64(insertStmt, 9, size)
+            } else {
+                sqlite3_bind_null(insertStmt, 9)
             }
             guard sqlite3_step(insertStmt) == SQLITE_DONE else {
                 throw NSError(domain: "LocalMessageStore", code: 11, userInfo: nil)
@@ -284,11 +311,11 @@ final class LocalMessageStore {
         }
     }
 
-    private func readAttachments(messageId: Int64) throws -> [TgAttachment] {
+    private func readAttachments(chatId: Int64, messageId: Int64) throws -> [TgAttachment] {
         let sql = """
         SELECT id, kind, file_id, file_name, mime_type, local_path, size
         FROM attachments
-        WHERE message_id = ?
+        WHERE chat_id = ? AND message_id = ?
         ORDER BY rowid ASC;
         """
         var stmt: OpaquePointer?
@@ -297,7 +324,8 @@ final class LocalMessageStore {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_int64(stmt, 1, messageId)
+        sqlite3_bind_int64(stmt, 1, chatId)
+        sqlite3_bind_int64(stmt, 2, messageId)
         var out: [TgAttachment] = []
 
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -325,11 +353,11 @@ final class LocalMessageStore {
         return out
     }
 
-    private func readAttachmentLocalPaths(messageId: Int64) throws -> [Int64: String] {
+    private func readAttachmentLocalPaths(chatId: Int64, messageId: Int64) throws -> [Int64: String] {
         let sql = """
         SELECT file_id, local_path
         FROM attachments
-        WHERE message_id = ?
+        WHERE chat_id = ? AND message_id = ?
           AND file_id IS NOT NULL
           AND local_path IS NOT NULL
           AND local_path != '';
@@ -340,7 +368,8 @@ final class LocalMessageStore {
         }
         defer { sqlite3_finalize(stmt) }
 
-        sqlite3_bind_int64(stmt, 1, messageId)
+        sqlite3_bind_int64(stmt, 1, chatId)
+        sqlite3_bind_int64(stmt, 2, messageId)
         var paths: [Int64: String] = [:]
 
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -351,17 +380,18 @@ final class LocalMessageStore {
         return paths
     }
 
-    func setAttachmentLocalPath(messageId: Int64, fileId: Int64, localPath: String) throws {
+    func setAttachmentLocalPath(chatId: Int64, messageId: Int64, fileId: Int64, localPath: String) throws {
         try queue.sync {
-            let sql = "UPDATE attachments SET local_path = ? WHERE message_id = ? AND file_id = ?;"
+            let sql = "UPDATE attachments SET local_path = ? WHERE chat_id = ? AND message_id = ? AND file_id = ?;"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 throw NSError(domain: "LocalMessageStore", code: 13, userInfo: nil)
             }
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, (localPath as NSString).utf8String, -1, sqliteTransient)
-            sqlite3_bind_int64(stmt, 2, messageId)
-            sqlite3_bind_int64(stmt, 3, fileId)
+            sqlite3_bind_int64(stmt, 2, chatId)
+            sqlite3_bind_int64(stmt, 3, messageId)
+            sqlite3_bind_int64(stmt, 4, fileId)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw NSError(domain: "LocalMessageStore", code: 14, userInfo: nil)
             }

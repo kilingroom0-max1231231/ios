@@ -206,6 +206,7 @@ struct MediaViewerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Int
     @State private var players: [Int: AVPlayer] = [:]
+    @State private var saveConfirmationShown = false
 
     init(attachments: [TgAttachment], startIndex: Int) {
         self.attachments = attachments
@@ -235,8 +236,38 @@ struct MediaViewerView: View {
             }
             .padding(.top, 18)
             .padding(.trailing, 18)
+
+            if let currentURL = currentLocalURL {
+                HStack(spacing: 10) {
+                    ShareLink(item: currentURL) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Color.black.opacity(0.34))
+                            .clipShape(Circle())
+                    }
+
+                    Button {
+                        saveCurrentToLibrary()
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 34, height: 34)
+                            .background(Color.black.opacity(0.34))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.top, 18)
+                .padding(.leading, 18)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
         .onDisappear { pauseAll() }
+        .alert(AppText.tr("Сохранено", "Saved"), isPresented: $saveConfirmationShown) {
+            Button(AppText.tr("OK", "OK"), role: .cancel) {}
+        }
     }
 
     private func player(for index: Int) -> AVPlayer? {
@@ -257,6 +288,31 @@ struct MediaViewerView: View {
     private func pauseAll() {
         for (_, player) in players {
             player.pause()
+        }
+    }
+
+    private var currentAttachment: TgAttachment? {
+        guard attachments.indices.contains(selection) else { return nil }
+        return attachments[selection]
+    }
+
+    private var currentLocalURL: URL? {
+        currentAttachment?.localURL
+    }
+
+    private func saveCurrentToLibrary() {
+        guard let attachment = currentAttachment, let url = attachment.localURL else { return }
+        switch attachment.kind {
+        case .photo, .sticker:
+            if let image = UIImage(contentsOfFile: url.path) {
+                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                saveConfirmationShown = true
+            }
+        case .video, .videoNote, .animation:
+            UISaveVideoAtPathToSavedPhotosAlbum(url.path, nil, nil, nil)
+            saveConfirmationShown = true
+        default:
+            break
         }
     }
     }

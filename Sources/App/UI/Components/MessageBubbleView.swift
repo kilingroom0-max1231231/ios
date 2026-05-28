@@ -31,7 +31,7 @@ struct MessageBubbleView: View {
                         HStack(spacing: 8) {
                             Rectangle()
                                 .fill(AppColors.accent)
-                                .frame(width: 2)
+                                .frame(width: 2, height: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Ответ")
                                     .font(.caption2.weight(.semibold))

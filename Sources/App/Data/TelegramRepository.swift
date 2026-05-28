@@ -132,7 +132,7 @@ final class TelegramRepository {
             for attachment in message.attachments {
                 guard (attachment.localPath?.isEmpty ?? true), let fileId = attachment.fileId else { continue }
                 if let path = try await client.downloadFile(fileId: fileId) {
-                    try store.setAttachmentLocalPath(messageId: message.id, fileId: fileId, localPath: path)
+                    try store.setAttachmentLocalPath(chatId: chatId, messageId: message.id, fileId: fileId, localPath: path)
                 }
             }
         }

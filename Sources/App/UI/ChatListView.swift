@@ -3,11 +3,13 @@ import UIKit
 
 struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
+    @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         ZStack(alignment: .top) {
             List {
+                pullDetector
 
                 ForEach(visiblePinnedChats) { chat in
                     chatRow(chat)
@@ -23,6 +25,7 @@ struct ChatListView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .coordinateSpace(name: "chat-list-scroll")
             .background(AppColors.screenBackground)
             .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
             .navigationTitle(AppText.tr("Чаты", "Chats"))
@@ -48,6 +51,14 @@ struct ChatListView: View {
 
             searchField
         }
+        .onPreferenceChange(ChatListPullOffsetKey.self) { value in
+            if value > 24 {
+                searchVisible = true
+            } else if value < -6 && vm.chatSearch.isEmpty {
+                searchVisible = false
+                searchFocused = false
+            }
+        }
     }
 
     private var visiblePinnedChats: [TgChat] {
@@ -65,7 +76,7 @@ struct ChatListView: View {
         .buttonStyle(.plain)
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
         .contextMenu {
             chatContextMenu(for: chat)
         }
@@ -208,6 +219,20 @@ struct ChatListView: View {
         }
     }
 
+    private var pullDetector: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(
+                    key: ChatListPullOffsetKey.self,
+                    value: proxy.frame(in: .named("chat-list-scroll")).minY
+                )
+        }
+        .frame(height: 1)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets())
+    }
+
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
@@ -234,6 +259,11 @@ struct ChatListView: View {
         .glassContainer(cornerRadius: 18)
         .padding(.horizontal, 18)
         .padding(.top, 8)
+        .opacity(searchVisible || !vm.chatSearch.isEmpty ? 1 : 0)
+        .offset(y: searchVisible || !vm.chatSearch.isEmpty ? 0 : -22)
+        .allowsHitTesting(searchVisible || !vm.chatSearch.isEmpty)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: searchVisible)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.chatSearch.isEmpty)
     }
 
     @ViewBuilder
@@ -329,7 +359,7 @@ private struct ChatCardView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassContainer(cornerRadius: 18)
+        .background(AppColors.screenBackground)
     }
 
     private var previewText: String {
@@ -352,3 +382,10 @@ private struct ChatCardView: View {
 
 // Intentionally removed the "pull to reveal search" behavior.
 // Search is always visible at the top.
+private struct ChatListPullOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}

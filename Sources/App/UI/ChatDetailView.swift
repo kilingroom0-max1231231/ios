@@ -306,7 +306,7 @@ struct ChatDetailView: View {
         return HStack(alignment: .top, spacing: 10) {
             Capsule()
                 .fill(AppColors.accent)
-                .frame(width: 3)
+                .frame(width: 3, height: 28)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppText.tr("Ответ", "Reply"))
@@ -331,6 +331,7 @@ struct ChatDetailView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 320, alignment: .leading)
         .background(AppColors.composerBackground.opacity(0.95))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
