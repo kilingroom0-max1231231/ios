@@ -10,6 +10,8 @@ protocol TelegramClientProtocol {
 
     func fetchChats(limit: Int) async throws -> [TgChat]
     func fetchMessages(chatId: Int64, limit: Int) async throws -> [TgMessage]
+    func fetchOlderMessages(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [TgMessage]
+    func forwardMessages(fromChatId: Int64, toChatId: Int64, messageIds: [Int64]) async throws
     func sendMessage(chatId: Int64, text: String, replyToMessageId: Int64?) async throws
     func editMessage(chatId: Int64, messageId: Int64, text: String) async throws
     func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws

@@ -86,10 +86,23 @@ final class TelegramRepository {
     }
 
     func syncMessages(chatId: Int64) async throws -> [TgMessage] {
-        let remote = try await client.fetchMessages(chatId: chatId, limit: 100)
+        let remote = try await client.fetchMessages(chatId: chatId, limit: 500)
         try store.upsert(messages: remote)
         try store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
-        return try store.read(chatId: chatId)
+        return try store.read(chatId: chatId, limit: 5000)
+    }
+
+    func loadOlderMessages(chatId: Int64, beforeMessageId: Int64) async throws -> [TgMessage] {
+        let older = try await client.fetchOlderMessages(chatId: chatId, fromMessageId: beforeMessageId, limit: 300)
+        guard !older.isEmpty else {
+            return try store.read(chatId: chatId, limit: 5000)
+        }
+        try store.upsert(messages: older)
+        return try store.read(chatId: chatId, limit: 5000)
+    }
+
+    func forwardMessage(fromChatId: Int64, toChatId: Int64, messageId: Int64) async throws {
+        try await client.forwardMessages(fromChatId: fromChatId, toChatId: toChatId, messageIds: [messageId])
     }
 
     func send(chatId: Int64, text: String) async throws -> [TgMessage] {

@@ -6,6 +6,7 @@ struct ChatDetailView: View {
     @FocusState private var isComposerFocused: Bool
     @State private var showProfile = false
     @State private var mediaSelection: MediaViewerSelection?
+    @State private var forwardingMessage: TgMessage?
 
     private var title: String {
         vm.chats.first(where: { $0.id == chatId })?.title ?? "Чат"
@@ -89,6 +90,46 @@ struct ChatDetailView: View {
         .fullScreenCover(item: $mediaSelection) { selection in
             MediaViewerView(attachments: selection.attachments, startIndex: selection.startIndex)
         }
+        .sheet(item: $forwardingMessage) { message in
+            NavigationStack {
+                List {
+                    ForEach(vm.chats.filter { $0.id != chatId }) { target in
+                        Button {
+                            Task {
+                                await vm.forwardMessage(message, to: target.id)
+                                forwardingMessage = nil
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                AvatarView(title: target.title, identifier: target.id, imagePath: target.avatarPath, size: 36)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(target.title)
+                                        .font(.body)
+                                    if let status = target.statusText, !status.isEmpty {
+                                        Text(status)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(target.canSendMessages == false)
+                    }
+                }
+                .navigationTitle("Переслать в...")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Закрыть") {
+                            forwardingMessage = nil
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var mediaAttachments: [TgAttachment] {
@@ -122,9 +163,12 @@ struct ChatDetailView: View {
                                     mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
                                 }
                             },
-                            onReply: {
+                            onReply: canSend ? {
                                 vm.startReply(message)
                                 isComposerFocused = true
+                            } : nil,
+                            onForward: {
+                                forwardingMessage = message
                             },
                             onEdit: {
                                 vm.startEditing(message)
@@ -135,6 +179,11 @@ struct ChatDetailView: View {
                             }
                         )
                             .id(message.id)
+                            .onAppear {
+                                if message.id == groupedMessages.first?.id {
+                                    Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
+                                }
+                            }
                             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 Button {
                                     vm.quoteMessage(message)
@@ -320,7 +369,8 @@ struct ChatDetailView: View {
                         replyToMessageId: merged.replyToMessageId ?? next.replyToMessageId,
                         isDeleted: merged.isDeleted || next.isDeleted,
                         attachments: attachments,
-                        mediaAlbumId: albumId
+                        mediaAlbumId: albumId,
+                        forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom
                     )
                 }
                 j += 1
@@ -337,7 +387,8 @@ struct ChatDetailView: View {
                     replyToMessageId: merged.replyToMessageId,
                     isDeleted: merged.isDeleted,
                     attachments: attachments,
-                    mediaAlbumId: albumId
+                    mediaAlbumId: albumId,
+                    forwardedFrom: merged.forwardedFrom
                 )
             }
 

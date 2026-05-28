@@ -8,6 +8,7 @@ struct MessageBubbleView: View {
     var replyPreviewText: String?
     var onOpenAttachment: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
+    var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
 
@@ -21,6 +22,11 @@ struct MessageBubbleView: View {
 
             ZStack(alignment: .bottomTrailing) {
                 VStack(alignment: .leading, spacing: 6) {
+                    if let forwardedFrom = message.forwardedFrom, !forwardedFrom.isEmpty {
+                        Text("Переслано от \(forwardedFrom)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                     if let replyId = message.replyToMessageId {
                         HStack(spacing: 8) {
                             Rectangle()
@@ -111,6 +117,9 @@ struct MessageBubbleView: View {
             }
             if let onReply {
                 Button("Ответить") { onReply() }
+            }
+            if let onForward {
+                Button("Переслать") { onForward() }
             }
         }
     }

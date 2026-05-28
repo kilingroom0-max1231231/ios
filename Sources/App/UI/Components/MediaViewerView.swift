@@ -319,18 +319,6 @@ private struct MediaViewerPage: View {
     }
 }
 
-    private func preparePlayer() {
-        guard player == nil, let url = attachment.localURL else { return }
-        switch attachment.kind {
-        case .video, .videoNote, .animation:
-            player = AVPlayer(url: url)
-            player?.play()
-        default:
-            break
-        }
-    }
-}
-
 struct FullscreenImageViewer: View {
     let imagePath: String
     let title: String

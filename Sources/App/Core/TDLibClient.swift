@@ -135,7 +135,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return chats.sorted(by: chatSort)
     }
 
-    func fetchMessages(chatId: Int64, limit: Int = 100) async throws -> [TgMessage] {
+    func fetchMessages(chatId: Int64, limit: Int = 500) async throws -> [TgMessage] {
         let response = try await sendRequest([
             "@type": "getChatHistory",
             "chat_id": chatId,
@@ -147,6 +147,33 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         guard let items = response["messages"] as? [[String: Any]] else { return [] }
         return items.compactMap { parseMessage($0, fallbackChatId: chatId) }
             .sorted(by: { $0.createdAt < $1.createdAt })
+    }
+
+    func fetchOlderMessages(chatId: Int64, fromMessageId: Int64, limit: Int = 200) async throws -> [TgMessage] {
+        let response = try await sendRequest([
+            "@type": "getChatHistory",
+            "chat_id": chatId,
+            "limit": limit,
+            "from_message_id": fromMessageId,
+            "offset": 0,
+            "only_local": false
+        ])
+        guard let items = response["messages"] as? [[String: Any]] else { return [] }
+        return items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+            .sorted(by: { $0.createdAt < $1.createdAt })
+    }
+
+    func forwardMessages(fromChatId: Int64, toChatId: Int64, messageIds: [Int64]) async throws {
+        guard !messageIds.isEmpty else { return }
+        _ = try await sendRequest([
+            "@type": "forwardMessages",
+            "from_chat_id": fromChatId,
+            "chat_id": toChatId,
+            "message_ids": messageIds,
+            "send_copy": false,
+            "remove_caption": false,
+            "only_preview": false
+        ])
     }
 
     func sendMessage(chatId: Int64, text: String, replyToMessageId: Int64?) async throws {
@@ -717,8 +744,29 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             replyToMessageId: replyToMessageId,
             isDeleted: false,
             attachments: parseAttachments(obj["content"] as? [String: Any]),
-            mediaAlbumId: mediaAlbumId
+            mediaAlbumId: mediaAlbumId,
+            forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any])
         )
+    }
+
+    private func forwardedFromText(_ forwardInfo: [String: Any]?) -> String? {
+        guard
+            let origin = forwardInfo?["origin"] as? [String: Any],
+            let type = origin["@type"] as? String
+        else { return nil }
+
+        switch type {
+        case "messageOriginUser":
+            return origin["sender_name"] as? String ?? "пользователь"
+        case "messageOriginHiddenUser":
+            return origin["sender_name"] as? String ?? "скрытый пользователь"
+        case "messageOriginChat":
+            return origin["sender_chat_title"] as? String ?? "чат"
+        case "messageOriginChannel":
+            return origin["chat_title"] as? String ?? "канал"
+        default:
+            return nil
+        }
     }
 
     private func parseAttachments(_ content: [String: Any]?) -> [TgAttachment] {

@@ -42,6 +42,7 @@ final class AppViewModel: ObservableObject {
     private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
     private let credentials = ApiCredentialsStore()
+    private var isLoadingOlderMessages = false
 
     var filteredChats: [TgChat] {
         let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -234,6 +235,25 @@ final class AppViewModel: ObservableObject {
             let syncedMessages = try await repository.syncMessages(chatId: chatId)
             messages = syncedMessages
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: syncedMessages)
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func loadOlderMessagesIfNeeded(triggerMessageId: Int64) async {
+        guard
+            let repository,
+            let chatId = selectedChatId,
+            !isLoadingOlderMessages,
+            let oldest = messages.first?.id,
+            oldest == triggerMessageId
+        else { return }
+
+        isLoadingOlderMessages = true
+        defer { isLoadingOlderMessages = false }
+
+        do {
+            messages = try await repository.loadOlderMessages(chatId: chatId, beforeMessageId: oldest)
         } catch {
             status = error.localizedDescription
         }
@@ -456,6 +476,21 @@ final class AppViewModel: ObservableObject {
         guard !snippet.isEmpty else { return }
         let author = message.outgoing ? "Вы" : "Собеседник"
         composeText = "> \(author): \(snippet)\n" + composeText
+    }
+
+    func forwardMessage(_ message: TgMessage, to targetChatId: Int64) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.forwardMessage(fromChatId: message.chatId, toChatId: targetChatId, messageId: message.id)
+            if targetChatId == selectedChatId {
+                await refreshMessages()
+            }
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+        }
     }
 
     func authStepTitle() -> String {

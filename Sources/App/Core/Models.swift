@@ -101,6 +101,7 @@ struct TgMessage: Identifiable, Equatable {
     let isDeleted: Bool
     let attachments: [TgAttachment]
     let mediaAlbumId: Int64?
+    let forwardedFrom: String?
 }
 
 struct TgUser: Identifiable, Equatable {

@@ -30,14 +30,15 @@ final class LocalMessageStore {
     func upsert(messages: [TgMessage]) throws {
         try queue.sync {
             let sql = """
-            INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(message_id) DO UPDATE SET
               text=excluded.text,
               outgoing=excluded.outgoing,
               created_at=excluded.created_at,
               is_deleted=excluded.is_deleted,
-              media_album_id=excluded.media_album_id;
+              media_album_id=excluded.media_album_id,
+              forwarded_from=excluded.forwarded_from;
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -58,6 +59,11 @@ final class LocalMessageStore {
                 } else {
                     sqlite3_bind_null(stmt, 7)
                 }
+                if let forwardedFrom = message.forwardedFrom, !forwardedFrom.isEmpty {
+                    sqlite3_bind_text(stmt, 8, (forwardedFrom as NSString).utf8String, -1, sqliteTransient)
+                } else {
+                    sqlite3_bind_null(stmt, 8)
+                }
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
@@ -70,7 +76,7 @@ final class LocalMessageStore {
     func read(chatId: Int64, limit: Int = 200) throws -> [TgMessage] {
         try queue.sync {
             let sql = """
-            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id
+            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from
             FROM messages
             WHERE chat_id = ?
             ORDER BY created_at ASC
@@ -98,7 +104,8 @@ final class LocalMessageStore {
                         replyToMessageId: nil,
                         isDeleted: sqlite3_column_int(stmt, 5) == 1,
                         attachments: try readAttachments(messageId: sqlite3_column_int64(stmt, 0)),
-                        mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6)
+                        mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6),
+                        forwardedFrom: (sqlite3_column_type(stmt, 7) == SQLITE_NULL) ? nil : readText(stmt, 7)
                     )
                 )
             }
@@ -183,7 +190,8 @@ final class LocalMessageStore {
             outgoing INTEGER NOT NULL,
             created_at DOUBLE NOT NULL,
             is_deleted INTEGER NOT NULL DEFAULT 0,
-            media_album_id INTEGER
+            media_album_id INTEGER,
+            forwarded_from TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
         CREATE TABLE IF NOT EXISTS attachments(
@@ -204,6 +212,7 @@ final class LocalMessageStore {
         }
         _ = sqlite3_exec(db, "ALTER TABLE attachments ADD COLUMN local_path TEXT;", nil, nil, nil)
         _ = sqlite3_exec(db, "ALTER TABLE messages ADD COLUMN media_album_id INTEGER;", nil, nil, nil)
+        _ = sqlite3_exec(db, "ALTER TABLE messages ADD COLUMN forwarded_from TEXT;", nil, nil, nil)
     }
 
     private func readText(_ stmt: OpaquePointer?, _ col: Int32) -> String {
