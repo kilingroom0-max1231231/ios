@@ -17,24 +17,51 @@ enum ChromeAppearance {
     static func configureNavigationBar() {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithTransparentBackground()
-        appearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        appearance.backgroundEffect = nil
         appearance.backgroundColor = .clear
         appearance.shadowColor = .clear
+        appearance.titleTextAttributes = [.foregroundColor: UIColor.label]
+        appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.label]
         UINavigationBar.appearance().standardAppearance = appearance
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
         UINavigationBar.appearance().compactAppearance = appearance
+        UINavigationBar.appearance().isTranslucent = true
     }
 }
 
 extension View {
-    func frostedNavigationBar() -> some View {
+    /// Chats / Search / Settings — inline title on a fully transparent bar.
+    func mainTabNavigationBar(title: String) -> some View {
+        navigationBarTitleDisplayMode(.inline)
+        transparentNavigationBar()
+        toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+            }
+        }
+    }
+
+    /// No bar background at all.
+    func transparentNavigationBar() -> some View {
+        toolbarBackground(.hidden, for: .navigationBar)
+    }
+
+    /// Blur without opaque fill — glass over scrolling content, title stays on top.
+    func glassNavigationBar() -> some View {
         toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+    }
+
+    /// Same glass blur (open chat header).
+    func frostedNavigationBar() -> some View {
+        glassNavigationBar()
     }
 }
 
 struct FrostedBarBackground: View {
-    var showsDivider = true
+    var showsDivider = false
 
     var body: some View {
         Rectangle()

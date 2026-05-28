@@ -3,7 +3,6 @@ import UIKit
 
 struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
-    @EnvironmentObject private var appearance: AppAppearanceStore
     @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
     @State private var navigationPath = NavigationPath()
@@ -37,17 +36,16 @@ struct ChatListView: View {
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
+        .navigationDestination(for: Int64.self) { chatId in
+            ChatDetailView(vm: vm, chatId: chatId)
+        }
+        .transparentNavigationBar()
         .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: Int64.self) { chatId in
-                ChatDetailView(vm: vm, chatId: chatId)
-            }
         .safeAreaInset(edge: .top, spacing: 0) {
             if searchVisible || !vm.chatSearch.isEmpty {
                 searchField
-                    .background(FrostedBarBackground())
             }
         }
-        .frostedNavigationBar()
         .overlay {
             if vm.chats.isEmpty && !vm.isBusy {
                 emptyChatsView
@@ -55,13 +53,6 @@ struct ChatListView: View {
         }
         .refreshable {
             await vm.refreshChats()
-        }
-        .sheet(isPresented: peekSheetPresented) {
-            if let chatId = vm.peekChatId {
-                ChatPeekView(vm: vm, chatId: chatId)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -73,9 +64,6 @@ struct ChatListView: View {
                         searchFocused = true
                     } else {
                         searchFocused = false
-                        if vm.chatSearch.isEmpty {
-                            vm.chatSearch = ""
-                        }
                     }
                 } label: {
                     Text(AppText.tr("Чаты", "Chats"))
@@ -89,6 +77,13 @@ struct ChatListView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     EditButton()
                 }
+            }
+        }
+        .sheet(isPresented: peekSheetPresented) {
+            if let chatId = vm.peekChatId {
+                ChatPeekView(vm: vm, chatId: chatId)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -299,10 +294,12 @@ struct ChatListView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 360)
+        .glassContainer(cornerRadius: 18)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
         .padding(.vertical, 8)
     }
 
@@ -412,9 +409,9 @@ private struct ChatCardView: View {
                 }
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 

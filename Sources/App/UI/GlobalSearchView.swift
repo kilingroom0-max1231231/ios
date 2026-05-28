@@ -20,14 +20,11 @@ struct GlobalSearchView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 10)
-                .background(.ultraThinMaterial)
 
                 resultsList
             }
             .background(ChatListScreenBackground().ignoresSafeArea())
-            .navigationTitle(AppText.tr("Поиск", "Search"))
-            .navigationBarTitleDisplayMode(.large)
-            .frostedNavigationBar()
+            .mainTabNavigationBar(title: AppText.tr("Поиск", "Search"))
         }
         .onChange(of: vm.globalSearchScope) { _ in
             Task { await vm.runGlobalSearch() }
@@ -71,16 +68,9 @@ struct GlobalSearchView: View {
                     .controlSize(.small)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.secondarySystemBackground).opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .glassContainer(cornerRadius: 18)
     }
 
     @ViewBuilder
