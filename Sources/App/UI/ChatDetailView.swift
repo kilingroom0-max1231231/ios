@@ -63,7 +63,7 @@ struct ChatDetailView: View {
         .background(ChatScreenBackground().ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .frostedNavigationBar()
+        .transparentNavigationBar()
         .task(id: chatId) {
             vm.setChatVisible(chatId)
             await vm.selectChat(chatId)
@@ -274,10 +274,6 @@ struct ChatDetailView: View {
                 composerBar
             }
         }
-        .background {
-            FrostedBarBackground()
-                .ignoresSafeArea(edges: .bottom)
-        }
     }
 
     private var composerBar: some View {
@@ -290,18 +286,20 @@ struct ChatDetailView: View {
                 TextField(AppText.tr("Сообщение", "Message"), text: $vm.composeText, axis: .vertical)
                     .lineLimit(1...4)
                     .focused($isComposerFocused)
-                    .glassField()
+                    .textFieldStyle(.plain)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 4)
 
                 if vm.editingMessageId != nil {
                     Button {
                         vm.cancelEditing()
                         isComposerFocused = false
                     } label: {
-                        Image(systemName: "xmark")
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.bordered)
-                    .clipShape(Circle())
-                    .controlSize(.large)
+                    .buttonStyle(.plain)
                     .disabled(vm.isBusy)
                 }
 
@@ -369,12 +367,10 @@ struct ChatDetailView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: 320, alignment: .leading)
-        .background(AppColors.composerBackground.opacity(0.95))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
