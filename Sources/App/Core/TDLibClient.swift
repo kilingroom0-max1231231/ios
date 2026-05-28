@@ -552,15 +552,36 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     func setMyName(firstName: String, lastName: String) async throws {
+        do {
+            _ = try await sendRequest([
+                "@type": "setName",
+                "first_name": [
+                    "@type": "formattedText",
+                    "text": firstName
+                ],
+                "last_name": [
+                    "@type": "formattedText",
+                    "text": lastName
+                ]
+            ])
+        } catch {
+            _ = try await sendRequest([
+                "@type": "setName",
+                "first_name": firstName,
+                "last_name": lastName
+            ])
+        }
+    }
+
+    func setProfilePhoto(localPath: String) async throws {
         _ = try await sendRequest([
-            "@type": "setName",
-            "first_name": [
-                "@type": "formattedText",
-                "text": firstName
-            ],
-            "last_name": [
-                "@type": "formattedText",
-                "text": lastName
+            "@type": "setProfilePhoto",
+            "photo": [
+                "@type": "inputChatPhotoStatic",
+                "photo": [
+                    "@type": "inputFileLocal",
+                    "path": localPath
+                ]
             ]
         ])
     }

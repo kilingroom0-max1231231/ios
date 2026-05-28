@@ -34,7 +34,7 @@ enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
         case .phoneNumber: return "userPrivacySettingPhoneNumber"
         case .bio: return "userPrivacySettingBio"
         case .forwards: return "userPrivacySettingForwards"
-        case .findByPhone: return "userPrivacySettingFindByPhoneNumber"
+        case .findByPhone: return "userPrivacySettingAllowFindingByPhoneNumber"
         case .showLink: return "userPrivacySettingShowLink"
         }
     }

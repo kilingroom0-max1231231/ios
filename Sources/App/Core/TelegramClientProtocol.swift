@@ -35,4 +35,5 @@ protocol TelegramClientProtocol {
     func setPrivacyVisibility(for kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws
     func setMyName(firstName: String, lastName: String) async throws
     func setMyUsername(_ username: String) async throws
+    func setProfilePhoto(localPath: String) async throws
 }

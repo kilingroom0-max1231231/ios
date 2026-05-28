@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import UIKit
 
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -206,6 +207,7 @@ final class AppViewModel: ObservableObject {
         chats = []
         messages = []
         selectedChatId = nil
+        isChatsBootstrapLoading = false
         authState = .waitPhone
         repository = nil
         isTdlibConfigured = false
@@ -838,12 +840,12 @@ final class AppViewModel: ObservableObject {
             let isFirstChatLoad = !UserDefaults.standard.bool(forKey: Self.initialChatLoadKey)
             if isFirstChatLoad {
                 isChatsBootstrapLoading = true
-                defer {
-                    UserDefaults.standard.set(true, forKey: Self.initialChatLoadKey)
-                    isChatsBootstrapLoading = false
-                }
             }
             await refreshMe()
+            if isFirstChatLoad {
+                UserDefaults.standard.set(true, forKey: Self.initialChatLoadKey)
+                isChatsBootstrapLoading = false
+            }
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
             status = ""
@@ -865,6 +867,9 @@ final class AppViewModel: ObservableObject {
 
     func loadPrivacySettings() async {
         guard let repository, authState == .ready else { return }
+        privacySettings = UserPrivacySettingKind.allCases.map {
+            UserPrivacySettingValue(kind: $0, visibility: .contacts)
+        }
         isPrivacyLoading = true
         defer { isPrivacyLoading = false }
         do {
@@ -872,6 +877,33 @@ final class AppViewModel: ObservableObject {
         } catch {
             status = error.localizedDescription
         }
+    }
+
+    func uploadMyProfilePhoto(from image: UIImage) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let path = try writeTemporaryJPEG(image)
+            try await repository.setMyProfilePhoto(path: path)
+            me = try await repository.loadMe()
+            status = AppText.tr("Фото профиля обновлено", "Profile photo updated")
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func writeTemporaryJPEG(_ image: UIImage) throws -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("profile-\(UUID().uuidString).jpg")
+        guard let data = image.jpegData(compressionQuality: 0.92) else {
+            throw NSError(domain: "AppViewModel", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: AppText.tr("Не удалось обработать фото", "Could not process photo")
+            ])
+        }
+        try data.write(to: url, options: .atomic)
+        return url.path
     }
 
     func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async {

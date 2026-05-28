@@ -224,7 +224,12 @@ final class TelegramRepository {
     func loadPrivacySettings() async throws -> [UserPrivacySettingValue] {
         var values: [UserPrivacySettingValue] = []
         for kind in UserPrivacySettingKind.allCases {
-            let visibility = try await client.fetchPrivacyVisibility(for: kind)
+            let visibility: PrivacyVisibility
+            do {
+                visibility = try await client.fetchPrivacyVisibility(for: kind)
+            } catch {
+                visibility = .contacts
+            }
             values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
         }
         return values
@@ -236,8 +241,14 @@ final class TelegramRepository {
 
     func updateMyProfile(firstName: String, lastName: String, username: String) async throws -> TgUser {
         try await client.setMyName(firstName: firstName, lastName: lastName)
-        try await client.setMyUsername(username)
+        let normalizedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "@", with: "")
+        try await client.setMyUsername(normalizedUsername)
         return try await client.getMe()
+    }
+
+    func setMyProfilePhoto(path: String) async throws {
+        try await client.setProfilePhoto(localPath: path)
     }
 }
 
