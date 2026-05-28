@@ -32,15 +32,16 @@ enum ChromeAppearance {
 extension View {
     /// Chats / Search / Settings — inline title on a fully transparent bar.
     func mainTabNavigationBar(title: String) -> some View {
-        navigationBarTitleDisplayMode(.inline)
-        transparentNavigationBar()
-        toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+        self
+            .navigationBarTitleDisplayMode(.inline)
+            .transparentNavigationBar()
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                }
             }
-        }
     }
 
     /// No bar background at all.
