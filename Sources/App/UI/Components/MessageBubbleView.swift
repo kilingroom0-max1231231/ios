@@ -270,14 +270,13 @@ struct MessageBubbleView: View {
                     Text(formatViewCount(views))
                 }
                 .font(.caption2)
-                    .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.75) : .secondary)
-                }
-                Text(message.createdAt, style: .time)
-                    .font(.caption2)
-                    .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.8) : .secondary)
-                if message.outgoing {
-                    outgoingStatusIcon
-                }
+                .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.75) : .secondary)
+            }
+            Text(message.createdAt, style: .time)
+                .font(.caption2)
+                .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.8) : .secondary)
+            if message.outgoing {
+                outgoingStatusIcon
             }
         }
     }

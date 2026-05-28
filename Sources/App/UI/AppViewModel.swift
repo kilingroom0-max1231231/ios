@@ -43,6 +43,9 @@ final class AppViewModel: ObservableObject {
     @Published var incomingBanner: IncomingMessageBanner?
     @Published var privacySettings: [UserPrivacySettingValue] = []
     @Published var isPrivacyLoading = false
+    @Published var isChatsBootstrapLoading = false
+
+    private static let initialChatLoadKey = "TelegramUserClient.hasCompletedInitialChatLoad"
 
     private var repository: TelegramRepository?
     private var incomingBannerDismissTask: Task<Void, Never>?
@@ -207,6 +210,7 @@ final class AppViewModel: ObservableObject {
         repository = nil
         isTdlibConfigured = false
         bootstrapError = nil
+        UserDefaults.standard.removeObject(forKey: Self.initialChatLoadKey)
         phase = .setup
         status = "Войдите снова — укажите API данные"
         Task { await start() }
@@ -831,6 +835,14 @@ final class AppViewModel: ObservableObject {
         case .ready:
             phase = .main
             status = ""
+            let isFirstChatLoad = !UserDefaults.standard.bool(forKey: Self.initialChatLoadKey)
+            if isFirstChatLoad {
+                isChatsBootstrapLoading = true
+                defer {
+                    UserDefaults.standard.set(true, forKey: Self.initialChatLoadKey)
+                    isChatsBootstrapLoading = false
+                }
+            }
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login

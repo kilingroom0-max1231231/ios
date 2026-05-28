@@ -50,7 +50,9 @@ struct ChatListView: View {
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .overlay {
-            if vm.chats.isEmpty && !vm.isBusy {
+            if vm.isChatsBootstrapLoading {
+                ChatsBootstrapLoadingView()
+            } else if vm.chats.isEmpty && !vm.isBusy {
                 emptyChatsView
             }
         }
@@ -377,6 +379,27 @@ struct ChatListView: View {
                 }
         )
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private struct ChatsBootstrapLoadingView: View {
+        var body: some View {
+            VStack(spacing: 18) {
+                ProgressView()
+                    .controlSize(.large)
+                Text(AppText.tr("Чаты загружаются…", "Loading chats…"))
+                    .font(.headline)
+                Text(AppText.tr(
+                    "При первом запуске это может занять до минуты — дождитесь окончания синхронизации.",
+                    "On first launch this can take up to a minute — wait until sync finishes."
+                ))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(ChatListScreenBackground().ignoresSafeArea())
+        }
     }
 
     @ViewBuilder
