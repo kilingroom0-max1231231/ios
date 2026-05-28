@@ -100,6 +100,26 @@ struct TgMessage: Identifiable, Equatable {
     let replyToMessageId: Int64?
     let isDeleted: Bool
     let attachments: [TgAttachment]
+    let mediaAlbumId: Int64?
+}
+
+struct TgUser: Identifiable, Equatable {
+    let id: Int64
+    let firstName: String
+    let lastName: String
+    let username: String?
+    let phoneNumber: String?
+    let avatarPath: String?
+
+    var displayName: String {
+        let name = [firstName, lastName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if !name.isEmpty { return name }
+        if let username, !username.isEmpty { return "@\(username)" }
+        return "User"
+    }
 }
 
 enum ChatKind: String, Equatable {

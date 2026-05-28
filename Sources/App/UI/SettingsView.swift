@@ -7,16 +7,32 @@ struct SettingsView: View {
         List {
             Section {
                 HStack(spacing: 12) {
-                    Image(systemName: "paperplane.circle.fill")
-                        .font(.system(size: 42))
-                        .foregroundStyle(AppColors.accent)
+                    if let me = vm.me {
+                        AvatarView(
+                            title: me.displayName,
+                            identifier: me.id,
+                            imagePath: me.avatarPath,
+                            size: 52
+                        )
+                    } else {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(AppColors.accent)
+                    }
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Telegram User Client")
+                        Text(vm.me?.displayName ?? "Telegram User Client")
                             .font(.headline)
-                        Text(statusText)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+
+                        if let username = vm.me?.username, !username.isEmpty {
+                            Text("@\(username)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(statusText)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(.vertical, 6)
@@ -39,6 +55,9 @@ struct SettingsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
         .background(AppColors.screenBackground.ignoresSafeArea())
+        .task {
+            await vm.refreshMe()
+        }
     }
 
     private var statusText: String {

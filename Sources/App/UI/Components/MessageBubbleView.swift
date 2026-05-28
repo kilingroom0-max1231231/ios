@@ -83,10 +83,10 @@ struct MessageBubbleView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: true, vertical: true)
             .frame(maxWidth: UIScreen.main.bounds.width * 0.72, alignment: .leading)
             .background(message.outgoing ? AppColors.outgoingBubble : AppColors.incomingBubble)
-            .clipShape(BubbleShape(isOutgoing: message.outgoing))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             if !message.outgoing {
                 Spacer(minLength: 48)
@@ -113,31 +113,5 @@ struct MessageBubbleView: View {
                 Button("Ответить") { onReply() }
             }
         }
-    }
-}
-
-private struct BubbleShape: Shape {
-    let isOutgoing: Bool
-
-    func path(in rect: CGRect) -> Path {
-        let radius: CGFloat = 16
-        var path = Path(roundedRect: rect, cornerRadius: radius)
-
-        // Small tail to look closer to Telegram bubble style.
-        let tailWidth: CGFloat = 7
-        let tailHeight: CGFloat = 10
-        let y = rect.maxY - 16
-        if isOutgoing {
-            path.move(to: CGPoint(x: rect.maxX - 2, y: y))
-            path.addLine(to: CGPoint(x: rect.maxX + tailWidth, y: y + 3))
-            path.addLine(to: CGPoint(x: rect.maxX - 2, y: y + tailHeight))
-            path.closeSubpath()
-        } else {
-            path.move(to: CGPoint(x: rect.minX + 2, y: y))
-            path.addLine(to: CGPoint(x: rect.minX - tailWidth, y: y + 3))
-            path.addLine(to: CGPoint(x: rect.minX + 2, y: y + tailHeight))
-            path.closeSubpath()
-        }
-        return path
     }
 }

@@ -467,6 +467,28 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
+    func getMe() async throws -> TgUser {
+        let user = try await sendRequest([
+            "@type": "getMe"
+        ])
+
+        let id = int64Value(user["id"]) ?? 0
+        let firstName = user["first_name"] as? String ?? ""
+        let lastName = user["last_name"] as? String ?? ""
+        let username = user["username"] as? String
+        let phoneNumber = user["phone_number"] as? String
+        let avatarPath = try await resolveUserAvatarPath(user)
+
+        return TgUser(
+            id: id,
+            firstName: firstName,
+            lastName: lastName,
+            username: username,
+            phoneNumber: phoneNumber,
+            avatarPath: avatarPath
+        )
+    }
+
     private func startReceiveLoopIfNeeded() {
         guard receiveLoopTask == nil else { return }
         receiveLoopTask = Task.detached { [weak self] in
@@ -654,6 +676,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let isOutgoing = (obj["is_outgoing"] as? Bool) ?? false
         let editDate = int64Value(obj["edit_date"]) ?? 0
         let isEdited = editDate > 0
+        let mediaAlbumId = int64Value(obj["media_album_id"])
 
         var replyToMessageId: Int64?
         if let replyTo = obj["reply_to"] as? [String: Any] {
@@ -693,7 +716,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             isEdited: isEdited,
             replyToMessageId: replyToMessageId,
             isDeleted: false,
-            attachments: parseAttachments(obj["content"] as? [String: Any])
+            attachments: parseAttachments(obj["content"] as? [String: Any]),
+            mediaAlbumId: mediaAlbumId
         )
     }
 
@@ -939,9 +963,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             kind = .savedMessages
         }
 
+        let effectiveTitle = (kind == .savedMessages) ? "Избранное" : title
+
         return TgChat(
             id: id,
-            title: title,
+            title: effectiveTitle,
             lastMessagePreview: lastMessageObject.flatMap(messagePreview) ?? lastMessage?.text,
             lastMessageId: lastMessage?.id,
             lastMessageDate: lastMessage?.createdAt,

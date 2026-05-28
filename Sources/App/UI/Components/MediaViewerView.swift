@@ -201,16 +201,34 @@ struct MessageAttachmentPreview: View {
 }
 
 struct MediaViewerView: View {
-    let attachment: TgAttachment
+    let attachments: [TgAttachment]
+    let startIndex: Int
     @Environment(\.dismiss) private var dismiss
-    @State private var player: AVPlayer?
+    @State private var selection: Int
+    @State private var players: [Int: AVPlayer] = [:]
+
+    init(attachments: [TgAttachment], startIndex: Int) {
+        self.attachments = attachments
+        self.startIndex = max(0, min(startIndex, max(0, attachments.count - 1)))
+        _selection = State(initialValue: self.startIndex)
+    }
+
+    init(attachment: TgAttachment) {
+        self.init(attachments: [attachment], startIndex: 0)
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
 
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TabView(selection: $selection) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { index, attachment in
+                    MediaViewerPage(attachment: attachment, player: player(for: index))
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: attachments.count > 1 ? .automatic : .never))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             FullscreenCloseButton {
                 dismiss()
@@ -218,14 +236,36 @@ struct MediaViewerView: View {
             .padding(.top, 18)
             .padding(.trailing, 18)
         }
-        .onAppear(perform: preparePlayer)
-        .onDisappear {
-            player?.pause()
-        }
+        .onDisappear { pauseAll() }
     }
 
-    @ViewBuilder
-    private var content: some View {
+    private func player(for index: Int) -> AVPlayer? {
+        let attachment = attachments[index]
+        guard attachment.kind == .video || attachment.kind == .animation || attachment.kind == .videoNote else {
+            return nil
+        }
+        guard let path = attachment.localPath, !path.isEmpty else { return nil }
+
+        if let existing = players[index] {
+            return existing
+        }
+        let player = AVPlayer(url: URL(fileURLWithPath: path))
+        players[index] = player
+        return player
+    }
+
+    private func pauseAll() {
+        for (_, player) in players {
+            player.pause()
+        }
+    }
+    }
+
+private struct MediaViewerPage: View {
+    let attachment: TgAttachment
+    let player: AVPlayer?
+
+    var body: some View {
         switch attachment.kind {
         case .photo:
             if let path = attachment.localPath {
@@ -277,6 +317,7 @@ struct MediaViewerView: View {
             DocumentFullscreenView(attachment: attachment)
         }
     }
+}
 
     private func preparePlayer() {
         guard player == nil, let url = attachment.localURL else { return }

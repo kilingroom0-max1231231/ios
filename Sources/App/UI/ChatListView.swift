@@ -3,13 +3,11 @@ import UIKit
 
 struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
-    @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         ZStack(alignment: .top) {
             List {
-                pullDetector
 
                 ForEach(visiblePinnedChats) { chat in
                     chatRow(chat)
@@ -25,10 +23,10 @@ struct ChatListView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .coordinateSpace(name: "chat-list-scroll")
             .background(AppColors.screenBackground)
             .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
             .navigationTitle("Chats")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Int64.self) { chatId in
                 ChatDetailView(vm: vm, chatId: chatId)
             }
@@ -49,9 +47,6 @@ struct ChatListView: View {
             }
 
             searchField
-        }
-        .onPreferenceChange(ChatListPullOffsetKey.self) { value in
-            updateSearchVisibility(offset: value)
         }
     }
 
@@ -253,20 +248,6 @@ struct ChatListView: View {
         .glassContainer(cornerRadius: 18)
         .padding(.horizontal, 18)
         .padding(.top, 8)
-        .opacity(searchVisible || !vm.chatSearch.isEmpty ? 1 : 0)
-        .offset(y: searchVisible || !vm.chatSearch.isEmpty ? 0 : -22)
-        .allowsHitTesting(searchVisible || !vm.chatSearch.isEmpty)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: searchVisible)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.chatSearch.isEmpty)
-    }
-
-    private func updateSearchVisibility(offset: CGFloat) {
-        if offset > 38 {
-            searchVisible = true
-        } else if offset < -8 && vm.chatSearch.isEmpty {
-            searchVisible = false
-            searchFocused = false
-        }
     }
 
     @ViewBuilder
@@ -314,6 +295,24 @@ private struct ChatCardView: View {
                         .font(.headline)
                         .lineLimit(1)
 
+                    if chat.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+
+                    if chat.isMuted {
+                        Image(systemName: "bell.slash.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if chat.isMarkedUnread {
+                        Image(systemName: "envelope.badge.fill")
+                            .font(.caption2)
+                            .foregroundStyle(AppColors.accent)
+                    }
+
                     Spacer(minLength: 8)
 
                     if chat.unreadCount > 0 {
@@ -328,10 +327,6 @@ private struct ChatCardView: View {
                 }
 
                 HStack(spacing: 6) {
-                    Image(systemName: iconName(for: chat.kind))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
                     Text(previewText)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -379,10 +374,5 @@ private struct ChatCardView: View {
     }
 }
 
-private struct ChatListPullOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
+// Intentionally removed the "pull to reveal search" behavior.
+// Search is always visible at the top.

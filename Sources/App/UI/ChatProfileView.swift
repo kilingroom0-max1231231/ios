@@ -6,7 +6,7 @@ struct ChatProfileView: View {
     @Namespace private var avatarNamespace
     @State private var selectedTab: ProfileTab = .overview
     @State private var selectedMediaCategory: ChatMediaCategory = .photos
-    @State private var selectedAttachment: TgAttachment?
+    @State private var mediaSelection: MediaViewerSelection?
     @State private var showAvatar = false
 
     private var hasAvatar: Bool {
@@ -25,7 +25,7 @@ struct ChatProfileView: View {
 
                 Section {
                     Picker("Profile", selection: $selectedTab) {
-                        ForEach(ProfileTab.allCases) { tab in
+                        ForEach(availableTabs) { tab in
                             Text(tab.title).tag(tab)
                         }
                     }
@@ -37,7 +37,11 @@ struct ChatProfileView: View {
                 case .overview:
                     overviewSections
                 case .members:
-                    membersSection
+                    if shouldShowMembersTab {
+                        membersSection
+                    } else {
+                        EmptyView()
+                    }
                 case .media:
                     mediaSection
                 }
@@ -61,9 +65,33 @@ struct ChatProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: selectedTab)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: showAvatar)
-        .fullScreenCover(item: $selectedAttachment) { attachment in
-            MediaViewerView(attachment: attachment)
+        .fullScreenCover(item: $mediaSelection) { selection in
+            MediaViewerView(attachments: selection.attachments, startIndex: selection.startIndex)
         }
+    }
+
+    private var availableTabs: [ProfileTab] {
+        var tabs: [ProfileTab] = [.overview, .media]
+        if shouldShowMembersTab {
+            tabs.insert(.members, at: 1)
+        }
+        return tabs
+    }
+
+    private var shouldShowMembersTab: Bool {
+        // Hide for private chats and Saved Messages, and for places where TDLib doesn't provide members.
+        guard profile.kind == .basicGroup || profile.kind == .supergroup else { return false }
+        return true
+    }
+
+    private struct MediaViewerSelection: Identifiable {
+        let id = UUID()
+        let attachments: [TgAttachment]
+        let startIndex: Int
+    }
+
+    private var profileMediaAttachments: [TgAttachment] {
+        vm.chatMediaMessages.flatMap(\.attachments)
     }
 
     private var profileHeader: some View {
@@ -137,7 +165,7 @@ struct ChatProfileView: View {
             if vm.isProfileDetailsLoading && vm.chatMembers.isEmpty {
                 ProgressView()
             } else if vm.chatMembers.isEmpty {
-                Text(profile.kind == .private ? "Личный чат" : "Участники недоступны")
+                Text("Участники недоступны")
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(vm.chatMembers) { member in
@@ -182,13 +210,23 @@ struct ChatProfileView: View {
                     .foregroundStyle(.secondary)
             } else if selectedMediaCategory == .photos || selectedMediaCategory == .videos {
                 ProfileMediaGrid(attachments: selectedMediaAttachments) { attachment in
-                    selectedAttachment = attachment
+                    let attachments = profileMediaAttachments
+                    if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                        mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                    } else {
+                        mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                    }
                 }
                 .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             } else {
                 ForEach(selectedMediaMessages) { message in
                     MediaMessageRow(message: message, category: selectedMediaCategory) { attachment in
-                        selectedAttachment = attachment
+                        let attachments = profileMediaAttachments
+                        if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                            mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                        } else {
+                            mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                        }
                     }
                 }
             }

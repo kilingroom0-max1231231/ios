@@ -21,6 +21,7 @@ final class AppViewModel: ObservableObject {
     @Published var chats: [TgChat] = []
     @Published var selectedChatId: Int64?
     @Published var messages: [TgMessage] = []
+    @Published var me: TgUser?
     @Published var composeText = ""
     @Published var editingMessageId: Int64?
     @Published var replyingToMessageId: Int64?
@@ -38,6 +39,7 @@ final class AppViewModel: ObservableObject {
     private var repository: TelegramRepository?
     private var mediaDownloadsInProgress: Set<Int64> = []
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
+    private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
     private let credentials = ApiCredentialsStore()
 
@@ -524,9 +526,20 @@ final class AppViewModel: ObservableObject {
             phase = .main
             status = ""
             await refreshChats()
+            await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
             status = ""
+        }
+    }
+
+    func refreshMe() async {
+        guard let repository, authState == .ready else { return }
+        do {
+            me = try await repository.loadMe()
+        } catch {
+            // Non-critical for core UX; keep Settings usable even if this fails.
+            me = nil
         }
     }
 
@@ -583,32 +596,48 @@ final class AppViewModel: ObservableObject {
 
     func loadProfile(chatId: Int64) async {
         guard let repository else { return }
-        isProfileLoading = true
-        defer { isProfileLoading = false }
-        do {
-            chatProfile = try await repository.loadChatProfile(chatId: chatId)
-            await loadProfileDetails(chatId: chatId)
-        } catch {
-            status = error.localizedDescription
+        profileLoadTask?.cancel()
+        chatProfile = nil
+        chatMembers = []
+        chatMediaMessages = []
+
+        profileLoadTask = Task { [weak self] in
+            guard let self else { return }
+            await MainActor.run {
+                self.isProfileLoading = true
+                self.isProfileDetailsLoading = true
+            }
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isProfileLoading = false
+                    self?.isProfileDetailsLoading = false
+                }
+            }
+
+            do {
+                let profile = try await repository.loadChatProfile(chatId: chatId)
+                guard !Task.isCancelled else { return }
+                await MainActor.run { self.chatProfile = profile }
+
+                async let members: [ChatMember] = repository.loadChatMembers(chatId: chatId)
+                async let media: [TgMessage] = repository.loadChatMedia(chatId: chatId)
+
+                let (m, mm) = try await (members, media)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.chatMembers = m
+                    self.chatMediaMessages = mm
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run { self.status = error.localizedDescription }
+            }
         }
     }
 
     func loadProfileDetails(chatId: Int64) async {
-        guard let repository else { return }
-        isProfileDetailsLoading = true
-        defer { isProfileDetailsLoading = false }
-
-        do {
-            chatMembers = try await repository.loadChatMembers(chatId: chatId)
-        } catch {
-            status = error.localizedDescription
-        }
-
-        do {
-            chatMediaMessages = try await repository.loadChatMedia(chatId: chatId)
-        } catch {
-            status = error.localizedDescription
-        }
+        // Deprecated: kept for compatibility, profile loading is now parallelized in loadProfile(chatId:).
+        await loadProfile(chatId: chatId)
     }
 
     private func applyTyping(_ text: String?, for chatId: Int64) {

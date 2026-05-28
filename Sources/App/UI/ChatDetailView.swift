@@ -5,7 +5,7 @@ struct ChatDetailView: View {
     let chatId: Int64
     @FocusState private var isComposerFocused: Bool
     @State private var showProfile = false
-    @State private var selectedAttachment: TgAttachment?
+    @State private var mediaSelection: MediaViewerSelection?
 
     private var title: String {
         vm.chats.first(where: { $0.id == chatId })?.title ?? "Чат"
@@ -30,7 +30,6 @@ struct ChatDetailView: View {
                 bottomBar
             }
         .background(AppColors.chatBackground.ignoresSafeArea())
-        .toolbar(.hidden, for: .tabBar)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -87,16 +86,26 @@ struct ChatDetailView: View {
                 await vm.loadProfile(chatId: chatId)
             }
         }
-        .fullScreenCover(item: $selectedAttachment) { attachment in
-            MediaViewerView(attachment: attachment)
+        .fullScreenCover(item: $mediaSelection) { selection in
+            MediaViewerView(attachments: selection.attachments, startIndex: selection.startIndex)
         }
+    }
+
+    private var mediaAttachments: [TgAttachment] {
+        vm.messages.flatMap(\.attachments)
+    }
+
+    private struct MediaViewerSelection: Identifiable {
+        let id = UUID()
+        let attachments: [TgAttachment]
+        let startIndex: Int
     }
 
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(vm.messages) { message in
+                    ForEach(groupedMessages) { message in
                         let replyPreview = message.replyToMessageId.flatMap { replyId in
                             vm.messages.first(where: { $0.id == replyId })?.text
                         }
@@ -106,7 +115,12 @@ struct ChatDetailView: View {
                             incomingTitle: title,
                             replyPreviewText: replyPreview,
                             onOpenAttachment: { attachment in
-                                selectedAttachment = attachment
+                                let attachments = mediaAttachments
+                                if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                                    mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                                } else {
+                                    mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                                }
                             },
                             onReply: {
                                 vm.startReply(message)
@@ -174,7 +188,7 @@ struct ChatDetailView: View {
                 composerBar
             }
         }
-        .background(.bar)
+        .background(AppColors.composerBackground.ignoresSafeArea(edges: .bottom))
     }
 
     private var composerBar: some View {
@@ -216,23 +230,24 @@ struct ChatDetailView: View {
 
     @ViewBuilder
     private var sendButton: some View {
-        let button = Button {
+        Button {
             Task {
                 await vm.sendMessage()
                 isComposerFocused = false
             }
         } label: {
             Image(systemName: "paperplane.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(
+                    Circle()
+                        .fill(isComposeTextEmpty ? Color.secondary.opacity(0.35) : AppColors.accent)
+                )
         }
-        .clipShape(Circle())
-        .controlSize(.large)
+        .buttonStyle(.plain)
         .disabled(vm.isBusy || isComposeTextEmpty)
-
-        if isComposeTextEmpty {
-            button.buttonStyle(.bordered)
-        } else {
-            button.buttonStyle(.borderedProminent)
-        }
+        .opacity(vm.isBusy || isComposeTextEmpty ? 0.75 : 1)
     }
 
     private func replyPreview(_ text: String) -> some View {
@@ -266,8 +281,69 @@ struct ChatDetailView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 320, alignment: .leading)
+        .background(AppColors.composerBackground.opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassContainer(cornerRadius: 14)
+    }
+
+    private var groupedMessages: [TgMessage] {
+        // Merge album messages (TDLib `media_album_id`) into one bubble.
+        let items = vm.messages
+        var out: [TgMessage] = []
+        var i = 0
+        while i < items.count {
+            let current = items[i]
+            guard let albumId = current.mediaAlbumId, albumId != 0 else {
+                out.append(current)
+                i += 1
+                continue
+            }
+
+            var merged = current
+            var attachments = current.attachments
+            var j = i + 1
+            while j < items.count {
+                let next = items[j]
+                guard next.mediaAlbumId == albumId, next.outgoing == current.outgoing else { break }
+                attachments.append(contentsOf: next.attachments)
+                if merged.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !next.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    merged = TgMessage(
+                        id: merged.id,
+                        chatId: merged.chatId,
+                        text: next.text,
+                        outgoing: merged.outgoing,
+                        createdAt: merged.createdAt,
+                        isEdited: merged.isEdited || next.isEdited,
+                        replyToMessageId: merged.replyToMessageId ?? next.replyToMessageId,
+                        isDeleted: merged.isDeleted || next.isDeleted,
+                        attachments: attachments,
+                        mediaAlbumId: albumId
+                    )
+                }
+                j += 1
+            }
+
+            if merged.attachments.count != attachments.count {
+                merged = TgMessage(
+                    id: merged.id,
+                    chatId: merged.chatId,
+                    text: merged.text,
+                    outgoing: merged.outgoing,
+                    createdAt: merged.createdAt,
+                    isEdited: merged.isEdited,
+                    replyToMessageId: merged.replyToMessageId,
+                    isDeleted: merged.isDeleted,
+                    attachments: attachments,
+                    mediaAlbumId: albumId
+                )
+            }
+
+            out.append(merged)
+            i = j
+        }
+        return out
     }
 }

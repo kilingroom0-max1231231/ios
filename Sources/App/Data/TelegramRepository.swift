@@ -137,7 +137,8 @@ final class TelegramRepository {
     func loadChatMedia(chatId: Int64) async throws -> [TgMessage] {
         let media = try await client.fetchChatMedia(chatId: chatId, limit: 200)
         try store.upsert(messages: media)
-        _ = try await downloadMedia(chatId: chatId)
+        // Do not block profile UI by eagerly downloading all media files.
+        // Files will download on-demand when opened (or via background message downloader).
         return try store.read(chatId: chatId).filter { !$0.attachments.isEmpty || $0.text.containsURL }
     }
 
@@ -173,6 +174,10 @@ final class TelegramRepository {
 
     func leaveChat(chatId: Int64) async throws {
         try await client.leaveChat(chatId: chatId)
+    }
+
+    func loadMe() async throws -> TgUser {
+        try await client.getMe()
     }
 }
 

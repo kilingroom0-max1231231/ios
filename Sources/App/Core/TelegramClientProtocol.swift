@@ -25,4 +25,6 @@ protocol TelegramClientProtocol {
     func clearChatHistory(chatId: Int64) async throws
     func deleteChat(chatId: Int64) async throws
     func leaveChat(chatId: Int64) async throws
+
+    func getMe() async throws -> TgUser
 }
