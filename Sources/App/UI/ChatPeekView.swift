@@ -35,7 +35,6 @@ struct ChatPeekView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                .background(ChatScreenBackground())
                 .onChange(of: vm.peekMessages.count) { _ in
                     if let last = vm.peekMessages.last {
                         withAnimation(.easeOut(duration: 0.15)) {
@@ -49,8 +48,11 @@ struct ChatPeekView: View {
                     }
                 }
             }
+            .background(ChatScreenBackground().ignoresSafeArea())
             .navigationTitle(chat?.title ?? AppText.tr("Чат", "Chat"))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     VStack(spacing: 2) {
@@ -118,7 +120,8 @@ struct ChatPeekView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
+                        isSending: merged.isSending || next.isSending
                     )
                 }
                 nextIndex += 1
@@ -140,7 +143,8 @@ struct ChatPeekView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount
+                    viewCount: merged.viewCount,
+                    isSending: merged.isSending
                 )
             }
             out.append(merged)

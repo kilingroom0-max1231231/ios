@@ -74,8 +74,8 @@ struct GlassField: ViewModifier {
 }
 
 extension View {
-    func glassField() -> some View {
-        modifier(GlassField())
+    func glassField(cornerRadius: CGFloat = 18) -> some View {
+        modifier(GlassField(cornerRadius: cornerRadius))
     }
 
     @ViewBuilder

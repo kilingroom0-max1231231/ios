@@ -45,6 +45,7 @@ struct TgChat: Identifiable, Equatable {
     var privateUserId: Int64?
     var isBlockedByMe: Bool
     var isBlockedByPeer: Bool
+    var lastReadOutboxMessageId: Int64
 
     init(
         id: Int64,
@@ -70,7 +71,8 @@ struct TgChat: Identifiable, Equatable {
         typingText: String? = nil,
         privateUserId: Int64? = nil,
         isBlockedByMe: Bool = false,
-        isBlockedByPeer: Bool = false
+        isBlockedByPeer: Bool = false,
+        lastReadOutboxMessageId: Int64 = 0
     ) {
         self.id = id
         self.title = title
@@ -96,6 +98,7 @@ struct TgChat: Identifiable, Equatable {
         self.privateUserId = privateUserId
         self.isBlockedByMe = isBlockedByMe
         self.isBlockedByPeer = isBlockedByPeer
+        self.lastReadOutboxMessageId = lastReadOutboxMessageId
     }
 }
 
@@ -116,6 +119,7 @@ struct TgMessage: Identifiable, Equatable {
     let senderAvatarPath: String?
     let authorSignature: String?
     let viewCount: Int?
+    let isSending: Bool
 
     init(
         id: Int64,
@@ -133,7 +137,8 @@ struct TgMessage: Identifiable, Equatable {
         senderName: String? = nil,
         senderAvatarPath: String? = nil,
         authorSignature: String? = nil,
-        viewCount: Int? = nil
+        viewCount: Int? = nil,
+        isSending: Bool = false
     ) {
         self.id = id
         self.chatId = chatId
@@ -151,7 +156,16 @@ struct TgMessage: Identifiable, Equatable {
         self.senderAvatarPath = senderAvatarPath
         self.authorSignature = authorSignature
         self.viewCount = viewCount
+        self.isSending = isSending
     }
+}
+
+struct IncomingMessageBanner: Equatable, Identifiable {
+    let id = UUID()
+    let chatId: Int64
+    let title: String
+    let preview: String
+    let avatarPath: String?
 }
 
 struct TgUser: Identifiable, Equatable {
@@ -282,4 +296,5 @@ enum TelegramEvent {
     case chatsChanged
     case chatChanged(Int64)
     case chatTypingChanged(chatId: Int64, text: String?)
+    case chatReadOutboxChanged(chatId: Int64, lastReadOutboxMessageId: Int64)
 }

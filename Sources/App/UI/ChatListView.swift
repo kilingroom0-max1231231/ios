@@ -37,15 +37,18 @@ struct ChatListView: View {
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
+        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: isSearchActive)
         .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Int64.self) { chatId in
                 ChatDetailView(vm: vm, chatId: chatId)
             }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if searchVisible || !vm.chatSearch.isEmpty {
-                searchField
+            if isSearchActive {
+                searchPanel
             }
         }
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .overlay {
             if vm.chats.isEmpty && !vm.isBusy {
                 emptyChatsView
@@ -64,31 +67,58 @@ struct ChatListView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                        searchVisible.toggle()
-                    }
-                    if searchVisible {
-                        searchFocused = true
-                    } else {
-                        searchFocused = false
-                        if vm.chatSearch.isEmpty {
-                            vm.chatSearch = ""
-                        }
+                    if isSearchActive {
+                        closeSearch()
                     }
                 } label: {
-                    Text(AppText.tr("Чаты", "Chats"))
+                    Text(isSearchActive ? AppText.tr("Поиск", "Search") : AppText.tr("Чаты", "Chats"))
                         .font(.headline)
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
+                .disabled(!isSearchActive)
             }
 
-            if !visiblePinnedChats.isEmpty && vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if isSearchActive {
+                    Button(AppText.tr("Отмена", "Cancel")) {
+                        closeSearch()
+                    }
+                } else {
+                    HStack(spacing: 16) {
+                        Button {
+                            openSearch()
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .accessibilityLabel(AppText.tr("Поиск", "Search"))
+
+                        if !visiblePinnedChats.isEmpty {
+                            EditButton()
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private var isSearchActive: Bool {
+        searchVisible || !vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func openSearch() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+            searchVisible = true
+        }
+        searchFocused = true
+    }
+
+    private func closeSearch() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+            searchVisible = false
+            vm.chatSearch = ""
+        }
+        searchFocused = false
     }
 
     private var visiblePinnedChats: [TgChat] {
@@ -116,8 +146,11 @@ struct ChatListView: View {
         }
         .buttonStyle(.plain)
         .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+        .listRowInsets(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
+        .listRowBackground(
+            ChatListRowBackground()
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        )
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.45)
                 .onEnded { _ in
@@ -277,31 +310,73 @@ struct ChatListView: View {
         }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+    private var searchPanel: some View {
+        VStack(spacing: 10) {
+            Capsule()
+                .fill(Color.secondary.opacity(0.35))
+                .frame(width: 36, height: 5)
+                .padding(.top, 6)
 
-            TextField(AppText.tr("Поиск", "Search"), text: $vm.chatSearch)
-                .focused($searchFocused)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            if !vm.chatSearch.isEmpty {
+            HStack {
+                Text(AppText.tr("Поиск чатов", "Search chats"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
                 Button {
-                    vm.chatSearch = ""
+                    closeSearch()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(AppText.tr("Закрыть поиск", "Close search"))
+            }
+            .padding(.horizontal, 16)
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+
+                TextField(AppText.tr("Имя или сообщение", "Name or message"), text: $vm.chatSearch)
+                    .focused($searchFocused)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+
+                if !vm.chatSearch.isEmpty {
+                    Button {
+                        vm.chatSearch = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(AppText.tr("Очистить", "Clear"))
+                }
+            }
+            .glassField(cornerRadius: 14)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+        .padding(.horizontal, 8)
+        .glassContainer(cornerRadius: 22)
+        .background {
+            if #available(iOS 26, *) {
+                Color.clear
+            } else {
+                FrostedBarBackground()
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 2)
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { value in
+                    if value.translation.height < -28 {
+                        closeSearch()
+                    }
+                }
+        )
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     @ViewBuilder
@@ -410,10 +485,9 @@ private struct ChatCardView: View {
                 }
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ChatListScreenBackground())
     }
 
     private var previewText: String {

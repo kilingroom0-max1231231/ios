@@ -20,6 +20,8 @@ final class TelegramRepository {
     var onChatChanged: ((Int64) -> Void)?
     var onTypingChanged: ((Int64, String?) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
+    var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
+    var onChatReadOutboxChanged: ((Int64, Int64) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore) {
         self.client = client
@@ -31,13 +33,19 @@ final class TelegramRepository {
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
                 try? self.store.upsert(messages: [message])
+                try? self.store.cleanupTemporaryOutgoingDuplicates(chatId: message.chatId)
                 self.onIncomingMessage?(message)
                 self.onMessagesChanged?(message.chatId)
                 self.onChatChanged?(message.chatId)
             case .messageReplaced(let chatId, let oldMessageId, let newMessage):
                 try? self.store.deleteMessage(chatId: chatId, messageId: oldMessageId)
                 try? self.store.upsert(messages: [newMessage])
+                try? self.store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
+                self.onMessageReplaced?(chatId, oldMessageId, newMessage)
                 self.onMessagesChanged?(chatId)
+                self.onChatChanged?(chatId)
+            case .chatReadOutboxChanged(let chatId, let lastRead):
+                self.onChatReadOutboxChanged?(chatId, lastRead)
                 self.onChatChanged?(chatId)
             case .messagesDeleted(let chatId, let messageIds):
                 try? self.store.markDeleted(chatId: chatId, messageIds: messageIds)
@@ -137,9 +145,9 @@ final class TelegramRepository {
     }
 
     func delete(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws -> [TgMessage] {
+        try store.markDeleted(chatId: chatId, messageIds: messageIds)
         try await client.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
-        // TDLib will also send updateDeleteMessages; we refresh to be safe.
-        return try await syncMessages(chatId: chatId)
+        return try store.read(chatId: chatId)
     }
 
     func downloadMedia(chatId: Int64) async throws -> [TgMessage] {
@@ -211,6 +219,25 @@ final class TelegramRepository {
 
     func setUserBlocked(userId: Int64, isBlocked: Bool) async throws {
         try await client.setUserBlocked(userId: userId, isBlocked: isBlocked)
+    }
+
+    func loadPrivacySettings() async throws -> [UserPrivacySettingValue] {
+        var values: [UserPrivacySettingValue] = []
+        for kind in UserPrivacySettingKind.allCases {
+            let visibility = try await client.fetchPrivacyVisibility(for: kind)
+            values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
+        }
+        return values
+    }
+
+    func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
+        try await client.setPrivacyVisibility(for: kind, visibility: visibility)
+    }
+
+    func updateMyProfile(firstName: String, lastName: String, username: String) async throws -> TgUser {
+        try await client.setMyName(firstName: firstName, lastName: lastName)
+        try await client.setMyUsername(username)
+        return try await client.getMe()
     }
 }
 

@@ -39,8 +39,13 @@ final class AppViewModel: ObservableObject {
     @Published var peekChatId: Int64?
     @Published var peekMessages: [TgMessage] = []
     @Published var isPeekLoading = false
+    @Published var activeChatId: Int64?
+    @Published var incomingBanner: IncomingMessageBanner?
+    @Published var privacySettings: [UserPrivacySettingValue] = []
+    @Published var isPrivacyLoading = false
 
     private var repository: TelegramRepository?
+    private var incomingBannerDismissTask: Task<Void, Never>?
     private var mediaDownloadsInProgress: Set<Int64> = []
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
     private var profileLoadTask: Task<Void, Never>?
@@ -226,11 +231,29 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func selectChat(_ chatId: Int64) async {
+    func beginChat(_ chatId: Int64) async {
+        let switchingChat = activeChatId != chatId
+        activeChatId = chatId
         selectedChatId = chatId
-        messages = []
+        if switchingChat {
+            messages = []
+        }
         await refreshMessages(replaceExisting: true)
         await markChatRead(chatId)
+    }
+
+    func endChat() {
+        activeChatId = nil
+        selectedChatId = nil
+    }
+
+    func lastReadOutboxMessageId(for chatId: Int64) -> Int64 {
+        chats.first(where: { $0.id == chatId })?.lastReadOutboxMessageId ?? 0
+    }
+
+    func isOutgoingMessageRead(_ message: TgMessage, chatId: Int64) -> Bool {
+        guard message.outgoing, !message.isSending else { return false }
+        return message.id > 0 && message.id <= lastReadOutboxMessageId(for: chatId)
     }
 
     func refreshMessages(replaceExisting: Bool = false) async {
@@ -242,13 +265,74 @@ final class AppViewModel: ObservableObject {
             if replaceExisting || messages.isEmpty {
                 messages = syncedMessages
             } else {
-                let existingIds = Set(messages.map(\.id))
-                let newOnes = syncedMessages.filter { !existingIds.contains($0.id) }
-                messages = messages + newOnes
+                messages = Self.mergeMessages(messages, syncedMessages)
             }
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             status = error.localizedDescription
+        }
+    }
+
+    private static func mergeMessages(_ existing: [TgMessage], _ incoming: [TgMessage]) -> [TgMessage] {
+        var byId: [Int64: TgMessage] = [:]
+        for message in existing { byId[message.id] = message }
+        for message in incoming {
+            if let current = byId[message.id] {
+                byId[message.id] = preserveDeletedContent(existing: current, incoming: message)
+            } else {
+                byId[message.id] = message
+            }
+        }
+        return byId.values.sorted { lhs, rhs in
+            if lhs.createdAt == rhs.createdAt { return lhs.id < rhs.id }
+            return lhs.createdAt < rhs.createdAt
+        }
+    }
+
+    private static func preserveDeletedContent(existing: TgMessage, incoming: TgMessage) -> TgMessage {
+        let isDeleted = existing.isDeleted || incoming.isDeleted
+        guard isDeleted else { return incoming }
+
+        let text = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? existing.text
+            : incoming.text
+        let attachments = incoming.attachments.isEmpty ? existing.attachments : incoming.attachments
+
+        return TgMessage(
+            id: incoming.id,
+            chatId: incoming.chatId,
+            text: text,
+            outgoing: incoming.outgoing,
+            createdAt: incoming.createdAt,
+            isEdited: incoming.isEdited || existing.isEdited,
+            replyToMessageId: incoming.replyToMessageId ?? existing.replyToMessageId,
+            isDeleted: true,
+            attachments: attachments,
+            mediaAlbumId: incoming.mediaAlbumId ?? existing.mediaAlbumId,
+            forwardedFrom: incoming.forwardedFrom ?? existing.forwardedFrom,
+            senderUserId: incoming.senderUserId ?? existing.senderUserId,
+            senderName: incoming.senderName ?? existing.senderName,
+            senderAvatarPath: incoming.senderAvatarPath ?? existing.senderAvatarPath,
+            authorSignature: incoming.authorSignature ?? existing.authorSignature,
+            viewCount: incoming.viewCount ?? existing.viewCount,
+            isSending: incoming.isSending
+        )
+    }
+
+    private func applyMessageReplaced(chatId: Int64, oldMessageId: Int64, newMessage: TgMessage) {
+        guard selectedChatId == chatId else { return }
+        var updated = messages.filter { $0.id != oldMessageId }
+        updated = Self.mergeMessages(updated, [newMessage])
+        messages = updated
+    }
+
+    private func applyReadOutbox(chatId: Int64, lastReadMessageId: Int64) {
+        guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
+        chats[index].lastReadOutboxMessageId = max(chats[index].lastReadOutboxMessageId, lastReadMessageId)
+        if let lastId = chats[index].lastMessageId,
+           chats[index].lastMessageOutgoing,
+           lastId <= chats[index].lastReadOutboxMessageId {
+            chats[index].lastMessageRead = true
         }
     }
 
@@ -319,11 +403,14 @@ final class AppViewModel: ObservableObject {
     }
 
     func openChat(chatId: Int64) async {
-        selectedChatId = chatId
         navigationTargetChatId = chatId
-        messages = []
-        await refreshMessages(replaceExisting: true)
-        await markChatRead(chatId)
+        await beginChat(chatId)
+    }
+
+    func openIncomingChat(_ chatId: Int64) {
+        incomingBanner = nil
+        incomingBannerDismissTask?.cancel()
+        navigationTargetChatId = chatId
     }
 
     func loadProfilePhotoPaths(userId: Int64) async -> [String] {
@@ -643,8 +730,25 @@ final class AppViewModel: ObservableObject {
         guard !message.outgoing, phase == .main else { return }
         guard let chat = chats.first(where: { $0.id == message.chatId }) else { return }
         guard !chat.isMuted else { return }
-        guard selectedChatId != message.chatId else { return }
+        guard activeChatId != message.chatId else { return }
+
         NotificationSoundPlayer.playMessageReceived()
+
+        let preview = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayPreview = preview.isEmpty ? AppText.tr("Новое сообщение", "New message") : preview
+        incomingBanner = IncomingMessageBanner(
+            chatId: message.chatId,
+            title: chat.title,
+            preview: displayPreview,
+            avatarPath: chat.avatarPath
+        )
+        incomingBannerDismissTask?.cancel()
+        let bannerChatId = message.chatId
+        incomingBannerDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_500_000_000)
+            guard let self, self.incomingBanner?.chatId == bannerChatId else { return }
+            self.incomingBanner = nil
+        }
     }
 
     private func reloadPeekMessages(chatId: Int64) async {
@@ -675,13 +779,25 @@ final class AppViewModel: ObservableObject {
             }
         }
 
+        repository.onMessageReplaced = { [weak self] chatId, oldMessageId, newMessage in
+            Task { @MainActor in
+                self?.applyMessageReplaced(chatId: chatId, oldMessageId: oldMessageId, newMessage: newMessage)
+            }
+        }
+
+        repository.onChatReadOutboxChanged = { [weak self] chatId, lastRead in
+            Task { @MainActor in
+                self?.applyReadOutbox(chatId: chatId, lastReadMessageId: lastRead)
+            }
+        }
+
         repository.onMessagesChanged = { [weak self] chatId in
             guard let self else { return }
             Task { @MainActor in
                 if self.peekChatId == chatId {
                     await self.reloadPeekMessages(chatId: chatId)
                 }
-                if self.selectedChatId == chatId {
+                if self.activeChatId == chatId {
                     await self.refreshMessages()
                     await self.markChatRead(chatId)
                 }
@@ -697,7 +813,7 @@ final class AppViewModel: ObservableObject {
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
                 await self?.refreshChats()
-                if self?.selectedChatId == chatId {
+                if self?.activeChatId == chatId {
                     await self?.markChatRead(chatId)
                 }
             }
@@ -732,6 +848,52 @@ final class AppViewModel: ObservableObject {
         } catch {
             // Non-critical for core UX; keep Settings usable even if this fails.
             me = nil
+        }
+    }
+
+    func loadPrivacySettings() async {
+        guard let repository, authState == .ready else { return }
+        isPrivacyLoading = true
+        defer { isPrivacyLoading = false }
+        do {
+            privacySettings = try await repository.loadPrivacySettings()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async {
+        guard let repository else { return }
+        do {
+            try await repository.updatePrivacySetting(kind, visibility: visibility)
+            if let index = privacySettings.firstIndex(where: { $0.kind == kind }) {
+                privacySettings[index].visibility = visibility
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updateMyProfile(firstName: String, lastName: String, username: String) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            me = try await repository.updateMyProfile(
+                firstName: firstName,
+                lastName: lastName,
+                username: username
+            )
+            status = AppText.tr("Профиль обновлён", "Profile updated")
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func preloadProfilePhotoPaths(_ paths: [String]) {
+        for path in paths {
+            _ = LocalImageCache.shared.image(path: path)
         }
     }
 

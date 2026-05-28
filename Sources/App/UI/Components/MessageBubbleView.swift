@@ -7,6 +7,7 @@ struct MessageBubbleView: View {
 
     let message: TgMessage
     let chatKind: ChatKind
+    var outgoingIsRead: Bool = false
     var replyPreviewText: String?
     var onOpenAttachment: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
@@ -15,8 +16,26 @@ struct MessageBubbleView: View {
     var onDelete: ((_ revoke: Bool) -> Void)?
 
     private var maxBubbleWidth: CGFloat {
-        let base = UIScreen.main.bounds.width * (appearance.compactBubbles ? 0.70 : 0.76)
-        return base
+        let screenWidth = UIScreen.main.bounds.width
+        if message.outgoing {
+            return screenWidth * (appearance.compactBubbles ? 0.70 : 0.76)
+        }
+
+        if hasGridMedia {
+            return min(screenWidth * 0.62, 260)
+        }
+        if !standaloneMedia.isEmpty {
+            return min(screenWidth * 0.58, 240)
+        }
+        if let captionText {
+            let estimated = CGFloat(captionText.count) * 8.5 + 52
+            return min(screenWidth * 0.72, max(96, estimated))
+        }
+        return min(screenWidth * 0.52, 220)
+    }
+
+    private var isCompactIncoming: Bool {
+        !message.outgoing
     }
 
     private var messageFont: Font {
@@ -31,6 +50,14 @@ struct MessageBubbleView: View {
         !message.outgoing
             && (chatKind == .basicGroup || chatKind == .supergroup)
             && message.senderName != nil
+    }
+
+    private var isCompactSideLayout: Bool {
+        chatKind == .private || chatKind == .savedMessages
+    }
+
+    private var trailingInset: CGFloat {
+        isCompactSideLayout ? 8 : 40
     }
 
     private var channelAuthorLine: String? {
@@ -76,9 +103,9 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: showGroupSender ? 8 : 0) {
             if message.outgoing {
-                Spacer(minLength: 40)
+                Spacer(minLength: trailingInset)
             } else if showGroupSender {
                 AvatarView(
                     title: message.senderName ?? "?",
@@ -86,8 +113,6 @@ struct MessageBubbleView: View {
                     imagePath: message.senderAvatarPath,
                     size: 30
                 )
-            } else {
-                Color.clear.frame(width: 30, height: 30)
             }
 
             VStack(alignment: message.outgoing ? .trailing : .leading, spacing: 4) {
@@ -104,10 +129,10 @@ struct MessageBubbleView: View {
             .frame(maxWidth: maxBubbleWidth, alignment: message.outgoing ? .trailing : .leading)
 
             if !message.outgoing {
-                Spacer(minLength: 40)
+                Spacer(minLength: trailingInset)
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, isCompactSideLayout ? 6 : 10)
         .padding(.vertical, 2)
         .contextMenu {
             if let captionText {
@@ -164,6 +189,7 @@ struct MessageBubbleView: View {
                     maxWidth: maxBubbleWidth,
                     onOpen: { onOpenAttachment?($0) }
                 )
+                .opacity(message.isDeleted ? 0.72 : 1)
             }
 
             if let captionText {
@@ -172,7 +198,7 @@ struct MessageBubbleView: View {
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme) : .primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .strikethrough(message.isDeleted, pattern: .solid, color: .secondary)
+                    .opacity(message.isDeleted ? 0.72 : 1)
                     .padding(.horizontal, 11)
                     .padding(.top, hasGridMedia ? 8 : 8)
                     .padding(.bottom, standaloneMedia.isEmpty ? 0 : 6)
@@ -181,20 +207,29 @@ struct MessageBubbleView: View {
             if !standaloneMedia.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(standaloneMedia) { attachment in
-                        MessageAttachmentPreview(attachment: attachment) {
+                        MessageAttachmentPreview(attachment: attachment, compact: isCompactIncoming) {
                             onOpenAttachment?(attachment)
                         }
+                        .opacity(message.isDeleted ? 0.72 : 1)
                     }
                 }
                 .padding(.horizontal, 11)
                 .padding(.top, (hasGridMedia || captionText != nil) ? 6 : 8)
             }
 
-            if captionText == nil && !hasGridMedia && standaloneMedia.isEmpty && !message.isDeleted {
-                Text(" ")
-                    .font(.body)
-                    .padding(.horizontal, 11)
-                    .padding(.top, 8)
+            if captionText == nil && !hasGridMedia && standaloneMedia.isEmpty {
+                if message.isDeleted {
+                    Text(AppText.tr("Сообщение удалено", "Message deleted"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 11)
+                        .padding(.top, 8)
+                } else {
+                    Text(" ")
+                        .font(.body)
+                        .padding(.horizontal, 11)
+                        .padding(.top, 8)
+                }
             }
 
             bubbleFooter
@@ -208,6 +243,12 @@ struct MessageBubbleView: View {
                 : appearance.incomingBubble(colorScheme: colorScheme)
         )
         .clipShape(RoundedRectangle(cornerRadius: appearance.compactBubbles ? 14 : 16, style: .continuous))
+        .overlay {
+            if message.isDeleted {
+                RoundedRectangle(cornerRadius: appearance.compactBubbles ? 14 : 16, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+            }
+        }
     }
 
     private var bubbleFooter: some View {
@@ -235,10 +276,27 @@ struct MessageBubbleView: View {
                     .font(.caption2)
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.8) : .secondary)
                 if message.outgoing {
-                    Image(systemName: "checkmark")
-                        .font(.caption2.bold())
-                        .foregroundStyle(appearance.accentColor)
+                    outgoingStatusIcon
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var outgoingStatusIcon: some View {
+        let tint = appearance.outgoingText(colorScheme: colorScheme).opacity(0.85)
+        if message.isSending {
+            Image(systemName: "clock")
+                .font(.caption2)
+                .foregroundStyle(tint)
+        } else if outgoingIsRead {
+            Image(systemName: "checkmark")
+                .font(.caption2.bold())
+                .foregroundStyle(appearance.accentColor)
+        } else {
+            Image(systemName: "checkmark")
+                .font(.caption2)
+                .foregroundStyle(tint.opacity(0.75))
         }
     }
 

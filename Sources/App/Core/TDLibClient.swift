@@ -515,16 +515,98 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return []
         }
 
-        var paths: [String] = []
-        for photo in photoItems {
-            if let path = try await resolveProfilePhotoFilePath(photo) {
-                paths.append(path)
+        return await withTaskGroup(of: (Int, String?).self) { group in
+            for (index, photo) in photoItems.enumerated() {
+                group.addTask { [weak self] in
+                    guard let self else { return (index, nil) }
+                    let path = try? await self.resolveProfilePhotoFilePath(photo)
+                    return (index, path)
+                }
+            }
+
+            var indexed: [(Int, String)] = []
+            for await result in group {
+                if let path = result.1, !path.isEmpty {
+                    indexed.append((result.0, path))
+                }
+            }
+            return indexed.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+    }
+
+    func fetchPrivacyVisibility(for kind: UserPrivacySettingKind) async throws -> PrivacyVisibility {
+        let response = try await sendRequest([
+            "@type": "getUserPrivacySettingRules",
+            "setting": ["@type": kind.tdlibType]
+        ])
+        let rules = response["rules"] as? [[String: Any]] ?? []
+        return parsePrivacyVisibility(from: rules)
+    }
+
+    func setPrivacyVisibility(for kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
+        _ = try await sendRequest([
+            "@type": "setUserPrivacySettingRules",
+            "setting": ["@type": kind.tdlibType],
+            "rules": [privacyRule(for: visibility)]
+        ])
+    }
+
+    func setMyName(firstName: String, lastName: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setName",
+            "first_name": [
+                "@type": "formattedText",
+                "text": firstName
+            ],
+            "last_name": [
+                "@type": "formattedText",
+                "text": lastName
+            ]
+        ])
+    }
+
+    func setMyUsername(_ username: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setUsername",
+            "username": username
+        ])
+    }
+
+    private func privacyRule(for visibility: PrivacyVisibility) -> [String: Any] {
+        switch visibility {
+        case .everybody:
+            return ["@type": "userPrivacySettingRuleAllowAll"]
+        case .contacts:
+            return ["@type": "userPrivacySettingRuleAllowContacts"]
+        case .nobody:
+            return ["@type": "userPrivacySettingRuleRestrictAll"]
+        }
+    }
+
+    private func parsePrivacyVisibility(from rules: [[String: Any]]) -> PrivacyVisibility {
+        for rule in rules {
+            guard let type = rule["@type"] as? String else { continue }
+            if type == "userPrivacySettingRuleAllowAll" {
+                return .everybody
+            }
+            if type == "userPrivacySettingRuleRestrictAll" {
+                return .nobody
             }
         }
-        return paths
+        return .contacts
     }
 
     private func resolveProfilePhotoFilePath(_ photo: [String: Any]) async throws -> String? {
+        if let sizes = photo["sizes"] as? [[String: Any]], !sizes.isEmpty {
+            let fileInfo = extractFileInfo(from: sizes)
+            if let path = fileInfo.localPath, !path.isEmpty {
+                return path
+            }
+            if let fileId = fileInfo.id {
+                return try await downloadFile(fileId: fileId)
+            }
+        }
+
         let file = preferredAvatarFile(from: photo, preferBig: true)
         guard let file else { return nil }
 
@@ -760,9 +842,15 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return
         }
 
+        if type == "updateChatReadOutbox",
+           let chatId = int64Value(obj["chat_id"]),
+           let lastRead = int64Value(obj["last_read_outbox_message_id"]) {
+            eventHandler?(.chatReadOutboxChanged(chatId: chatId, lastReadOutboxMessageId: lastRead))
+            return
+        }
+
         if [
             "updateChatReadInbox",
-            "updateChatReadOutbox",
             "updateChatUnreadMentionCount",
             "updateChatUnreadReactionCount",
             "updateChatNotificationSettings",
@@ -806,9 +894,13 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         var text = ""
+        var isDeletedContent = false
         if let content = obj["content"] as? [String: Any],
            let contentType = content["@type"] as? String {
-            if contentType == "messageText",
+            if contentType == "messageDeleted" {
+                isDeletedContent = true
+                text = ""
+            } else if contentType == "messageText",
                let textObj = content["text"] as? [String: Any],
                let rawText = textObj["text"] as? String {
                 text = rawText
@@ -841,6 +933,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let signature = (authorSignature?.isEmpty == false) ? authorSignature : nil
 
+        let isSending = (obj["sending_state"] as? [String: Any]) != nil
+
         return TgMessage(
             id: id,
             chatId: chatId,
@@ -849,13 +943,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             createdAt: Date(timeIntervalSince1970: dateUnix),
             isEdited: isEdited,
             replyToMessageId: replyToMessageId,
-            isDeleted: false,
-            attachments: parseAttachments(obj["content"] as? [String: Any]),
+            isDeleted: isDeletedContent,
+            attachments: isDeletedContent ? [] : parseAttachments(obj["content"] as? [String: Any]),
             mediaAlbumId: mediaAlbumId,
             forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any]),
             senderUserId: senderUserId,
             authorSignature: signature,
-            viewCount: viewCount
+            viewCount: viewCount,
+            isSending: isSending
         )
     }
 
@@ -905,7 +1000,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 senderName: message.senderName ?? cached.name,
                 senderAvatarPath: message.senderAvatarPath ?? cached.avatarPath,
                 authorSignature: message.authorSignature,
-                viewCount: message.viewCount
+                viewCount: message.viewCount,
+                isSending: message.isSending
             )
         }
     }
@@ -1230,7 +1326,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             typingText: nil,
             privateUserId: privateUserId,
             isBlockedByMe: isBlockedByMe,
-            isBlockedByPeer: isBlockedByPeer
+            isBlockedByPeer: isBlockedByPeer,
+            lastReadOutboxMessageId: lastReadOutboxMessageId
         )
     }
 

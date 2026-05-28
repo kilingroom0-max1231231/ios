@@ -49,13 +49,27 @@ struct ChatDetailView: View {
         .background(ChatScreenBackground().ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            Task { await vm.selectChat(chatId) }
-        }
         .task(id: chatId) {
-            // Always load immediately when entering/switching chat
-            await vm.selectChat(chatId)
+            await vm.beginChat(chatId)
         }
+        .onDisappear {
+            if vm.activeChatId == chatId {
+                vm.endChat()
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let banner = vm.incomingBanner, banner.chatId != chatId {
+                IncomingMessageBannerView(
+                    banner: banner,
+                    onOpen: { vm.openIncomingChat(banner.chatId) },
+                    onDismiss: { vm.incomingBanner = nil }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.incomingBanner?.id)
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Button {
@@ -170,6 +184,7 @@ struct ChatDetailView: View {
                         MessageBubbleView(
                             message: message,
                             chatKind: selectedChat?.kind ?? .unknown,
+                            outgoingIsRead: vm.isOutgoingMessageRead(message, chatId: chatId),
                             replyPreviewText: replyPreview,
                             onOpenAttachment: { attachment in
                                 let attachments = mediaAttachments
@@ -213,7 +228,6 @@ struct ChatDetailView: View {
                 }
                 .padding(.vertical, 8)
         }
-        .background(ChatScreenBackground())
         .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
@@ -240,8 +254,6 @@ struct ChatDetailView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            Divider()
-
             if !canSend, let reason = selectedChat?.sendRestrictionText {
                 Text(reason)
                     .font(.footnote)
@@ -253,7 +265,10 @@ struct ChatDetailView: View {
                 composerBar
             }
         }
-        .background(AppColors.composerBackground.ignoresSafeArea(edges: .bottom))
+        .background {
+            FrostedBarBackground()
+                .ignoresSafeArea(edges: .bottom)
+        }
     }
 
     private var composerBar: some View {
@@ -392,7 +407,8 @@ struct ChatDetailView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
+                        isSending: merged.isSending || next.isSending
                     )
                 }
                 j += 1
@@ -415,7 +431,8 @@ struct ChatDetailView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount
+                    viewCount: merged.viewCount,
+                    isSending: merged.isSending
                 )
             }
 

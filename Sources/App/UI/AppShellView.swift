@@ -32,6 +32,10 @@ struct AppShellView: View {
                     }
                 }
                 .tint(appearance.accentColor)
+                .onAppear {
+                    ChromeAppearance.configureTabBar()
+                    ChromeAppearance.configureNavigationBar()
+                }
             }
         }
         .environmentObject(appearance)

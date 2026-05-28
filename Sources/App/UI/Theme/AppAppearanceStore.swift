@@ -34,21 +34,48 @@ enum ChatListBackgroundStyle: String, CaseIterable, Identifiable {
 
     func color(_ scheme: ColorScheme) -> Color {
         switch self {
-        case .system: return Color(.systemGroupedBackground)
-        case .light: return Color(red: 0.97, green: 0.97, blue: 0.98)
-        case .slate: return Color(red: 0.90, green: 0.92, blue: 0.95)
-        case .mint: return Color(red: 0.92, green: 0.97, blue: 0.95)
-        case .sand: return Color(red: 0.98, green: 0.96, blue: 0.92)
+        case .system:
+            return Color(.systemGroupedBackground)
+        case .light:
+            return scheme == .dark
+                ? Color(red: 0.09, green: 0.09, blue: 0.10)
+                : Color(red: 0.94, green: 0.94, blue: 0.96)
+        case .slate:
+            return scheme == .dark
+                ? Color(red: 0.08, green: 0.09, blue: 0.11)
+                : Color(red: 0.88, green: 0.90, blue: 0.94)
+        case .mint:
+            return scheme == .dark
+                ? Color(red: 0.07, green: 0.10, blue: 0.09)
+                : Color(red: 0.90, green: 0.95, blue: 0.92)
+        case .sand:
+            return scheme == .dark
+                ? Color(red: 0.10, green: 0.09, blue: 0.08)
+                : Color(red: 0.94, green: 0.91, blue: 0.86)
         case .dark:
             return scheme == .dark
                 ? Color(red: 0.07, green: 0.08, blue: 0.10)
-                : Color(red: 0.88, green: 0.89, blue: 0.91)
+                : Color(red: 0.86, green: 0.87, blue: 0.89)
         case .charcoal:
             return scheme == .dark
                 ? Color(red: 0.05, green: 0.05, blue: 0.06)
-                : Color(red: 0.84, green: 0.85, blue: 0.87)
+                : Color(red: 0.82, green: 0.83, blue: 0.85)
         case .lavender:
-            return Color(red: 0.94, green: 0.92, blue: 0.98)
+            return scheme == .dark
+                ? Color(red: 0.09, green: 0.08, blue: 0.12)
+                : Color(red: 0.92, green: 0.90, blue: 0.96)
+        }
+    }
+
+    /// Slightly elevated surface so rows stay readable on tinted list backgrounds.
+    func rowColor(_ scheme: ColorScheme) -> Color {
+        switch self {
+        case .system:
+            return Color(.secondarySystemGroupedBackground)
+        default:
+            return scheme == .dark
+                ? Color.white.opacity(0.06)
+                : Color(.systemBackground).opacity(0.88)
         }
     }
 }
@@ -284,6 +311,10 @@ final class AppAppearanceStore: ObservableObject {
         chatListStyle.color(colorScheme)
     }
 
+    func chatListRowColor(colorScheme: ColorScheme) -> Color {
+        chatListStyle.rowColor(colorScheme)
+    }
+
     func chatColor(colorScheme: ColorScheme) -> Color {
         chatStyle.color(colorScheme)
     }
@@ -348,16 +379,22 @@ struct ChatScreenBackground: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ZStack {
-            appearance.chatColor(colorScheme: colorScheme)
-            if let image = appearance.chatWallpaperImage() {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .opacity(appearance.wallpaperOpacity * (colorScheme == .dark ? 0.75 : 1.0))
-                    .clipped()
+        GeometryReader { proxy in
+            ZStack {
+                appearance.chatColor(colorScheme: colorScheme)
+
+                if let uiImage = appearance.chatWallpaperImage() {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                        .opacity(appearance.wallpaperOpacity * (colorScheme == .dark ? 0.75 : 1.0))
+                }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
+        .ignoresSafeArea()
     }
 }
 
@@ -367,5 +404,15 @@ struct ChatListScreenBackground: View {
 
     var body: some View {
         appearance.chatListColor(colorScheme: colorScheme)
+            .ignoresSafeArea()
+    }
+}
+
+struct ChatListRowBackground: View {
+    @EnvironmentObject private var appearance: AppAppearanceStore
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        appearance.chatListRowColor(colorScheme: colorScheme)
     }
 }

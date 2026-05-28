@@ -5,6 +5,7 @@ import UIKit
 
 struct MessageAttachmentPreview: View {
     let attachment: TgAttachment
+    var compact: Bool = false
     var onOpen: (() -> Void)?
     @State private var inlinePlayer: AVPlayer?
     @State private var isInlinePlaying = false
@@ -41,8 +42,8 @@ struct MessageAttachmentPreview: View {
                     loadingPlaceholder(systemImage: "photo", title: "Фото загружается")
                 }
             }
-            .frame(height: 180)
-            .frame(maxWidth: .infinity)
+            .frame(height: compact ? 132 : 180)
+            .frame(maxWidth: compact ? 220 : .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(alignment: .topTrailing) {
                 if attachment.localURL == nil {
@@ -65,8 +66,8 @@ struct MessageAttachmentPreview: View {
                         .clipShape(Circle())
                 } else {
                     videoPreviewContent(title: attachment.kind == .animation ? "GIF загружается" : "Видео загружается")
-                        .frame(height: 180)
-                        .frame(maxWidth: .infinity)
+                        .frame(height: compact ? 132 : 180)
+                        .frame(maxWidth: compact ? 220 : .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
@@ -181,7 +182,7 @@ struct MessageAttachmentPreview: View {
                     loadingPlaceholder(systemImage: "face.smiling", title: "Стикер загружается")
                 }
             }
-            .frame(width: 150, height: 150)
+            .frame(width: compact ? 112 : 150, height: compact ? 112 : 150)
         }
         .buttonStyle(.plain)
         .disabled(attachment.localURL == nil)
@@ -285,19 +286,15 @@ struct MediaViewerView: View {
     @ViewBuilder
     private func mediaCloseButton(action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "xmark")
-                    .font(.body.weight(.bold))
-                Text(AppText.tr("Закрыть", "Close"))
-                    .font(.subheadline.weight(.semibold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.black.opacity(0.42))
-            .clipShape(Capsule())
+            Image(systemName: "xmark")
+                .font(.body.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.black.opacity(0.42))
+                .clipShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(AppText.tr("Закрыть", "Close"))
     }
 
     private func player(for index: Int) -> AVPlayer? {
@@ -527,18 +524,22 @@ struct FullscreenAvatarOverlay: View {
                 .onTapGesture { close() }
 
             TabView(selection: $selection) {
-                ForEach(Array(imagePaths.enumerated()), id: \.offset) { index, path in
+                ForEach(Array(imagePaths.enumerated()), id: \.element) { index, path in
                     Group {
                         if let image = LocalImageCache.shared.image(path: path) {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFit()
                         } else {
-                            MissingMediaView(title: AppText.tr("Не удалось открыть", "Could not open"))
+                            ProgressView()
+                                .tint(.white)
                         }
                     }
                     .tag(index)
                     .padding(18)
+                    .task(id: path) {
+                        _ = LocalImageCache.shared.image(path: path)
+                    }
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: imagePaths.count > 1 ? .automatic : .never))
@@ -558,19 +559,15 @@ struct FullscreenAvatarOverlay: View {
                 HStack {
                     Spacer()
                     Button(action: close) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "xmark")
-                                .font(.body.weight(.bold))
-                            Text(AppText.tr("Закрыть", "Close"))
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color.black.opacity(0.42))
-                        .clipShape(Capsule())
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(Color.black.opacity(0.42))
+                            .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(AppText.tr("Закрыть", "Close"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -586,6 +583,11 @@ struct FullscreenAvatarOverlay: View {
             }
         }
         .transition(.opacity)
+        .task(id: imagePaths) {
+            for path in imagePaths {
+                _ = LocalImageCache.shared.image(path: path)
+            }
+        }
     }
 
     private var dragGesture: some Gesture {

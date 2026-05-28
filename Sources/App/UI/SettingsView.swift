@@ -38,6 +38,19 @@ struct SettingsView: View {
                 .padding(.vertical, 6)
             }
 
+            Section(AppText.tr("Аккаунт", "Account")) {
+                NavigationLink {
+                    PrivacySettingsView(vm: vm)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "hand.raised.fill")
+                            .foregroundStyle(AppColors.accent)
+                            .frame(width: 28)
+                        Text(AppText.tr("Приватность и профиль", "Privacy & profile"))
+                    }
+                }
+            }
+
             Section(AppText.tr("Приложение", "Application")) {
                 NavigationLink {
                     AppearanceSettingsView(appearance: AppAppearanceStore.shared)
