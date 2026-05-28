@@ -58,3 +58,23 @@ struct UserPrivacySettingValue: Identifiable, Equatable {
 
     var id: String { kind.id }
 }
+
+enum GlobalSearchScope: String, CaseIterable, Identifiable {
+    case myChats
+    case telegram
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .myChats: return AppText.tr("Мои чаты", "My chats")
+        case .telegram: return AppText.tr("Telegram", "Telegram")
+        }
+    }
+}
+
+struct GlobalSearchMessageHit: Identifiable, Equatable {
+    let id: String
+    let chatTitle: String
+    let message: TgMessage
+}

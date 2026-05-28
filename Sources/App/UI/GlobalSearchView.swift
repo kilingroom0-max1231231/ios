@@ -79,7 +79,7 @@ struct GlobalSearchView: View {
                     Section(AppText.tr("Чаты", "Chats")) {
                         ForEach(vm.globalSearchChats) { chat in
                             Button {
-                                vm.openChatFromSearch(chat.id)
+                                Task { await vm.openChatFromSearch(chat.id) }
                             } label: {
                                 ChatSearchRow(chat: chat)
                             }
@@ -93,7 +93,7 @@ struct GlobalSearchView: View {
                     Section(AppText.tr("Сообщения", "Messages")) {
                         ForEach(vm.globalSearchMessageHits) { hit in
                             Button {
-                                vm.openChatFromSearch(hit.message.chatId)
+                                Task { await vm.openChatFromSearch(hit.message.chatId) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(hit.chatTitle)

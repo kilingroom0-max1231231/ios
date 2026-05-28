@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import UIKit
 
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -23,6 +24,15 @@ final class AppViewModel: ObservableObject {
     @Published var visibleChatId: Int64?
     @Published var messages: [TgMessage] = []
     @Published var incomingToast: IncomingMessageToast?
+    @Published var privacySettings: [UserPrivacySettingValue] = UserPrivacySettingKind.allCases.map {
+        UserPrivacySettingValue(kind: $0, visibility: .contacts)
+    }
+    @Published var isPrivacyLoading = false
+    @Published var globalSearchScope: GlobalSearchScope = .myChats
+    @Published var globalSearchQuery = ""
+    @Published var globalSearchChats: [TgChat] = []
+    @Published var globalSearchMessageHits: [GlobalSearchMessageHit] = []
+    @Published var isGlobalSearching = false
     @Published var me: TgUser?
     @Published var composeText = ""
     @Published var editingMessageId: Int64?
@@ -958,6 +968,101 @@ final class AppViewModel: ObservableObject {
         } catch {
             status = error.localizedDescription
         }
+    }
+
+    func updateMyProfile(firstName: String, lastName: String, username: String) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.updateProfileName(firstName: firstName, lastName: lastName)
+            let normalizedUsername = username
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "@", with: "")
+            try await repository.updateUsername(normalizedUsername)
+            await refreshMe()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func uploadMyProfilePhoto(from image: UIImage) async {
+        guard let repository else { return }
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("profile-\(UUID().uuidString).jpg")
+            try data.write(to: url)
+            try await repository.uploadProfilePhoto(localPath: url.path)
+            try? FileManager.default.removeItem(at: url)
+            await refreshMe()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func loadPrivacySettings() async {
+        guard let repository else { return }
+        isPrivacyLoading = true
+        defer { isPrivacyLoading = false }
+        do {
+            privacySettings = try await repository.loadPrivacySettings()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async {
+        guard let repository else { return }
+        do {
+            try await repository.updatePrivacySetting(kind: kind, visibility: visibility)
+            if let index = privacySettings.firstIndex(where: { $0.kind == kind }) {
+                privacySettings[index].visibility = visibility
+            }
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func runGlobalSearch() async {
+        let query = globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else {
+            globalSearchChats = []
+            globalSearchMessageHits = []
+            return
+        }
+
+        isGlobalSearching = true
+        defer { isGlobalSearching = false }
+
+        switch globalSearchScope {
+        case .myChats:
+            globalSearchChats = searchLocalChats(query: query)
+            globalSearchMessageHits = []
+        case .telegram:
+            globalSearchChats = await searchTelegram(query: query)
+            guard let repository else {
+                globalSearchMessageHits = []
+                return
+            }
+            do {
+                globalSearchMessageHits = try await repository.searchMessagesGlobally(query: query)
+            } catch {
+                globalSearchMessageHits = []
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    func openChatFromSearch(_ chatId: Int64) async {
+        await openChat(chatId: chatId)
     }
 
     private func deduplicatedMessages(_ items: [TgMessage]) -> [TgMessage] {

@@ -26,9 +26,7 @@ struct AppShellView: View {
                                 Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
                             }
 
-                        NavigationStack {
-                            SearchView(vm: vm)
-                        }
+                        GlobalSearchView(vm: vm)
                         .tag(1)
                         .tabItem {
                             Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")

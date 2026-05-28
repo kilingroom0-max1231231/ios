@@ -40,7 +40,7 @@ struct SettingsView: View {
 
             Section(AppText.tr("Аккаунт", "Account")) {
                 NavigationLink {
-                    ProfilePrivacySettingsView(vm: vm)
+                    PrivacySettingsView(vm: vm)
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "person.crop.circle")

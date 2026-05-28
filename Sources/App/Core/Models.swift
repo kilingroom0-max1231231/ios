@@ -288,6 +288,8 @@ struct IncomingMessageToast: Identifiable, Equatable {
     let avatarPath: String?
 }
 
+typealias IncomingMessageBanner = IncomingMessageToast
+
 enum TelegramEvent {
     case authChanged(AuthState)
     case newMessage(TgMessage)

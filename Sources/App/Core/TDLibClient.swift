@@ -620,6 +620,130 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
+    func setUsername(_ username: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setUsername",
+            "username": username
+        ])
+    }
+
+    func setProfilePhoto(localPath: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setProfilePhoto",
+            "profile_photo": [
+                "@type": "inputProfilePhotoStatic",
+                "photo": [
+                    "@type": "inputFileLocal",
+                    "path": localPath
+                ]
+            ]
+        ])
+    }
+
+    func fetchUserPrivacySettings() async throws -> [UserPrivacySettingValue] {
+        var values: [UserPrivacySettingValue] = []
+        for kind in UserPrivacySettingKind.allCases {
+            let visibility = try await fetchPrivacyVisibility(kind: kind)
+            values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
+        }
+        return values
+    }
+
+    func setUserPrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
+        let ruleType: String
+        switch visibility {
+        case .everybody:
+            ruleType = "userPrivacySettingRuleAllowAll"
+        case .contacts:
+            ruleType = "userPrivacySettingRuleAllowContacts"
+        case .nobody:
+            ruleType = "userPrivacySettingRuleRestrictAll"
+        }
+
+        _ = try await sendRequest([
+            "@type": "setUserPrivacySettingRules",
+            "setting": [
+                "@type": kind.tdlibType
+            ],
+            "rules": [
+                [
+                    "@type": ruleType
+                ]
+            ]
+        ])
+    }
+
+    func searchMessagesGlobally(query: String, limit: Int = 20) async throws -> [GlobalSearchMessageHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let response = try await sendRequest([
+            "@type": "searchMessages",
+            "chat_list": [
+                "@type": "chatListMain"
+            ],
+            "query": trimmed,
+            "offset": "",
+            "limit": limit,
+            "min_date": 0,
+            "max_date": 0
+        ])
+
+        guard let items = response["messages"] as? [[String: Any]] else { return [] }
+        var hits: [GlobalSearchMessageHit] = []
+        var chatTitles: [Int64: String] = [:]
+
+        for item in items {
+            guard let message = parseMessage(item, fallbackChatId: 0) else { continue }
+            let chatId = message.chatId
+            if chatTitles[chatId] == nil {
+                let chat = try await sendRequest([
+                    "@type": "getChat",
+                    "chat_id": chatId
+                ])
+                chatTitles[chatId] = (chat["title"] as? String) ?? AppText.tr("Чат", "Chat")
+            }
+            let title = chatTitles[chatId] ?? AppText.tr("Чат", "Chat")
+            hits.append(
+                GlobalSearchMessageHit(
+                    id: "\(chatId)-\(message.id)",
+                    chatTitle: title,
+                    message: message
+                )
+            )
+        }
+
+        return hits
+    }
+
+    private func fetchPrivacyVisibility(kind: UserPrivacySettingKind) async throws -> PrivacyVisibility {
+        let response = try await sendRequest([
+            "@type": "getUserPrivacySettingRules",
+            "setting": [
+                "@type": kind.tdlibType
+            ]
+        ])
+        let rules = response["rules"] as? [[String: Any]] ?? []
+        return parsePrivacyVisibility(from: rules)
+    }
+
+    private func parsePrivacyVisibility(from rules: [[String: Any]]) -> PrivacyVisibility {
+        for rule in rules {
+            guard let type = rule["@type"] as? String else { continue }
+            switch type {
+            case "userPrivacySettingRuleAllowAll":
+                return .everybody
+            case "userPrivacySettingRuleAllowContacts":
+                return .contacts
+            case "userPrivacySettingRuleRestrictAll":
+                return .nobody
+            default:
+                continue
+            }
+        }
+        return .contacts
+    }
+
     private func resolveProfilePhotoFilePath(_ photo: [String: Any]) async throws -> String? {
         let file = preferredAvatarFile(from: photo, preferBig: true)
         guard let file else { return nil }

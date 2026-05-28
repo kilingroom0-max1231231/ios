@@ -155,6 +155,26 @@ final class TelegramRepository {
         try await client.setName(firstName: firstName, lastName: lastName)
     }
 
+    func updateUsername(_ username: String) async throws {
+        try await client.setUsername(username)
+    }
+
+    func uploadProfilePhoto(localPath: String) async throws {
+        try await client.setProfilePhoto(localPath: localPath)
+    }
+
+    func loadPrivacySettings() async throws -> [UserPrivacySettingValue] {
+        try await client.fetchUserPrivacySettings()
+    }
+
+    func updatePrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
+        try await client.setUserPrivacySetting(kind: kind, visibility: visibility)
+    }
+
+    func searchMessagesGlobally(query: String, limit: Int = 20) async throws -> [GlobalSearchMessageHit] {
+        try await client.searchMessagesGlobally(query: query, limit: limit)
+    }
+
     func downloadMedia(chatId: Int64) async throws -> [TgMessage] {
         let current = try store.read(chatId: chatId)
         for message in current {
