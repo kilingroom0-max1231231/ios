@@ -29,13 +29,13 @@ enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
 
     var tdlibType: String {
         switch self {
-        case .profilePhoto: return "userPrivacySettingProfilePhoto"
+        case .profilePhoto: return "userPrivacySettingShowProfilePhoto"
         case .status: return "userPrivacySettingShowStatus"
         case .phoneNumber: return "userPrivacySettingPhoneNumber"
-        case .bio: return "userPrivacySettingBio"
-        case .forwards: return "userPrivacySettingForwards"
+        case .bio: return "userPrivacySettingShowBio"
+        case .forwards: return "userPrivacySettingShowLinkInForwardedMessages"
         case .findByPhone: return "userPrivacySettingAllowFindingByPhoneNumber"
-        case .showLink: return "userPrivacySettingShowLink"
+        case .showLink: return "userPrivacySettingShowLinkInForwardedMessages"
         }
     }
 

@@ -657,8 +657,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     func fetchUserPrivacySettings() async throws -> [UserPrivacySettingValue] {
         var values: [UserPrivacySettingValue] = []
         for kind in UserPrivacySettingKind.allCases {
-            let visibility = try await fetchPrivacyVisibility(kind: kind)
-            values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
+            do {
+                let visibility = try await fetchPrivacyVisibility(kind: kind)
+                values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
+            } catch {
+                values.append(UserPrivacySettingValue(kind: kind, visibility: .contacts))
+            }
         }
         return values
     }
@@ -1029,14 +1033,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         var replyToMessageId: Int64?
         if let replyTo = obj["reply_to"] as? [String: Any] {
-            if let messageId = int64Value(replyTo["message_id"]) {
-                replyToMessageId = messageId
-            } else if
-                let replyType = replyTo["@type"] as? String,
-                replyType == "messageReplyToMessage",
-                let messageId = int64Value(replyTo["message_id"]) {
-                replyToMessageId = messageId
-            }
+            replyToMessageId = int64Value(replyTo["message_id"])
         }
 
         var isDeleted = false

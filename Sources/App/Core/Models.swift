@@ -20,7 +20,7 @@ struct TgAttachment: Identifiable, Equatable {
     let localPath: String?
 }
 
-struct TgChat: Identifiable, Equatable {
+struct TgChat: Identifiable, Equatable, Codable {
     let id: Int64
     let title: String
     var lastMessagePreview: String?
@@ -180,6 +180,37 @@ struct TgMessage: Identifiable, Equatable {
             viewCount: viewCount
         )
     }
+
+    /// Merges a fresher server/store copy with fields already shown in the UI.
+    func mergingPreservingDisplayFields(from previous: TgMessage?) -> TgMessage {
+        guard let previous else { return self }
+        let mergedForward = Self.nonEmpty(forwardedFrom) ?? Self.nonEmpty(previous.forwardedFrom)
+        return TgMessage(
+            id: id,
+            chatId: chatId,
+            text: text,
+            outgoing: outgoing,
+            createdAt: createdAt,
+            isEdited: isEdited || previous.isEdited,
+            replyToMessageId: replyToMessageId ?? previous.replyToMessageId,
+            isDeleted: isDeleted || previous.isDeleted,
+            isReadByPeer: isReadByPeer || previous.isReadByPeer,
+            attachments: attachments.isEmpty ? previous.attachments : attachments,
+            mediaAlbumId: mediaAlbumId ?? previous.mediaAlbumId,
+            forwardedFrom: mergedForward,
+            senderUserId: senderUserId ?? previous.senderUserId,
+            senderName: senderName ?? previous.senderName,
+            senderAvatarPath: senderAvatarPath ?? previous.senderAvatarPath,
+            authorSignature: authorSignature ?? previous.authorSignature,
+            viewCount: viewCount ?? previous.viewCount
+        )
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 struct TgUser: Identifiable, Equatable {
@@ -201,7 +232,7 @@ struct TgUser: Identifiable, Equatable {
     }
 }
 
-enum ChatKind: String, Equatable {
+enum ChatKind: String, Equatable, Codable {
     case `private`
     case savedMessages
     case basicGroup

@@ -224,20 +224,43 @@ final class AppViewModel: ObservableObject {
 
     func refreshChats() async {
         guard let repository, authState == .ready else { return }
-        isBusy = true
-        defer { isBusy = false }
+
+        let typingByChat = Dictionary(uniqueKeysWithValues: chats.compactMap { chat in
+            chat.typingText.map { (chat.id, $0) }
+        })
+
+        if chats.isEmpty {
+            let cached = repository.cachedChats()
+            if !cached.isEmpty {
+                chats = sortChats(cached).map { chat in
+                    var updated = chat
+                    updated.typingText = typingByChat[chat.id]
+                    return updated
+                }
+            }
+        }
+
+        let showBlockingLoader = chats.isEmpty
+        if showBlockingLoader { isBusy = true }
+        defer { if showBlockingLoader { isBusy = false } }
+
         do {
-            let typingByChat = Dictionary(uniqueKeysWithValues: chats.compactMap { chat in
-                chat.typingText.map { (chat.id, $0) }
-            })
+            let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
             chats = sortChats(try await repository.loadChats()).map { chat in
                 var updated = chat
-                updated.typingText = typingByChat[chat.id]
+                if (updated.avatarPath?.isEmpty ?? true),
+                   let previousPath = previousById[chat.id]?.avatarPath,
+                   !previousPath.isEmpty {
+                    updated.avatarPath = previousPath
+                }
+                updated.typingText = typingByChat[chat.id] ?? previousById[chat.id]?.typingText
                 return updated
             }
             status = ""
         } catch {
-            status = error.localizedDescription
+            if chats.isEmpty {
+                status = error.localizedDescription
+            }
         }
     }
 
@@ -257,43 +280,53 @@ final class AppViewModel: ObservableObject {
 
     func selectChat(_ chatId: Int64) async {
         selectedChatId = chatId
-        messages = []
-        await refreshMessages(replaceExisting: true)
+        await loadMessagesFromCache(chatId: chatId)
+        await refreshMessages()
         if visibleChatId == chatId {
             await markChatRead(chatId)
         }
     }
 
-    func refreshMessages(replaceExisting: Bool = false) async {
-        guard let repository, let chatId = selectedChatId else { return }
-        isBusy = true
-        defer { isBusy = false }
+    private func loadMessagesFromCache(chatId: Int64) async {
+        guard let repository else { return }
         do {
-            if replaceExisting || messages.isEmpty {
-                let syncedMessages = try await repository.syncMessages(chatId: chatId)
-                messages = applyReadState(deduplicatedMessages(syncedMessages), chatId: chatId)
-            } else {
-                await reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
-            }
-            scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
+            let stored = try repository.storedMessages(chatId: chatId)
+            guard !stored.isEmpty else { return }
+            messages = applyReadState(deduplicatedMessages(stored), chatId: chatId)
         } catch {
-            status = error.localizedDescription
+            // Keep silent; network sync will populate messages.
         }
     }
 
-    func reloadMessagesFromStore(chatId: Int64, mergeWithExisting: Bool = false) async {
+    func refreshMessages() async {
+        guard let repository, let chatId = selectedChatId else { return }
+
+        if messages.isEmpty {
+            await loadMessagesFromCache(chatId: chatId)
+        }
+
+        let showBlockingLoader = messages.isEmpty
+        if showBlockingLoader { isBusy = true }
+        defer { if showBlockingLoader { isBusy = false } }
+
+        do {
+            let syncedMessages = try await repository.syncMessages(chatId: chatId)
+            replaceMessagesPreservingDisplay(syncedMessages, chatId: chatId)
+            scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
+        } catch {
+            if messages.isEmpty {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    func reloadMessagesFromStore(chatId: Int64, mergeWithExisting: Bool = true) async {
         guard let repository else { return }
         do {
             let stored = try repository.storedMessages(chatId: chatId)
             let normalized = applyReadState(deduplicatedMessages(stored), chatId: chatId)
             if mergeWithExisting {
-                var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-                for message in normalized {
-                    byId[message.id] = message
-                }
-                messages = deduplicatedMessages(
-                    byId.values.sorted { $0.createdAt < $1.createdAt }
-                )
+                replaceMessagesPreservingDisplay(normalized, chatId: chatId)
             } else {
                 messages = normalized
             }
@@ -372,8 +405,8 @@ final class AppViewModel: ObservableObject {
         mainTabIndex = 0
         selectedChatId = chatId
         navigationTargetChatId = chatId
-        messages = []
-        await refreshMessages(replaceExisting: true)
+        await loadMessagesFromCache(chatId: chatId)
+        await refreshMessages()
         if visibleChatId == chatId {
             await markChatRead(chatId)
         }
@@ -414,7 +447,7 @@ final class AppViewModel: ObservableObject {
         do {
             let downloadedMessages = try await repository.downloadMedia(chatId: chatId)
             if selectedChatId == chatId {
-                messages = applyReadState(deduplicatedMessages(downloadedMessages), chatId: chatId)
+                replaceMessagesPreservingDisplay(downloadedMessages, chatId: chatId)
             }
         } catch {
             status = error.localizedDescription
@@ -462,7 +495,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
         do {
             try await repository.delete(chatId: chatId, messageIds: [message.id], revoke: revoke)
-            await reloadMessagesFromStore(chatId: chatId)
+            await reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
             await refreshChats()
         } catch {
             status = error.localizedDescription
@@ -692,6 +725,16 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func applyUpsertedMessage(_ message: TgMessage) {
+        guard selectedChatId == message.chatId else { return }
+        var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+        byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
+        messages = applyReadState(
+            deduplicatedMessages(byId.values.sorted { $0.createdAt < $1.createdAt }),
+            chatId: message.chatId
+        )
+    }
+
     private func handleIncomingMessage(_ message: TgMessage) {
         guard !message.outgoing, phase == .main else { return }
         guard let chat = chats.first(where: { $0.id == message.chatId }) else { return }
@@ -740,7 +783,7 @@ final class AppViewModel: ObservableObject {
             let latest = try await repository.peekMessages(chatId: chatId)
             var byId = Dictionary(uniqueKeysWithValues: peekMessages.map { ($0.id, $0) })
             for message in latest {
-                byId[message.id] = message
+                byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
             }
             peekMessages = byId.values.sorted { $0.createdAt < $1.createdAt }
         } catch {
@@ -799,6 +842,12 @@ final class AppViewModel: ObservableObject {
             }
         }
 
+        repository.onMessageUpserted = { [weak self] message in
+            Task { @MainActor in
+                self?.applyUpsertedMessage(message)
+            }
+        }
+
         repository.onMessagesDeleted = { [weak self] chatId, messageIds in
             Task { @MainActor in
                 await self?.applyMessagesDeleted(chatId: chatId, messageIds: Set(messageIds))
@@ -808,11 +857,17 @@ final class AppViewModel: ObservableObject {
         repository.onMessageReplaced = { [weak self] chatId, oldMessageId, newMessage in
             Task { @MainActor in
                 guard let self, self.selectedChatId == chatId else { return }
-                if let index = self.messages.firstIndex(where: { $0.id == oldMessageId }) {
-                    self.messages[index] = newMessage
+                var updated = self.messages.filter { $0.id != oldMessageId }
+                if let index = updated.firstIndex(where: { $0.id == newMessage.id }) {
+                    let previous = updated[index]
+                    updated[index] = newMessage.mergingPreservingDisplayFields(from: previous)
                 } else {
-                    self.messages = self.deduplicatedMessages(self.messages + [newMessage])
+                    updated.append(newMessage)
                 }
+                self.messages = self.applyReadState(
+                    self.deduplicatedMessages(updated),
+                    chatId: chatId
+                )
             }
         }
 
@@ -860,6 +915,12 @@ final class AppViewModel: ObservableObject {
         case .ready:
             phase = .main
             status = ""
+            if let repository {
+                let cached = repository.cachedChats()
+                if !cached.isEmpty {
+                    chats = sortChats(cached)
+                }
+            }
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
@@ -1132,6 +1193,21 @@ final class AppViewModel: ObservableObject {
 
     func openChatFromSearch(_ chatId: Int64) async {
         await openChat(chatId: chatId)
+    }
+
+    private func replaceMessagesPreservingDisplay(_ incoming: [TgMessage], chatId: Int64) {
+        if messages.isEmpty {
+            messages = applyReadState(deduplicatedMessages(incoming), chatId: chatId)
+            return
+        }
+        var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+        for message in incoming {
+            byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
+        }
+        messages = applyReadState(
+            deduplicatedMessages(byId.values.sorted { $0.createdAt < $1.createdAt }),
+            chatId: chatId
+        )
     }
 
     private func deduplicatedMessages(_ items: [TgMessage]) -> [TgMessage] {

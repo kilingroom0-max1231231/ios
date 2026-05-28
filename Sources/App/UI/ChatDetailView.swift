@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ChatDetailView: View {
     @ObservedObject var vm: AppViewModel
@@ -7,6 +8,7 @@ struct ChatDetailView: View {
     @State private var showProfile = false
     @State private var mediaSelection: MediaViewerSelection?
     @State private var forwardingMessage: TgMessage?
+    @State private var bottomScrollAnchorId: Int64?
 
     private var selectedChat: TgChat? {
         vm.chats.first(where: { $0.id == chatId })
@@ -104,7 +106,7 @@ struct ChatDetailView: View {
             }
         }
         .refreshable {
-            await vm.refreshMessages(replaceExisting: true)
+            await vm.refreshMessages()
         }
         .sheet(isPresented: $showProfile) {
             NavigationStack {
@@ -246,17 +248,40 @@ struct ChatDetailView: View {
                         }
                     }
             )
-            .onChange(of: vm.messages.count) { _ in
-                if let last = vm.messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+            .onChange(of: vm.messages.last?.id) { newId in
+                bottomScrollAnchorId = newId ?? groupedMessages.last?.id
+            }
+            .onChange(of: bottomScrollAnchorId) { anchorId in
+                guard let anchorId else { return }
+                scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
+            }
+            .onChange(of: isComposerFocused) { focused in
+                if focused, let anchorId = bottomScrollAnchorId {
+                    scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                guard let anchorId = bottomScrollAnchorId else { return }
+                scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
+            }
             .onAppear {
-                if let last = vm.messages.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+                bottomScrollAnchorId = groupedMessages.last?.id
+                if let anchorId = bottomScrollAnchorId {
+                    scrollToBottom(proxy: proxy, anchorId: anchorId, animated: false)
                 }
+            }
+        }
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy, anchorId: Int64, animated: Bool) {
+        let scroll = {
+            proxy.scrollTo(anchorId, anchor: .bottom)
+        }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.22), scroll)
+            } else {
+                scroll()
             }
         }
     }
@@ -348,7 +373,6 @@ struct ChatDetailView: View {
         Button {
             Task {
                 await vm.sendMessage()
-                isComposerFocused = false
             }
         } label: {
             Image(systemName: "arrow.up")

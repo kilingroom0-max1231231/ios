@@ -14,18 +14,21 @@ enum TelegramRepositoryError: LocalizedError {
 final class TelegramRepository {
     private let client: TelegramClientProtocol
     private let store: LocalMessageStore
+    private let chatStore: LocalChatStore
     var onAuthStateChanged: ((AuthState) -> Void)?
     var onMessagesChanged: ((Int64) -> Void)?
     var onChatsChanged: (() -> Void)?
     var onChatChanged: ((Int64) -> Void)?
     var onTypingChanged: ((Int64, String?) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
+    var onMessageUpserted: ((TgMessage) -> Void)?
     var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
     var onMessagesDeleted: ((Int64, [Int64]) -> Void)?
 
-    init(client: TelegramClientProtocol, store: LocalMessageStore) {
+    init(client: TelegramClientProtocol, store: LocalMessageStore, chatStore: LocalChatStore) {
         self.client = client
         self.store = store
+        self.chatStore = chatStore
         self.client.setEventHandler { [weak self] event in
             guard let self else { return }
             switch event {
@@ -33,12 +36,14 @@ final class TelegramRepository {
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
                 try? self.store.upsert(messages: [message])
+                self.onMessageUpserted?(message)
                 self.onIncomingMessage?(message)
                 self.onMessagesChanged?(message.chatId)
                 self.onChatChanged?(message.chatId)
             case .messageReplaced(let chatId, let oldMessageId, let newMessage):
                 try? self.store.deleteMessage(chatId: chatId, messageId: oldMessageId)
                 try? self.store.upsert(messages: [newMessage])
+                self.onMessageUpserted?(newMessage)
                 self.onMessageReplaced?(chatId, oldMessageId, newMessage)
                 self.onMessagesChanged?(chatId)
                 self.onChatChanged?(chatId)
@@ -61,7 +66,8 @@ final class TelegramRepository {
         do {
             let client = try TDLibClient()
             let store = try LocalMessageStore()
-            return TelegramRepository(client: client, store: store)
+            let chatStore = try LocalChatStore()
+            return TelegramRepository(client: client, store: store, chatStore: chatStore)
         } catch {
             throw TelegramRepositoryError.bootstrapFailed(error.localizedDescription)
         }
@@ -87,8 +93,14 @@ final class TelegramRepository {
         try await client.submitPassword(password)
     }
 
+    func cachedChats() -> [TgChat] {
+        (try? chatStore.read()) ?? []
+    }
+
     func loadChats() async throws -> [TgChat] {
-        try await client.fetchChats(limit: 200)
+        let remote = try await client.fetchChats(limit: 200)
+        try? chatStore.write(remote)
+        return remote
     }
 
     static let initialMessagePageSize = 20
@@ -97,9 +109,22 @@ final class TelegramRepository {
 
     func syncMessages(chatId: Int64, limit: Int = TelegramRepository.initialMessagePageSize) async throws -> [TgMessage] {
         let remote = try await client.fetchMessages(chatId: chatId, limit: limit)
-        try store.upsert(messages: remote)
-        try store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
-        return remote.sorted { $0.createdAt < $1.createdAt }
+        if !remote.isEmpty {
+            try store.upsert(messages: remote)
+            try store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
+        }
+        let stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+        return Self.mergeStoredMessages(stored, withRemoteEnrichment: remote)
+    }
+
+    /// Store keeps text/attachments; TDLib fetch adds sender names, avatars, read state.
+    private static func mergeStoredMessages(_ stored: [TgMessage], withRemoteEnrichment remote: [TgMessage]) -> [TgMessage] {
+        guard !remote.isEmpty else { return stored }
+        let remoteById = Dictionary(uniqueKeysWithValues: remote.map { ($0.id, $0) })
+        return stored.map { message in
+            guard let enriched = remoteById[message.id] else { return message }
+            return enriched.mergingPreservingDisplayFields(from: message)
+        }
     }
 
     func peekMessages(chatId: Int64, limit: Int = TelegramRepository.peekMessagePageSize) async throws -> [TgMessage] {

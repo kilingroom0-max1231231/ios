@@ -30,8 +30,8 @@ final class LocalMessageStore {
     func upsert(messages: [TgMessage]) throws {
         try queue.sync {
             let sql = """
-            INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from, reply_to_message_id)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
               text=CASE
                 WHEN messages.is_deleted = 1 AND length(trim(excluded.text)) = 0 THEN messages.text
@@ -41,7 +41,12 @@ final class LocalMessageStore {
               created_at=excluded.created_at,
               is_deleted=MAX(messages.is_deleted, excluded.is_deleted),
               media_album_id=excluded.media_album_id,
-              forwarded_from=excluded.forwarded_from;
+              forwarded_from=CASE
+                WHEN excluded.forwarded_from IS NOT NULL AND length(trim(excluded.forwarded_from)) > 0
+                THEN excluded.forwarded_from
+                ELSE messages.forwarded_from
+              END,
+              reply_to_message_id=COALESCE(excluded.reply_to_message_id, messages.reply_to_message_id);
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -67,6 +72,11 @@ final class LocalMessageStore {
                 } else {
                     sqlite3_bind_null(stmt, 8)
                 }
+                if let replyId = message.replyToMessageId {
+                    sqlite3_bind_int64(stmt, 9, replyId)
+                } else {
+                    sqlite3_bind_null(stmt, 9)
+                }
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
@@ -81,7 +91,7 @@ final class LocalMessageStore {
     func read(chatId: Int64, limit: Int = 200) throws -> [TgMessage] {
         try queue.sync {
             let sql = """
-            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from
+            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from, reply_to_message_id
             FROM messages
             WHERE chat_id = ?
             ORDER BY created_at ASC
@@ -106,7 +116,7 @@ final class LocalMessageStore {
                         outgoing: sqlite3_column_int(stmt, 3) == 1,
                         createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
                         isEdited: false,
-                        replyToMessageId: nil,
+                        replyToMessageId: (sqlite3_column_type(stmt, 8) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 8),
                         isDeleted: sqlite3_column_int(stmt, 5) == 1,
                         attachments: try readAttachments(chatId: chatId, messageId: sqlite3_column_int64(stmt, 0)),
                         mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6),
@@ -201,6 +211,7 @@ final class LocalMessageStore {
             is_deleted INTEGER NOT NULL DEFAULT 0,
             media_album_id INTEGER,
             forwarded_from TEXT,
+            reply_to_message_id INTEGER,
             PRIMARY KEY (chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
@@ -226,6 +237,28 @@ final class LocalMessageStore {
                 code: 5,
                 userInfo: [NSLocalizedDescriptionKey: sqliteErrorMessage(result)]
             )
+        }
+
+        try migrateSchemaIfNeeded()
+    }
+
+    private func migrateSchemaIfNeeded() throws {
+        guard tableExists("messages") else { return }
+        if !columnExists("messages", "reply_to_message_id") {
+            let result = sqlite3_exec(
+                db,
+                "ALTER TABLE messages ADD COLUMN reply_to_message_id INTEGER;",
+                nil,
+                nil,
+                nil
+            )
+            guard result == SQLITE_OK else {
+                throw NSError(
+                    domain: "LocalMessageStore",
+                    code: 19,
+                    userInfo: [NSLocalizedDescriptionKey: sqliteErrorMessage(result)]
+                )
+            }
         }
     }
 
