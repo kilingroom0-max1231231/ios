@@ -281,6 +281,26 @@ enum ChatMediaCategory: String, CaseIterable, Identifiable {
     }
 }
 
+struct GlobalSearchMessageHit: Identifiable, Equatable {
+    let id: String
+    let message: TgMessage
+    let chatTitle: String
+}
+
+enum GlobalSearchScope: String, CaseIterable, Identifiable {
+    case myChats
+    case telegram
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .myChats: return AppText.tr("Мои чаты", "My chats")
+        case .telegram: return AppText.tr("Telegram", "Telegram")
+        }
+    }
+}
+
 enum AuthState: Equatable {
     case waitPhone
     case waitCode

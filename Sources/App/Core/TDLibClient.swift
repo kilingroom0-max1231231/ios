@@ -115,14 +115,46 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
-    func fetchChats(limit: Int = 50) async throws -> [TgChat] {
+    func searchChats(query: String, limit: Int = 20) async throws -> [TgChat] {
         let response = try await sendRequest([
-            "@type": "getChats",
-            "chat_list": ["@type": "chatListMain"],
+            "@type": "searchChats",
+            "query": query,
             "limit": limit
         ])
-        guard let ids = response["chat_ids"] as? [Any] else { return [] }
+        let ids = response["chat_ids"] as? [Any] ?? []
+        return try await loadChats(from: ids)
+    }
 
+    func searchPublicChats(query: String) async throws -> [TgChat] {
+        let response = try await sendRequest([
+            "@type": "searchPublicChats",
+            "query": query
+        ])
+        let ids = response["chat_ids"] as? [Any] ?? []
+        return try await loadChats(from: ids)
+    }
+
+    func searchMessagesGlobally(query: String, limit: Int = 30) async throws -> [TgMessage] {
+        let response = try await sendRequest([
+            "@type": "searchMessages",
+            "query": query,
+            "offset": "",
+            "limit": limit,
+            "filter": ["@type": "searchMessagesFilterEmpty"],
+            "min_date": 0,
+            "max_date": 0
+        ])
+        let items: [[String: Any]]
+        if (response["@type"] as? String) == "foundChatMessages" {
+            items = response["messages"] as? [[String: Any]] ?? []
+        } else {
+            items = response["messages"] as? [[String: Any]] ?? []
+        }
+        let parsed = items.compactMap { parseMessage($0, fallbackChatId: 0) }
+        return try await enrichMessagesWithSenderInfo(parsed)
+    }
+
+    private func loadChats(from ids: [Any]) async throws -> [TgChat] {
         var chats: [TgChat] = []
         for anyId in ids {
             guard let id = int64Value(anyId) else { continue }
@@ -135,6 +167,17 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             }
         }
         return chats.sorted(by: chatSort)
+    }
+
+    func fetchChats(limit: Int = 50) async throws -> [TgChat] {
+        let response = try await sendRequest([
+            "@type": "getChats",
+            "chat_list": ["@type": "chatListMain"],
+            "limit": limit
+        ])
+        guard let ids = response["chat_ids"] as? [Any] else { return [] }
+
+        return try await loadChats(from: ids)
     }
 
     func fetchMessages(chatId: Int64, limit: Int = 500) async throws -> [TgMessage] {

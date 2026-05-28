@@ -20,33 +20,63 @@ struct ChatListView: View {
     }
 
     private var chatListContent: some View {
-        List {
-            ForEach(visiblePinnedChats) { chat in
-                chatRow(chat)
+        ZStack {
+            List {
+                ForEach(visiblePinnedChats) { chat in
+                    chatRow(chat)
+                }
+                .onMove { source, destination in
+                    guard vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                    Task { await vm.movePinnedChats(from: source, to: destination) }
+                }
+
+                ForEach(visibleOtherChats) { chat in
+                    chatRow(chat)
+                }
             }
-            .onMove { source, destination in
-                guard vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                Task { await vm.movePinnedChats(from: source, to: destination) }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(ChatListScreenBackground())
+            .navigationDestination(for: Int64.self) { chatId in
+                ChatDetailView(vm: vm, chatId: chatId)
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if searchVisible {
+                    inlineSearchBar
+                }
+            }
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Button {
+                        if searchVisible {
+                            closeSearch()
+                        } else {
+                            openSearch()
+                        }
+                    } label: {
+                        Text(AppText.tr("Чаты", "Chats"))
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if searchVisible {
+                        Button(AppText.tr("Отмена", "Cancel")) {
+                            closeSearch()
+                        }
+                    } else if !visiblePinnedChats.isEmpty {
+                        EditButton()
+                    }
+                }
             }
 
-            ForEach(visibleOtherChats) { chat in
-                chatRow(chat)
-            }
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(ChatListScreenBackground())
-        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: searchVisible)
-        .navigationBarHidden(true)
-        .navigationDestination(for: Int64.self) { chatId in
-            ChatDetailView(vm: vm, chatId: chatId)
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            chatListHeader
-        }
-        .overlay {
             if vm.isChatsBootstrapLoading {
                 ChatsBootstrapLoadingView()
+                    .transition(.opacity)
             } else if vm.chats.isEmpty && !vm.isBusy {
                 emptyChatsView
             }
@@ -63,71 +93,30 @@ struct ChatListView: View {
         }
     }
 
-    private var isSearchActive: Bool {
-        searchVisible || !vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private var inlineSearchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
 
-    private var chatListHeader: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .center) {
-                Text(AppText.tr("Чаты", "Chats"))
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+            TextField(AppText.tr("Поиск в чатах", "Search chats"), text: $vm.chatSearch)
+                .focused($searchFocused)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
 
-                Spacer()
-
-                if searchVisible {
-                    Button(AppText.tr("Отмена", "Cancel")) {
-                        closeSearch()
-                    }
-                    .font(.subheadline)
-                } else {
-                    HStack(spacing: 18) {
-                        Button {
-                            openSearch()
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                                .font(.body.weight(.medium))
-                        }
-                        .accessibilityLabel(AppText.tr("Поиск", "Search"))
-
-                        if !visiblePinnedChats.isEmpty {
-                            EditButton()
-                        }
-                    }
-                }
-            }
-
-            if searchVisible {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
+            if !vm.chatSearch.isEmpty {
+                Button {
+                    vm.chatSearch = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
-
-                    TextField(AppText.tr("Имя или сообщение", "Name or message"), text: $vm.chatSearch)
-                        .focused($searchFocused)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .submitLabel(.search)
-
-                    if !vm.chatSearch.isEmpty {
-                        Button {
-                            vm.chatSearch = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .background(FrostedBarBackground())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(FrostedBarBackground(showsDivider: false))
     }
 
     private func openSearch() {

@@ -92,7 +92,7 @@ final class TelegramRepository {
     }
 
     func loadChats() async throws -> [TgChat] {
-        try await client.fetchChats(limit: 200)
+        try await client.fetchChats(limit: 500)
     }
 
     static let initialMessagePageSize = 20
@@ -249,6 +249,18 @@ final class TelegramRepository {
 
     func setMyProfilePhoto(path: String) async throws {
         try await client.setProfilePhoto(localPath: path)
+    }
+
+    func searchMyChats(query: String) async throws -> [TgChat] {
+        try await client.searchChats(query: query, limit: 30)
+    }
+
+    func searchPublicChats(query: String) async throws -> [TgChat] {
+        try await client.searchPublicChats(query: query)
+    }
+
+    func searchMessagesGlobally(query: String) async throws -> [TgMessage] {
+        try await client.searchMessagesGlobally(query: query, limit: 40)
     }
 }
 

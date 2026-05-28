@@ -36,4 +36,7 @@ protocol TelegramClientProtocol {
     func setMyName(firstName: String, lastName: String) async throws
     func setMyUsername(_ username: String) async throws
     func setProfilePhoto(localPath: String) async throws
+    func searchChats(query: String, limit: Int) async throws -> [TgChat]
+    func searchPublicChats(query: String) async throws -> [TgChat]
+    func searchMessagesGlobally(query: String, limit: Int) async throws -> [TgMessage]
 }

@@ -18,11 +18,18 @@ struct AppShellView: View {
                     LoginView(vm: vm)
                 }
             case .main:
-                TabView {
+                TabView(selection: $vm.selectedMainTab) {
                     ChatListView(vm: vm)
-                    .tabItem {
-                        Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
-                    }
+                        .tabItem {
+                            Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
+                        }
+                        .tag(0)
+
+                    GlobalSearchView(vm: vm)
+                        .tabItem {
+                            Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")
+                        }
+                        .tag(1)
 
                     NavigationStack {
                         SettingsView(vm: vm)
@@ -30,6 +37,7 @@ struct AppShellView: View {
                     .tabItem {
                         Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                     }
+                    .tag(2)
                 }
                 .tint(appearance.accentColor)
                 .onAppear {

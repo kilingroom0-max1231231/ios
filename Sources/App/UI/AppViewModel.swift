@@ -45,10 +45,17 @@ final class AppViewModel: ObservableObject {
     @Published var privacySettings: [UserPrivacySettingValue] = []
     @Published var isPrivacyLoading = false
     @Published var isChatsBootstrapLoading = false
+    @Published var globalSearchQuery = ""
+    @Published var globalSearchScope: GlobalSearchScope = .myChats
+    @Published var globalSearchChats: [TgChat] = []
+    @Published var globalSearchMessageHits: [GlobalSearchMessageHit] = []
+    @Published var isGlobalSearching = false
+    @Published var selectedMainTab = 0
 
     private static let initialChatLoadKey = "TelegramUserClient.hasCompletedInitialChatLoad"
 
     private var repository: TelegramRepository?
+    private var chatLoadToken = UUID()
     private var incomingBannerDismissTask: Task<Void, Never>?
     private var mediaDownloadsInProgress: Set<Int64> = []
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
@@ -238,17 +245,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func beginChat(_ chatId: Int64) async {
-        let switchingChat = activeChatId != chatId
+        let token = UUID()
+        chatLoadToken = token
         activeChatId = chatId
         selectedChatId = chatId
-        if switchingChat {
-            messages = []
-        }
-        await refreshMessages(replaceExisting: true)
+        messages = []
+
+        await refreshMessages(replaceExisting: true, expectedChatId: chatId, loadToken: token)
+        guard chatLoadToken == token, activeChatId == chatId else { return }
         await markChatRead(chatId)
     }
 
     func endChat() {
+        chatLoadToken = UUID()
         activeChatId = nil
         selectedChatId = nil
     }
@@ -262,12 +271,19 @@ final class AppViewModel: ObservableObject {
         return message.id > 0 && message.id <= lastReadOutboxMessageId(for: chatId)
     }
 
-    func refreshMessages(replaceExisting: Bool = false) async {
+    func refreshMessages(
+        replaceExisting: Bool = false,
+        expectedChatId: Int64? = nil,
+        loadToken: UUID? = nil
+    ) async {
         guard let repository, let chatId = selectedChatId else { return }
+        let token = loadToken ?? chatLoadToken
         isBusy = true
         defer { isBusy = false }
         do {
             let syncedMessages = try await repository.syncMessages(chatId: chatId)
+            guard chatLoadToken == token, activeChatId == chatId else { return }
+            if let expectedChatId, expectedChatId != chatId { return }
             if replaceExisting || messages.isEmpty {
                 messages = syncedMessages
             } else {
@@ -275,8 +291,61 @@ final class AppViewModel: ObservableObject {
             }
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
+            guard chatLoadToken == token, activeChatId == chatId else { return }
             status = error.localizedDescription
         }
+    }
+
+    func runGlobalSearch() async {
+        let query = globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let repository, authState == .ready else { return }
+        guard query.count >= 2 else {
+            globalSearchChats = []
+            globalSearchMessageHits = []
+            return
+        }
+
+        isGlobalSearching = true
+        defer { isGlobalSearching = false }
+
+        do {
+            switch globalSearchScope {
+            case .myChats:
+                let local = chats.filter {
+                    $0.title.localizedCaseInsensitiveContains(query)
+                        || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(query) ?? false)
+                }
+                let remote = try await repository.searchMyChats(query: query)
+                var merged: [Int64: TgChat] = [:]
+                for chat in local + remote {
+                    merged[chat.id] = chat
+                }
+                globalSearchChats = sortChats(Array(merged.values))
+                globalSearchMessageHits = []
+            case .telegram:
+                let publicChats = try await repository.searchPublicChats(query: query)
+                globalSearchChats = publicChats
+                let foundMessages = try await repository.searchMessagesGlobally(query: query)
+                globalSearchMessageHits = foundMessages.map { message in
+                    let title = chats.first(where: { $0.id == message.chatId })?.title
+                        ?? AppText.tr("Чат", "Chat")
+                    return GlobalSearchMessageHit(
+                        id: "\(message.chatId)-\(message.id)",
+                        message: message,
+                        chatTitle: title
+                    )
+                }
+            }
+        } catch {
+            status = error.localizedDescription
+            globalSearchChats = []
+            globalSearchMessageHits = []
+        }
+    }
+
+    func openChatFromSearch(_ chatId: Int64) {
+        selectedMainTab = 0
+        navigationTargetChatId = chatId
     }
 
     private static func mergeMessages(_ existing: [TgMessage], _ incoming: [TgMessage]) -> [TgMessage] {
@@ -835,16 +904,17 @@ final class AppViewModel: ObservableObject {
     private func applyPhase(for state: AuthState) async {
         switch state {
         case .ready:
-            phase = .main
             status = ""
             let isFirstChatLoad = !UserDefaults.standard.bool(forKey: Self.initialChatLoadKey)
             if isFirstChatLoad {
                 isChatsBootstrapLoading = true
-            }
-            await refreshMe()
-            if isFirstChatLoad {
+                await refreshMe()
                 UserDefaults.standard.set(true, forKey: Self.initialChatLoadKey)
                 isChatsBootstrapLoading = false
+                phase = .main
+            } else {
+                phase = .main
+                await refreshMe()
             }
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
