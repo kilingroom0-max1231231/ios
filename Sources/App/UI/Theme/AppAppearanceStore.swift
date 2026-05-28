@@ -399,11 +399,8 @@ struct ChatScreenBackground: View {
 }
 
 struct ChatListScreenBackground: View {
-    @EnvironmentObject private var appearance: AppAppearanceStore
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
-        appearance.chatListColor(colorScheme: colorScheme)
+        Color(.systemBackground)
             .ignoresSafeArea()
     }
 }

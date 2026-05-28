@@ -71,7 +71,9 @@ struct ProfilePrivacySettingsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle(AppText.tr("Профиль и приватность", "Profile & privacy"))
+        .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground().ignoresSafeArea())
+        .frostedNavigationBar()
         .task {
             await vm.refreshMe()
             firstName = vm.me?.firstName ?? ""

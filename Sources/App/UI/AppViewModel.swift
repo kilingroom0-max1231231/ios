@@ -62,6 +62,7 @@ final class AppViewModel: ObservableObject {
     private var isLoadingOlderMessages = false
     private var isLoadingPeekOlder = false
     private var toastDismissTask: Task<Void, Never>?
+    private var toastDismissGeneration = 0
 
     var filteredChats: [TgChat] {
         let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -241,7 +242,17 @@ final class AppViewModel: ObservableObject {
     }
 
     func setChatVisible(_ chatId: Int64?) {
+        let previous = visibleChatId
         visibleChatId = chatId
+        Task { [weak self] in
+            guard let self, let repository = self.repository else { return }
+            if let previous, previous != chatId {
+                try? await repository.closeChat(chatId: previous)
+            }
+            if let chatId {
+                try? await repository.openChat(chatId: chatId)
+            }
+        }
     }
 
     func selectChat(_ chatId: Int64) async {
@@ -276,9 +287,13 @@ final class AppViewModel: ObservableObject {
             let stored = try repository.storedMessages(chatId: chatId)
             let normalized = applyReadState(deduplicatedMessages(stored), chatId: chatId)
             if mergeWithExisting {
-                let existingIds = Set(messages.map(\.id))
-                let newOnes = normalized.filter { !existingIds.contains($0.id) }
-                messages = deduplicatedMessages(messages + newOnes)
+                var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+                for message in normalized {
+                    byId[message.id] = message
+                }
+                messages = deduplicatedMessages(
+                    byId.values.sorted { $0.createdAt < $1.createdAt }
+                )
             } else {
                 messages = normalized
             }
@@ -690,17 +705,25 @@ final class AppViewModel: ObservableObject {
             preview: preview,
             avatarPath: chat.avatarPath
         )
+
         toastDismissTask?.cancel()
+        toastDismissGeneration += 1
+        let dismissGeneration = toastDismissGeneration
         toastDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 4_500_000_000)
-            if incomingToast?.chatId == message.chatId {
-                incomingToast = nil
+            do {
+                try await Task.sleep(nanoseconds: 4_500_000_000)
+            } catch {
+                return
             }
+            guard dismissGeneration == toastDismissGeneration else { return }
+            incomingToast = nil
         }
+
         NotificationSoundPlayer.playMessageReceived()
     }
 
     func dismissIncomingToast() {
+        toastDismissGeneration += 1
         incomingToast = nil
         toastDismissTask?.cancel()
     }
@@ -715,13 +738,50 @@ final class AppViewModel: ObservableObject {
         guard let repository, peekChatId == chatId else { return }
         do {
             let latest = try await repository.peekMessages(chatId: chatId)
-            let existingIds = Set(peekMessages.map(\.id))
-            let newOnes = latest.filter { !existingIds.contains($0.id) }
-            if !newOnes.isEmpty {
-                peekMessages = peekMessages + newOnes
+            var byId = Dictionary(uniqueKeysWithValues: peekMessages.map { ($0.id, $0) })
+            for message in latest {
+                byId[message.id] = message
             }
+            peekMessages = byId.values.sorted { $0.createdAt < $1.createdAt }
         } catch {
             // Keep silent during peek preview.
+        }
+    }
+
+    private func patchDeletedChatPreview(chatId: Int64) async {
+        guard let repository,
+              let lastId = chats.first(where: { $0.id == chatId })?.lastMessageId,
+              let stored = try? repository.storedMessages(chatId: chatId),
+              let lastMessage = stored.first(where: { $0.id == lastId }),
+              lastMessage.isDeleted else { return }
+        updateLocalChat(chatId) { chat in
+            chat.lastMessagePreview = AppText.chatListPreview(for: lastMessage)
+        }
+    }
+
+    private func applyMessagesDeleted(chatId: Int64, messageIds: Set<Int64>) async {
+        guard !messageIds.isEmpty else { return }
+
+        let markDeleted: (TgMessage) -> TgMessage = { message in
+            messageIds.contains(message.id) ? message.markedDeleted() : message
+        }
+
+        if selectedChatId == chatId {
+            messages = messages.map(markDeleted)
+        }
+        if peekChatId == chatId {
+            peekMessages = peekMessages.map(markDeleted)
+        }
+
+        guard let repository else { return }
+        let stored = (try? repository.storedMessages(chatId: chatId)) ?? []
+        updateLocalChat(chatId) { chat in
+            guard let lastId = chat.lastMessageId, messageIds.contains(lastId) else { return }
+            if let lastMessage = stored.first(where: { $0.id == lastId }) {
+                chat.lastMessagePreview = AppText.chatListPreview(for: lastMessage)
+            } else if let lastMessage = messages.first(where: { $0.id == lastId }) {
+                chat.lastMessagePreview = AppText.chatListPreview(for: lastMessage)
+            }
         }
     }
 
@@ -736,6 +796,12 @@ final class AppViewModel: ObservableObject {
         repository.onIncomingMessage = { [weak self] message in
             Task { @MainActor in
                 self?.handleIncomingMessage(message)
+            }
+        }
+
+        repository.onMessagesDeleted = { [weak self] chatId, messageIds in
+            Task { @MainActor in
+                await self?.applyMessagesDeleted(chatId: chatId, messageIds: Set(messageIds))
             }
         }
 
@@ -774,6 +840,7 @@ final class AppViewModel: ObservableObject {
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
                 await self?.refreshChats()
+                await self?.patchDeletedChatPreview(chatId: chatId)
                 self?.updateOutgoingReadReceipts(for: chatId)
                 if self?.visibleChatId == chatId {
                     await self?.markChatRead(chatId)
@@ -919,14 +986,16 @@ final class AppViewModel: ObservableObject {
         guard text != nil else { return }
 
         typingClearTasks[chatId] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self?.updateLocalChat(chatId) { chat in
-                    chat.typingText = nil
-                }
-                self?.typingClearTasks[chatId] = nil
+            do {
+                try await Task.sleep(nanoseconds: 5_500_000_000)
+            } catch {
+                return
             }
+            guard !Task.isCancelled else { return }
+            self?.updateLocalChat(chatId) { chat in
+                chat.typingText = nil
+            }
+            self?.typingClearTasks[chatId] = nil
         }
     }
 
@@ -1106,21 +1175,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func messagePreviewText(_ message: TgMessage) -> String {
-        if message.isDeleted {
-            return AppText.tr("Удалённое сообщение", "Deleted message")
-        }
-        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
-        if let first = message.attachments.first {
-            switch first.kind {
-            case .photo: return AppText.tr("Фото", "Photo")
-            case .video: return AppText.tr("Видео", "Video")
-            case .voice: return AppText.tr("Голосовое", "Voice message")
-            case .document: return first.fileName ?? AppText.tr("Файл", "File")
-            default: return AppText.tr("Медиа", "Media")
-            }
-        }
-        return AppText.tr("Новое сообщение", "New message")
+        AppText.chatListPreview(for: message)
     }
 
     private func sortChats(_ items: [TgChat]) -> [TgChat] {

@@ -7,26 +7,27 @@ struct GlobalSearchView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("", selection: $vm.globalSearchScope) {
-                    ForEach(GlobalSearchScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
+                VStack(spacing: 12) {
+                    Picker("", selection: $vm.globalSearchScope) {
+                        ForEach(GlobalSearchScope.allCases) { scope in
+                            Text(scope.title).tag(scope)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                    .pickerStyle(.segmented)
 
-                searchField
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
+                    searchField
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+                .background(.ultraThinMaterial)
 
                 resultsList
             }
             .background(ChatListScreenBackground().ignoresSafeArea())
             .navigationTitle(AppText.tr("Поиск", "Search"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .navigationBarTitleDisplayMode(.large)
+            .frostedNavigationBar()
         }
         .onChange(of: vm.globalSearchScope) { _ in
             Task { await vm.runGlobalSearch() }
@@ -37,14 +38,14 @@ struct GlobalSearchView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
 
             TextField(
                 vm.globalSearchScope == .myChats
-                    ? AppText.tr("Чаты и сообщения", "Chats and messages")
-                    : AppText.tr("Пользователи, каналы, сообщения", "Users, channels, messages"),
+                    ? AppText.tr("Чаты", "Chats")
+                    : AppText.tr("Пользователи и каналы", "Users and channels"),
                 text: $vm.globalSearchQuery
             )
             .focused($isSearchFocused)
@@ -55,6 +56,16 @@ struct GlobalSearchView: View {
                 Task { await vm.runGlobalSearch() }
             }
 
+            if !vm.globalSearchQuery.isEmpty {
+                Button {
+                    vm.globalSearchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
             if vm.isGlobalSearching {
                 ProgressView()
                     .controlSize(.small)
@@ -62,8 +73,14 @@ struct GlobalSearchView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onAppear { isSearchFocused = true }
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground).opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
     }
 
     @ViewBuilder
@@ -74,6 +91,7 @@ struct GlobalSearchView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             } else {
                 if !vm.globalSearchChats.isEmpty {
                     Section(AppText.tr("Чаты", "Chats")) {
@@ -84,7 +102,8 @@ struct GlobalSearchView: View {
                                 ChatSearchRow(chat: chat)
                             }
                             .buttonStyle(.plain)
-                            .listRowBackground(Color(.secondarySystemGroupedBackground))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.leading)
                         }
                     }
                 }
@@ -99,15 +118,18 @@ struct GlobalSearchView: View {
                                     Text(hit.chatTitle)
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                     Text(hit.message.text)
                                         .font(.subheadline)
-                                        .lineLimit(2)
+                                        .lineLimit(3)
+                                        .multilineTextAlignment(.leading)
                                         .foregroundStyle(.primary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
-                            .listRowBackground(Color(.secondarySystemGroupedBackground))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.leading)
                         }
                     }
                 }
@@ -119,6 +141,7 @@ struct GlobalSearchView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
             }
         }
@@ -139,9 +162,12 @@ private struct ChatSearchRow: View {
                 size: 44,
                 isSavedMessages: chat.kind == .savedMessages
             )
+            .frame(width: 44, height: 44)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(chat.title)
-                    .font(.headline)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 if let preview = chat.lastMessagePreview, !preview.isEmpty {
                     Text(preview)
@@ -150,8 +176,11 @@ private struct ChatSearchRow: View {
                         .lineLimit(1)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }

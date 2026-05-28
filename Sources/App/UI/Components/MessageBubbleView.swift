@@ -16,13 +16,25 @@ struct MessageBubbleView: View {
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
 
-    private var maxBubbleWidth: CGFloat {
-        let base = UIScreen.main.bounds.width * (appearance.compactBubbles ? 0.70 : 0.76)
-        return base
+    private var screenWidth: CGFloat {
+        UIScreen.main.bounds.width
     }
 
-    private var incomingMaxBubbleWidth: CGFloat {
-        maxBubbleWidth * 0.82
+    private var horizontalRowPadding: CGFloat { 10 }
+
+    private var outgoingBubbleMaxWidth: CGFloat {
+        let ratio = appearance.compactBubbles ? 0.72 : 0.78
+        return max(120, screenWidth * ratio - 28)
+    }
+
+    private var incomingBubbleMaxWidth: CGFloat {
+        let avatarSpace: CGFloat = (showGroupSender || showPrivatePeerAvatar) ? 38 : 0
+        let ratio = appearance.compactBubbles ? 0.68 : 0.74
+        return max(120, screenWidth * ratio - avatarSpace - 36)
+    }
+
+    private var mediaBubbleMaxWidth: CGFloat {
+        message.outgoing ? outgoingBubbleMaxWidth : incomingBubbleMaxWidth
     }
 
     private var showPrivatePeerAvatar: Bool {
@@ -88,9 +100,9 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: message.outgoing ? 8 : 6) {
+        HStack(alignment: .bottom, spacing: 6) {
             if message.outgoing {
-                Spacer(minLength: 48)
+                Spacer(minLength: 12)
             } else if showGroupSender {
                 AvatarView(
                     title: message.senderName ?? "?",
@@ -98,6 +110,7 @@ struct MessageBubbleView: View {
                     imagePath: message.senderAvatarPath,
                     size: 30
                 )
+                .frame(width: 30, height: 30)
             } else if showPrivatePeerAvatar {
                 AvatarView(
                     title: peerTitle ?? "?",
@@ -105,6 +118,7 @@ struct MessageBubbleView: View {
                     imagePath: peerAvatarPath,
                     size: 28
                 )
+                .frame(width: 28, height: 28)
             }
 
             VStack(alignment: message.outgoing ? .trailing : .leading, spacing: 4) {
@@ -117,18 +131,20 @@ struct MessageBubbleView: View {
                 }
 
                 bubbleBody
-                    .fixedSize(horizontal: message.outgoing ? false : true, vertical: false)
             }
             .frame(
-                maxWidth: message.outgoing ? maxBubbleWidth : incomingMaxBubbleWidth,
+                minWidth: 0,
+                maxWidth: message.outgoing ? outgoingBubbleMaxWidth : incomingBubbleMaxWidth,
                 alignment: message.outgoing ? .trailing : .leading
             )
+            .layoutPriority(1)
 
             if !message.outgoing {
-                Spacer(minLength: message.outgoing ? 48 : 8)
+                Spacer(minLength: 12)
             }
         }
-        .padding(.horizontal, message.outgoing ? 10 : 6)
+        .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
+        .padding(.horizontal, horizontalRowPadding)
         .padding(.vertical, 2)
         .contextMenu {
             if let captionText {
@@ -182,7 +198,7 @@ struct MessageBubbleView: View {
             if hasGridMedia {
                 MessageMediaGridView(
                     attachments: gridMedia,
-                    maxWidth: maxBubbleWidth,
+                    maxWidth: mediaBubbleMaxWidth,
                     onOpen: { onOpenAttachment?($0) }
                 )
             }
@@ -193,7 +209,6 @@ struct MessageBubbleView: View {
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme) : .primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .strikethrough(message.isDeleted, pattern: .solid, color: .secondary)
                     .padding(.horizontal, 11)
                     .padding(.top, hasGridMedia ? 8 : 8)
                     .padding(.bottom, standaloneMedia.isEmpty ? 0 : 6)
@@ -229,6 +244,7 @@ struct MessageBubbleView: View {
                 : appearance.incomingBubble(colorScheme: colorScheme)
         )
         .clipShape(RoundedRectangle(cornerRadius: appearance.compactBubbles ? 14 : 16, style: .continuous))
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     private var bubbleFooter: some View {
@@ -259,14 +275,25 @@ struct MessageBubbleView: View {
                     .font(.caption2)
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.8) : .secondary)
                 if message.outgoing {
-                    Image(systemName: "checkmark")
-                        .font(.caption2.bold())
-                        .foregroundStyle(
-                            message.isReadByPeer
-                                ? appearance.accentColor
-                                : appearance.outgoingText(colorScheme: colorScheme).opacity(0.65)
-                        )
+                    outgoingReadReceipt
                 }
+        }
+    }
+
+    @ViewBuilder
+    private var outgoingReadReceipt: some View {
+        let sentTint = appearance.outgoingText(colorScheme: colorScheme).opacity(0.65)
+        if message.isReadByPeer {
+            HStack(spacing: -4) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .font(.caption2.bold())
+            .foregroundStyle(appearance.accentColor)
+        } else {
+            Image(systemName: "checkmark")
+                .font(.caption2.bold())
+                .foregroundStyle(sentTint)
         }
     }
 

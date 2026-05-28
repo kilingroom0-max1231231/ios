@@ -21,6 +21,7 @@ final class TelegramRepository {
     var onTypingChanged: ((Int64, String?) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
     var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
+    var onMessagesDeleted: ((Int64, [Int64]) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore) {
         self.client = client
@@ -43,6 +44,7 @@ final class TelegramRepository {
                 self.onChatChanged?(chatId)
             case .messagesDeleted(let chatId, let messageIds):
                 try? self.store.markDeleted(chatId: chatId, messageIds: messageIds)
+                self.onMessagesDeleted?(chatId, messageIds)
                 self.onMessagesChanged?(chatId)
                 self.onChatChanged?(chatId)
             case .chatsChanged:
@@ -202,6 +204,14 @@ final class TelegramRepository {
         // Do not block profile UI by eagerly downloading all media files.
         // Files will download on-demand when opened (or via background message downloader).
         return try store.read(chatId: chatId).filter { !$0.attachments.isEmpty || $0.text.containsURL }
+    }
+
+    func openChat(chatId: Int64) async throws {
+        try await client.openChat(chatId: chatId)
+    }
+
+    func closeChat(chatId: Int64) async throws {
+        try await client.closeChat(chatId: chatId)
     }
 
     func markChatRead(chatId: Int64) async throws {

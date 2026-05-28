@@ -47,8 +47,7 @@ struct ChatListView: View {
                     .background(FrostedBarBackground())
             }
         }
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .frostedNavigationBar()
         .overlay {
             if vm.chats.isEmpty && !vm.isBusy {
                 emptyChatsView
@@ -302,7 +301,7 @@ struct ChatListView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
@@ -393,7 +392,7 @@ private struct ChatCardView: View {
 
                 Text(previewText)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(chat.typingText != nil ? .green : .secondary)
                     .lineLimit(1)
 
                 if chat.isBlockedByMe || chat.isBlockedByPeer {
@@ -414,13 +413,15 @@ private struct ChatCardView: View {
             }
         }
         .padding(.vertical, 8)
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ChatListRowBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var previewText: String {
+        if let typing = AppText.typingStatus(chat.typingText) {
+            return typing
+        }
         if let preview = chat.lastMessagePreview, !preview.isEmpty {
             return preview
         }

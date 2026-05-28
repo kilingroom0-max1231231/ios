@@ -4,9 +4,10 @@ import UIKit
 enum ChromeAppearance {
     static func configureTabBar() {
         let appearance = UITabBarAppearance()
-        appearance.configureWithDefaultBackground()
-        appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
-        appearance.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.82)
+        appearance.configureWithTransparentBackground()
+        appearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        appearance.backgroundColor = .clear
+        appearance.shadowColor = .clear
         UITabBar.appearance().standardAppearance = appearance
         if #available(iOS 15.0, *) {
             UITabBar.appearance().scrollEdgeAppearance = appearance
@@ -15,12 +16,20 @@ enum ChromeAppearance {
 
     static func configureNavigationBar() {
         let appearance = UINavigationBarAppearance()
-        appearance.configureWithDefaultBackground()
-        appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
-        appearance.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.82)
+        appearance.configureWithTransparentBackground()
+        appearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
+        appearance.backgroundColor = .clear
+        appearance.shadowColor = .clear
         UINavigationBar.appearance().standardAppearance = appearance
         UINavigationBar.appearance().scrollEdgeAppearance = appearance
         UINavigationBar.appearance().compactAppearance = appearance
+    }
+}
+
+extension View {
+    func frostedNavigationBar() -> some View {
+        toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 

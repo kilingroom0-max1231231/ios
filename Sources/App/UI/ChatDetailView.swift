@@ -23,6 +23,11 @@ struct ChatDetailView: View {
         selectedChat?.kind == .savedMessages
     }
 
+    private var isPeerTyping: Bool {
+        guard let typing = selectedChat?.typingText else { return false }
+        return !typing.isEmpty
+    }
+
     private var subtitle: String {
         if isSavedMessages {
             return AppText.tr("ваши сохранённые сообщения", "your saved messages")
@@ -34,7 +39,16 @@ struct ChatDetailView: View {
             return AppText.tr("Ограничил(а) вас", "Restricted you")
         }
         if vm.isBusy { return AppText.tr("обновление...", "updating...") }
+        if let typing = AppText.typingStatus(selectedChat?.typingText) {
+            return typing
+        }
         return selectedChat?.statusText ?? AppText.tr("был(а) недавно", "last seen recently")
+    }
+
+    private var subtitleColor: Color {
+        if isPeerTyping { return .green }
+        if selectedChat?.isOnline == true { return .green }
+        return .secondary
     }
 
     private var canSend: Bool {
@@ -47,8 +61,8 @@ struct ChatDetailView: View {
                 bottomBar
             }
         .background(ChatScreenBackground().ignoresSafeArea())
-        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .frostedNavigationBar()
         .task(id: chatId) {
             vm.setChatVisible(chatId)
             await vm.selectChat(chatId)
@@ -56,8 +70,6 @@ struct ChatDetailView: View {
         .onDisappear {
             vm.setChatVisible(nil)
         }
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Button {
@@ -71,14 +83,20 @@ struct ChatDetailView: View {
                             size: 30,
                             isSavedMessages: isSavedMessages
                         )
+                        .frame(width: 30, height: 30)
+
                         VStack(alignment: .leading, spacing: 0) {
                             Text(title)
                                 .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
                             Text(subtitle)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(subtitleColor)
+                                .lineLimit(1)
                         }
+                        .frame(maxWidth: 180, alignment: .leading)
                     }
                 }
                 .buttonStyle(.plain)
@@ -216,6 +234,7 @@ struct ChatDetailView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                .padding(.horizontal, 2)
         }
         .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(

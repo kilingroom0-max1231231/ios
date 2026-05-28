@@ -158,6 +158,28 @@ struct TgMessage: Identifiable, Equatable {
         self.authorSignature = authorSignature
         self.viewCount = viewCount
     }
+
+    func markedDeleted() -> TgMessage {
+        TgMessage(
+            id: id,
+            chatId: chatId,
+            text: text,
+            outgoing: outgoing,
+            createdAt: createdAt,
+            isEdited: isEdited,
+            replyToMessageId: replyToMessageId,
+            isDeleted: true,
+            isReadByPeer: isReadByPeer,
+            attachments: attachments,
+            mediaAlbumId: mediaAlbumId,
+            forwardedFrom: forwardedFrom,
+            senderUserId: senderUserId,
+            senderName: senderName,
+            senderAvatarPath: senderAvatarPath,
+            authorSignature: authorSignature,
+            viewCount: viewCount
+        )
+    }
 }
 
 struct TgUser: Identifiable, Equatable {

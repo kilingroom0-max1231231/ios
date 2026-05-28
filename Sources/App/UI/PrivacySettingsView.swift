@@ -99,7 +99,9 @@ struct PrivacySettingsView: View {
         .scrollContentBackground(.hidden)
         .navigationTitle(AppText.tr("Приватность", "Privacy"))
         .navigationBarTitleDisplayMode(.inline)
+        .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground().ignoresSafeArea())
+        .frostedNavigationBar()
         .task {
             syncProfileFields()
             await vm.loadPrivacySettings()

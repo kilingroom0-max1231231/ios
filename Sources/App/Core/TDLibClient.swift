@@ -436,6 +436,20 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
+    func openChat(chatId: Int64) async throws {
+        _ = try await sendRequest([
+            "@type": "openChat",
+            "chat_id": chatId
+        ])
+    }
+
+    func closeChat(chatId: Int64) async throws {
+        _ = try await sendRequest([
+            "@type": "closeChat",
+            "chat_id": chatId
+        ])
+    }
+
     func markChatRead(chatId: Int64, messageIds: [Int64]) async throws {
         guard !messageIds.isEmpty else { return }
         _ = try await sendRequest([
@@ -1025,10 +1039,13 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             }
         }
 
+        var isDeleted = false
         var text = ""
         if let content = obj["content"] as? [String: Any],
            let contentType = content["@type"] as? String {
-            if contentType == "messageText",
+            if contentType == "messageDeleted" {
+                isDeleted = true
+            } else if contentType == "messageText",
                let textObj = content["text"] as? [String: Any],
                let rawText = textObj["text"] as? String {
                 text = rawText
@@ -1069,7 +1086,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             createdAt: Date(timeIntervalSince1970: dateUnix),
             isEdited: isEdited,
             replyToMessageId: replyToMessageId,
-            isDeleted: false,
+            isDeleted: isDeleted,
             attachments: parseAttachments(obj["content"] as? [String: Any]),
             mediaAlbumId: mediaAlbumId,
             forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any]),
@@ -1430,7 +1447,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return TgChat(
             id: id,
             title: effectiveTitle,
-            lastMessagePreview: lastMessageObject.flatMap(messagePreview) ?? lastMessage?.text,
+            lastMessagePreview: lastMessage.map { AppText.chatListPreview(for: $0) },
             lastMessageId: lastMessage?.id,
             lastMessageDate: lastMessage?.createdAt,
             lastMessageOutgoing: lastMessage?.outgoing ?? false,
@@ -1515,6 +1532,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return nil
         }
 
+        if contentType == "messageDeleted" {
+            return AppText.tr("Удалённое сообщение", "Deleted message")
+        }
+
         if contentType == "messageText",
            let textObject = content["text"] as? [String: Any],
            let text = textObject["text"] as? String,
@@ -1559,6 +1580,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private func typingText(from action: [String: Any]?) -> String? {
         guard let action, let type = action["@type"] as? String else { return nil }
         switch type {
+        case "chatActionCancel":
+            return nil
         case "chatActionTyping":
             return "typing..."
         case "chatActionRecordingVoiceNote":

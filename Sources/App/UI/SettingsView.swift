@@ -79,8 +79,11 @@ struct SettingsView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle(AppText.tr("Настройки", "Settings"))
+        .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground().ignoresSafeArea())
+        .navigationTitle(AppText.tr("Настройки", "Settings"))
+        .navigationBarTitleDisplayMode(.large)
+        .frostedNavigationBar()
         .task {
             await vm.refreshMe()
         }
