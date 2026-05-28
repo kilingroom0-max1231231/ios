@@ -3,6 +3,7 @@ import SwiftUI
 struct AppShellView: View {
     @StateObject private var vm = AppViewModel()
     @StateObject private var appearance = AppAppearanceStore.shared
+    @StateObject private var language = AppLanguageStore.shared
 
     var body: some View {
         Group {
@@ -40,6 +41,7 @@ struct AppShellView: View {
                             Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                         }
                     }
+                    .id(language.preferredLanguage)
                     .tint(appearance.accentColor)
 
                     if let toast = vm.incomingToast {
@@ -65,6 +67,7 @@ struct AppShellView: View {
             }
         }
         .environmentObject(appearance)
+        .environmentObject(language)
         .task {
             await vm.start()
         }

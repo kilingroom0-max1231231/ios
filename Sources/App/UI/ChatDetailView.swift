@@ -62,6 +62,7 @@ struct ChatDetailView: View {
             }
         .background(ChatScreenBackground().ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .tabBar)
         .frostedNavigationBar()
         .task(id: chatId) {
             vm.setChatVisible(chatId)

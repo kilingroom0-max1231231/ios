@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var languageStore: AppLanguageStore
 
     var body: some View {
         List {
@@ -60,6 +61,19 @@ struct SettingsView: View {
                             .foregroundStyle(AppColors.accent)
                             .frame(width: 28)
                         Text(AppText.tr("Оформление", "Appearance"))
+                    }
+                }
+
+                Picker(selection: $languageStore.preferredLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "globe")
+                            .foregroundStyle(AppColors.accent)
+                            .frame(width: 28)
+                        Text(AppText.tr("Язык", "Language"))
                     }
                 }
             }

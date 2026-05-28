@@ -2,7 +2,7 @@ import Foundation
 
 enum AppText {
     static var isRussian: Bool {
-        Locale.autoupdatingCurrent.language.languageCode?.identifier == "ru"
+        AppLanguageStore.shared.isRussian
     }
 
     static func tr(_ ru: String, _ en: String) -> String {

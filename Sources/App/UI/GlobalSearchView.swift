@@ -103,7 +103,7 @@ struct GlobalSearchView: View {
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(Color.clear)
-                            .listRowSeparator(.leading)
+                            .listRowSeparator(.hidden)
                         }
                     }
                 }
@@ -129,7 +129,7 @@ struct GlobalSearchView: View {
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(Color.clear)
-                            .listRowSeparator(.leading)
+                            .listRowSeparator(.hidden)
                         }
                     }
                 }
