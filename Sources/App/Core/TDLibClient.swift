@@ -456,7 +456,44 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
         let enriched = try await enrichMessagesWithSenderInfo(parsed)
         let withReadState = try await applyReadOutboxStatus(messages: enriched, chatId: chatId)
-        return withReadState.sorted(by: { $0.createdAt < $1.createdAt })
+        let withReactions = await enrichMessagesWithReactionImages(withReadState)
+        return withReactions.sorted(by: { $0.createdAt < $1.createdAt })
+    }
+
+    private func enrichReactionImages(_ reactions: [TgMessageReaction]) async -> [TgMessageReaction] {
+        guard reactions.contains(where: { $0.isCustomEmoji && ($0.imagePath?.isEmpty ?? true) }) else {
+            return reactions
+        }
+        var result: [TgMessageReaction] = []
+        result.reserveCapacity(reactions.count)
+        for reaction in reactions {
+            if reaction.isCustomEmoji,
+               (reaction.imagePath?.isEmpty ?? true),
+               let customId = reaction.customEmojiId,
+               let path = await customEmojiImagePath(customEmojiId: customId),
+               !path.isEmpty {
+                var updated = reaction
+                updated.imagePath = path
+                result.append(updated)
+            } else {
+                result.append(reaction)
+            }
+        }
+        return result
+    }
+
+    func enrichMessagesWithReactionImages(_ messages: [TgMessage]) async -> [TgMessage] {
+        var result: [TgMessage] = []
+        result.reserveCapacity(messages.count)
+        for message in messages {
+            if message.reactions.contains(where: { $0.isCustomEmoji && ($0.imagePath?.isEmpty ?? true) }) {
+                let enriched = await enrichReactionImages(message.reactions)
+                result.append(message.withReactions(enriched))
+            } else {
+                result.append(message)
+            }
+        }
+        return result
     }
 
     func enrichMessages(_ messages: [TgMessage]) async throws -> [TgMessage] {
@@ -1877,12 +1914,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         guard let full = try? await sendRequest([
             "@type": "getStory",
-            "story_list": [
-                "@type": "storyListChat",
-                "chat_id": chatId
-            ],
+            "story_sender_chat_id": chatId,
+            "story_poster_chat_id": chatId,
             "story_id": storyId,
-            "only_active": true
+            "only_local": false
         ]) else {
             return TgStoryItem(
                 id: storyId,
@@ -2275,12 +2310,25 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
            let interaction = obj["interaction_info"] as? [String: Any] {
             let reactions = parseMessageReactions(interaction)
             let viewCount = parseInteractionViewCount(interaction)
-            eventHandler?(.messageInteractionUpdated(
-                chatId: chatId,
-                messageId: messageId,
-                reactions: reactions,
-                viewCount: viewCount
-            ))
+            if reactions.contains(where: { $0.isCustomEmoji && ($0.imagePath?.isEmpty ?? true) }) {
+                Task { [weak self] in
+                    guard let self else { return }
+                    let enriched = await self.enrichReactionImages(reactions)
+                    self.eventHandler?(.messageInteractionUpdated(
+                        chatId: chatId,
+                        messageId: messageId,
+                        reactions: enriched,
+                        viewCount: viewCount
+                    ))
+                }
+            } else {
+                eventHandler?(.messageInteractionUpdated(
+                    chatId: chatId,
+                    messageId: messageId,
+                    reactions: reactions,
+                    viewCount: viewCount
+                ))
+            }
             return
         }
 
@@ -2476,7 +2524,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             case "reactionTypeCustomEmoji":
                 guard let customId = int64Value(type["custom_emoji_id"]) else { continue }
                 let key = "custom:\(customId)"
-                parsed = TgMessageReaction(key: key, emoji: "⭐", count: count, isChosen: isChosen)
+                parsed = TgMessageReaction(key: key, emoji: "", count: count, isChosen: isChosen, customEmojiId: customId)
             default:
                 parsed = nil
             }
@@ -2486,7 +2534,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     key: parsed.key,
                     emoji: parsed.emoji,
                     count: max(existing.count, parsed.count),
-                    isChosen: existing.isChosen || parsed.isChosen
+                    isChosen: existing.isChosen || parsed.isChosen,
+                    customEmojiId: parsed.customEmojiId,
+                    imagePath: existing.imagePath ?? parsed.imagePath
                 )
             } else {
                 merged[parsed.key] = parsed
@@ -2872,6 +2922,17 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         default:
             return nil
         }
+    }
+
+    private func customEmojiImagePath(customEmojiId: Int64) async -> String? {
+        if let cached = customEmojiPathCache[customEmojiId] {
+            return cached
+        }
+        guard let path = try? await fetchCustomEmojiImagePath(customEmojiId: customEmojiId), !path.isEmpty else {
+            return nil
+        }
+        customEmojiPathCache[customEmojiId] = path
+        return path
     }
 
     private func fetchCustomEmojiImagePath(customEmojiId: Int64) async throws -> String? {

@@ -148,8 +148,21 @@ struct TgMessageReaction: Identifiable, Equatable, Codable {
     let emoji: String
     let count: Int
     let isChosen: Bool
+    var customEmojiId: Int64?
+    var imagePath: String?
+
+    init(key: String, emoji: String, count: Int, isChosen: Bool, customEmojiId: Int64? = nil, imagePath: String? = nil) {
+        self.key = key
+        self.emoji = emoji
+        self.count = count
+        self.isChosen = isChosen
+        self.customEmojiId = customEmojiId
+        self.imagePath = imagePath
+    }
 
     var id: String { key }
+
+    var isCustomEmoji: Bool { customEmojiId != nil }
 }
 
 struct TgReactionPickerItem: Identifiable, Equatable, Hashable {
@@ -233,6 +246,29 @@ struct TgMessage: Identifiable, Equatable {
         self.authorSignature = authorSignature
         self.viewCount = viewCount
         self.reactions = reactions
+    }
+
+    func withReactions(_ newReactions: [TgMessageReaction]) -> TgMessage {
+        TgMessage(
+            id: id,
+            chatId: chatId,
+            text: text,
+            outgoing: outgoing,
+            createdAt: createdAt,
+            isEdited: isEdited,
+            replyToMessageId: replyToMessageId,
+            isDeleted: isDeleted,
+            isReadByPeer: isReadByPeer,
+            attachments: attachments,
+            mediaAlbumId: mediaAlbumId,
+            forwardedFrom: forwardedFrom,
+            senderUserId: senderUserId,
+            senderName: senderName,
+            senderAvatarPath: senderAvatarPath,
+            authorSignature: authorSignature,
+            viewCount: viewCount,
+            reactions: newReactions
+        )
     }
 
     func markedDeleted() -> TgMessage {

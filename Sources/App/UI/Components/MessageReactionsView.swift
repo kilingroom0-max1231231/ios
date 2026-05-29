@@ -21,8 +21,19 @@ struct MessageReactionsView: View {
             onTap?(reaction)
         } label: {
             HStack(spacing: 4) {
-                Text(reaction.emoji)
-                    .font(.system(size: 15))
+                if let path = reaction.imagePath, !path.isEmpty {
+                    StickerMediaView(
+                        displayPath: path,
+                        animationPath: path,
+                        isAnimated: path.lowercased().hasSuffix(".webm") || path.lowercased().hasSuffix(".tgs"),
+                        playbackMode: .staticPreview,
+                        maxSide: 18
+                    )
+                    .frame(width: 18, height: 18)
+                } else {
+                    Text(reaction.emoji)
+                        .font(.system(size: 15))
+                }
                 if reaction.count > 1 {
                     Text("\(reaction.count)")
                         .font(.caption2.weight(.semibold))

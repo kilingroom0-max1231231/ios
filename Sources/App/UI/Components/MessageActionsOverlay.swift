@@ -116,9 +116,8 @@ struct MessageActionsOverlay: View {
                         safeTop: safeTop,
                         safeBottom: safeBottom,
                         maxExpandedReactionsHeight: maxExpandedReactionsHeight(
-                            messageFrame: frame,
-                            safeTop: safeTop,
                             containerHeight: size.height,
+                            safeTop: safeTop,
                             safeBottom: safeBottom
                         )
                     )
@@ -154,17 +153,13 @@ struct MessageActionsOverlay: View {
     }
 
     private func maxExpandedReactionsHeight(
-        messageFrame: CGRect,
-        safeTop: CGFloat,
         containerHeight: CGFloat,
+        safeTop: CGFloat,
         safeBottom: CGFloat
     ) -> CGFloat {
-        let gap: CGFloat = 12
-        let spaceAbove = messageFrame.minY - safeTop - gap
-        let spaceBelow = containerHeight - safeBottom - messageFrame.maxY - gap
+        let available = containerHeight - safeTop - safeBottom
         let preferred = expandedMaxRowsVisible * expandedRowHeight + 36
-        let cap = min(spaceAbove, spaceBelow * 0.55, 168)
-        return max(96, min(preferred, cap))
+        return max(110, min(preferred, available * 0.42, 240))
     }
 
     private var backdrop: some View {
@@ -189,6 +184,8 @@ struct MessageActionsOverlay: View {
             maxExpandedReactionsHeight: maxExpandedReactionsHeight
         )
 
+        let needsScroll = messageFrame.height > layout.bubbleHeight + 1
+
         return LiquidGlassGroup(spacing: 18) {
             ZStack {
                 reactionsPanel(
@@ -200,9 +197,13 @@ struct MessageActionsOverlay: View {
                 .offset(y: panelsOffset)
                 .position(x: layout.reactionsCenterX, y: layout.reactionsCenterY)
 
-                highlightedBubble
+                highlightedBubble(maxHeight: layout.bubbleHeight, scrollable: needsScroll)
                     .scaleEffect(bubbleScale)
-                    .frame(width: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
+                    .frame(
+                        width: messageFrame.width,
+                        height: layout.bubbleHeight,
+                        alignment: message.outgoing ? .trailing : .leading
+                    )
                     .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
                 actionsMenu(width: layout.actionsWidth)
@@ -225,7 +226,7 @@ struct MessageActionsOverlay: View {
                     .scaleEffect(reactionsScale, anchor: .bottom)
                     .opacity(panelsOpacity)
                     .offset(y: panelsOffset)
-                highlightedBubble
+                highlightedBubble()
                     .scaleEffect(bubbleScale)
                     .padding(.horizontal, 12)
                 actionsMenu(width: min(size.width - 48, 280))
@@ -246,6 +247,7 @@ struct MessageActionsOverlay: View {
         let actionsCenterX: CGFloat
         let bubbleCenterX: CGFloat
         let bubbleCenterY: CGFloat
+        let bubbleHeight: CGFloat
         let reactionsCenterY: CGFloat
         let actionsCenterY: CGFloat
     }
@@ -264,20 +266,22 @@ struct MessageActionsOverlay: View {
         let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
         let actionsH = actionsMenuHeight
         let gap: CGFloat = 10
+        let topMargin = safeTop + 8
+        let bottomMargin = safeBottom + 8
 
-        let bubbleCenterX = messageFrame.midX
-        var bubbleCenterY = messageFrame.midY
-        let bubbleHalf = messageFrame.height / 2
+        // The bubble may only occupy the vertical space left between both panels;
+        // longer messages are capped and become scrollable so nothing leaves the screen.
+        let availableForBubble = containerSize.height - topMargin - bottomMargin - reactionsH - actionsH - gap * 2
+        let bubbleHeight = max(72, min(messageFrame.height, max(72, availableForBubble)))
 
-        let contentTop = safeTop + 8 + reactionsH + gap
-        let contentBottom = containerSize.height - safeBottom - 8 - actionsH - gap
-        let minBubbleY = contentTop + bubbleHalf
-        let maxBubbleY = contentBottom - bubbleHalf
-        if minBubbleY <= maxBubbleY {
-            bubbleCenterY = min(max(bubbleCenterY, minBubbleY), maxBubbleY)
-        } else {
-            bubbleCenterY = (contentTop + contentBottom) / 2
-        }
+        // Center the whole reaction + bubble + actions stack vertically and clamp on screen.
+        let stackHeight = reactionsH + gap + bubbleHeight + gap + actionsH
+        var startY = (containerSize.height - stackHeight) / 2
+        startY = max(topMargin, min(startY, containerSize.height - bottomMargin - stackHeight))
+
+        let reactionsCenterY = startY + reactionsH / 2
+        let bubbleCenterY = startY + reactionsH + gap + bubbleHeight / 2
+        let actionsCenterY = startY + reactionsH + gap + bubbleHeight + gap + actionsH / 2
 
         // Align a panel of the given width to the message's side, kept on screen.
         func centerX(for width: CGFloat) -> CGFloat {
@@ -288,25 +292,20 @@ struct MessageActionsOverlay: View {
             return max(inset + half, min(containerSize.width - inset - half, messageFrame.minX + half))
         }
 
-        let reactionsCenterX = centerX(for: reactionsWidth)
-        let actionsCenterX = centerX(for: actionsWidth)
-
-        // Anchor reactions panel bottom edge just above the message bubble.
-        var reactionsCenterY = bubbleCenterY - bubbleHalf - gap - reactionsH / 2
-        let minReactionsTop = safeTop + 10
-        if reactionsCenterY - reactionsH / 2 < minReactionsTop {
-            reactionsCenterY = minReactionsTop + reactionsH / 2
-        }
-
-        let actionsCenterY = bubbleCenterY + bubbleHalf + gap + actionsH / 2
+        let bubbleHalfWidth = messageFrame.width / 2
+        let bubbleCenterX = min(
+            containerSize.width - inset - bubbleHalfWidth,
+            max(inset + bubbleHalfWidth, messageFrame.midX)
+        )
 
         return OverlayLayout(
             reactionsWidth: reactionsWidth,
-            reactionsCenterX: reactionsCenterX,
+            reactionsCenterX: centerX(for: reactionsWidth),
             actionsWidth: actionsWidth,
-            actionsCenterX: actionsCenterX,
+            actionsCenterX: centerX(for: actionsWidth),
             bubbleCenterX: bubbleCenterX,
             bubbleCenterY: bubbleCenterY,
+            bubbleHeight: bubbleHeight,
             reactionsCenterY: reactionsCenterY,
             actionsCenterY: actionsCenterY
         )
@@ -329,8 +328,9 @@ struct MessageActionsOverlay: View {
         CGFloat(actionItems.count) * actionRowHeight
     }
 
-    private var highlightedBubble: some View {
-        MessageBubbleView(
+    @ViewBuilder
+    private func highlightedBubble(maxHeight: CGFloat = .infinity, scrollable: Bool = false) -> some View {
+        let bubble = MessageBubbleView(
             message: message,
             chatKind: chatKind,
             peerAvatarPath: peerAvatarPath,
@@ -339,6 +339,15 @@ struct MessageActionsOverlay: View {
             interactionsEnabled: false
         )
         .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
+
+        if scrollable {
+            ScrollView(.vertical, showsIndicators: true) {
+                bubble
+            }
+            .frame(maxHeight: maxHeight)
+        } else {
+            bubble
+        }
     }
 
     private func collapsedReactionsWidth(maxWidth: CGFloat) -> CGFloat {
@@ -388,7 +397,7 @@ struct MessageActionsOverlay: View {
 
     private var compactReactionsStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
+            LazyHStack(spacing: 4) {
                 ForEach(pickerItems) { item in
                     reactionButton(item: item, compact: false)
                 }
@@ -403,14 +412,8 @@ struct MessageActionsOverlay: View {
     private func expandedReactionsGrid(maxHeight: CGFloat) -> some View {
         ScrollView(.vertical, showsIndicators: true) {
             LazyVGrid(columns: reactionGridColumns, spacing: 6) {
-                ForEach(Array(pickerItems.enumerated()), id: \.element.id) { index, item in
+                ForEach(pickerItems) { item in
                     reactionButton(item: item, compact: true)
-                        .opacity(panelsOpacity)
-                        .scaleEffect(panelsOpacity)
-                        .animation(
-                            panelSpring.delay(0.02 * Double(min(index, 12))),
-                            value: reactionsExpanded
-                        )
                 }
             }
             .padding(.horizontal, 2)

@@ -1019,7 +1019,14 @@ final class AppViewModel: ObservableObject {
 
     func toggleReaction(on message: TgMessage, item: TgReactionPickerItem) async {
         let reaction = message.reactions.first(where: { $0.key == item.key })
-            ?? TgMessageReaction(key: item.key, emoji: item.emoji, count: 1, isChosen: false)
+            ?? TgMessageReaction(
+                key: item.key,
+                emoji: item.emoji,
+                count: 1,
+                isChosen: false,
+                customEmojiId: item.customEmojiId,
+                imagePath: item.imagePath
+            )
         await toggleReaction(on: message, reaction: reaction, pickerItem: item)
     }
 
@@ -1038,7 +1045,9 @@ final class AppViewModel: ObservableObject {
                             key: item.key,
                             emoji: item.emoji,
                             count: newCount,
-                            isChosen: false
+                            isChosen: false,
+                            customEmojiId: item.customEmojiId,
+                            imagePath: item.imagePath
                         )
                     }.compactMap { $0 }
                 }
@@ -1077,7 +1086,9 @@ final class AppViewModel: ObservableObject {
                             key: item.key,
                             emoji: item.emoji,
                             count: newCount,
-                            isChosen: false
+                            isChosen: false,
+                            customEmojiId: item.customEmojiId,
+                            imagePath: item.imagePath
                         )
                     }
                 }
@@ -1113,11 +1124,20 @@ final class AppViewModel: ObservableObject {
                 key: item.key,
                 emoji: item.emoji,
                 count: max(item.count, 1),
-                isChosen: true
+                isChosen: true,
+                customEmojiId: item.customEmojiId ?? reaction.customEmojiId,
+                imagePath: item.imagePath ?? reaction.imagePath
             )
         } else {
             updated.append(
-                TgMessageReaction(key: reaction.key, emoji: reaction.emoji, count: 1, isChosen: true)
+                TgMessageReaction(
+                    key: reaction.key,
+                    emoji: reaction.emoji,
+                    count: 1,
+                    isChosen: true,
+                    customEmojiId: reaction.customEmojiId,
+                    imagePath: reaction.imagePath
+                )
             )
         }
         return dedupeMessageReactions(updated)
@@ -1131,7 +1151,9 @@ final class AppViewModel: ObservableObject {
                     key: reaction.key,
                     emoji: reaction.emoji,
                     count: max(existing.count, reaction.count),
-                    isChosen: existing.isChosen || reaction.isChosen
+                    isChosen: existing.isChosen || reaction.isChosen,
+                    customEmojiId: existing.customEmojiId ?? reaction.customEmojiId,
+                    imagePath: existing.imagePath ?? reaction.imagePath
                 )
             } else {
                 merged[reaction.key] = reaction
