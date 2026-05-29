@@ -38,7 +38,7 @@ final class VoiceNoteRecorder: ObservableObject {
     func start() throws {
         guard !isRecording else { return }
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try session.setActive(true)
 
         let url = FileManager.default.temporaryDirectory
