@@ -141,19 +141,18 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return chats.sorted(by: chatSort)
     }
 
-    func fetchChatFolders() async throws -> [TgChatFolder] {
-        let cached = syncQueue.sync { cachedChatFolders }
-        if !cached.isEmpty {
-            return cached
+    func fetchChatFolders(forceRefresh: Bool = false) async throws -> [TgChatFolder] {
+        if !forceRefresh {
+            let cached = syncQueue.sync { cachedChatFolders }
+            if !cached.isEmpty {
+                return cached
+            }
         }
 
         let response = try await sendRequest(["@type": "getChatFolders"])
-        let payload = chatFoldersPayload(from: response)
-        let parsed = try await resolveChatFolders(from: payload)
-        if !parsed.isEmpty {
-            syncQueue.async { [parsed] in
-                self.cachedChatFolders = parsed
-            }
+        let parsed = try await resolveChatFolders(from: response)
+        syncQueue.async { [parsed] in
+            self.cachedChatFolders = parsed
         }
         return parsed
     }
@@ -166,6 +165,16 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return nested
         }
         return response
+    }
+
+    private func parseChatFolderInfos(_ infos: [[String: Any]]) -> [TgChatFolder] {
+        var result: [TgChatFolder] = []
+        var seen = Set<Int32>()
+        for info in infos {
+            guard let folder = parseChatFolder(info), seen.insert(folder.id).inserted else { continue }
+            result.append(folder)
+        }
+        return result
     }
 
     func addChatToList(chatId: Int64, list: TgChatListKind) async throws {
@@ -683,34 +692,34 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     private func resolveChatFolders(from response: [String: Any]) async throws -> [TgChatFolder] {
-        var result: [TgChatFolder] = []
-        let mainFolderId = int32Value(response["main_chat_folder_id"])
+        if let infos = response["chat_folders"] as? [[String: Any]] {
+            return parseChatFolderInfos(infos)
+        }
 
-        if let folders = response["folders"] as? [[String: Any]] {
+        let payload = chatFoldersPayload(from: response)
+        var result: [TgChatFolder] = []
+        var seen = Set<Int32>()
+
+        if let folders = payload["folders"] as? [[String: Any]] {
             for folderJson in folders {
-                if let folder = parseChatFolder(folderJson) {
-                    result.append(folder)
-                }
+                guard let folder = parseChatFolder(folderJson), seen.insert(folder.id).inserted else { continue }
+                result.append(folder)
             }
         }
 
-        if result.isEmpty {
-            var folderIds: [Int32] = []
-            if let ids = response["chat_folder_ids"] as? [Any] {
-                folderIds = ids.compactMap { int32Value($0) }
-            }
-            for folderId in folderIds {
+        if let ids = payload["chat_folder_ids"] as? [Any] {
+            for anyId in ids {
+                guard let folderId = int32Value(anyId), !seen.contains(folderId) else { continue }
                 let folderResp = try await sendRequest([
                     "@type": "getChatFolder",
                     "chat_folder_id": folderId
                 ])
-                if let folder = parseChatFolder(folderResp) {
-                    result.append(folder)
-                }
+                guard let folder = parseChatFolder(folderResp), seen.insert(folder.id).inserted else { continue }
+                result.append(folder)
             }
         }
 
-        if let mainFolderId, result.count > 1 {
+        if let mainFolderId = int32Value(payload["main_chat_folder_id"]), result.count > 1 {
             result.removeAll { $0.id == mainFolderId }
         }
         return result
@@ -2010,14 +2019,18 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return
         }
 
-        if type == "updateChatFolders",
-           let raw = obj["chat_folders"] as? [String: Any] {
-            let payload = chatFoldersPayload(from: raw)
+        if type == "updateChatFolders" {
             Task {
-                if let folders = try? await self.resolveChatFolders(from: payload) {
-                    self.syncQueue.async {
-                        self.cachedChatFolders = folders
-                    }
+                let folders: [TgChatFolder]
+                if let infos = obj["chat_folders"] as? [[String: Any]] {
+                    folders = self.parseChatFolderInfos(infos)
+                } else if let raw = obj["chat_folders"] as? [String: Any] {
+                    folders = (try? await self.resolveChatFolders(from: raw)) ?? []
+                } else {
+                    folders = []
+                }
+                self.syncQueue.async {
+                    self.cachedChatFolders = folders
                 }
                 self.eventHandler?(.chatsChanged)
             }
@@ -2822,7 +2835,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         if let info = json["info"] as? [String: Any], let parsed = parseChatFolder(info) {
             return parsed
         }
-        guard let id = int32Value(json["id"]) else { return nil }
+        guard let id = int32Value(json["id"]) ?? int32Value(json["chat_folder_id"]) else { return nil }
         let titleRaw: String?
         if let nameObject = json["name"] as? [String: Any] {
             titleRaw = formattedText(from: nameObject)

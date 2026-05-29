@@ -394,10 +394,10 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func reloadChatFolders() async {
+    func reloadChatFolders(force: Bool = false) async {
         guard let repository, authState == .ready else { return }
         do {
-            chatFolders = try await repository.loadChatFolders()
+            chatFolders = try await repository.loadChatFolders(force: force)
         } catch {
             if chatFolders.isEmpty {
                 status = error.localizedDescription
@@ -1393,6 +1393,7 @@ final class AppViewModel: ObservableObject {
 
         repository.onChatsChanged = { [weak self] in
             Task { @MainActor in
+                await self?.reloadChatFolders(force: false)
                 await self?.refreshChats()
             }
         }
@@ -1498,7 +1499,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
             await refreshMe()
-            await reloadChatFolders()
+            await reloadChatFolders(force: true)
             await refreshChats()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login

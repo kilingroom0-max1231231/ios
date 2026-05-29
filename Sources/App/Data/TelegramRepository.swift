@@ -119,8 +119,8 @@ final class TelegramRepository {
         try await loadChats(list: .archive, limit: limit)
     }
 
-    func loadChatFolders() async throws -> [TgChatFolder] {
-        try await client.fetchChatFolders()
+    func loadChatFolders(force: Bool = false) async throws -> [TgChatFolder] {
+        try await client.fetchChatFolders(forceRefresh: force)
     }
 
     func archiveChat(chatId: Int64) async throws {
