@@ -198,21 +198,23 @@ struct ChatDetailView: View {
     }
 
     private var messageList: some View {
+        let grouped = groupedMessages
+        let rows = chatRows(from: grouped)
+        let replyPreviews = replyPreviewMap(from: vm.messages)
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(chatRows) { row in
+                    ForEach(rows) { row in
                         switch row {
                         case .date(let date):
                             dateSeparator(date)
                         case .message(let message):
-                            let replyPreview = message.replyToMessageId.flatMap { replyId in
-                                replyQuoteText(for: replyId)
-                            }
+                            let replyPreview = message.replyToMessageId.flatMap { replyPreviews[$0] }
                             messageRow(for: message, replyPreview: replyPreview)
                                 .id(message.id)
                                 .onAppear {
-                                    if message.id == groupedMessages.first?.id {
+                                    if message.id == grouped.first?.id {
                                         Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
                                     }
                                 }
@@ -232,7 +234,7 @@ struct ChatDetailView: View {
                     }
             )
             .onChange(of: vm.messages.last?.id) { newId in
-                bottomScrollAnchorId = newId ?? groupedMessages.last?.id
+                bottomScrollAnchorId = newId ?? grouped.last?.id
             }
             .onChange(of: bottomScrollAnchorId) { anchorId in
                 guard let anchorId else { return }
@@ -248,7 +250,7 @@ struct ChatDetailView: View {
                 scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
             }
             .onAppear {
-                bottomScrollAnchorId = groupedMessages.last?.id
+                bottomScrollAnchorId = grouped.last?.id
                 if let anchorId = bottomScrollAnchorId {
                     scrollToBottom(proxy: proxy, anchorId: anchorId, animated: false)
                 }
@@ -256,7 +258,7 @@ struct ChatDetailView: View {
         }
     }
 
-    private var chatRows: [ChatRow] {
+    private func chatRows(from groupedMessages: [TgMessage]) -> [ChatRow] {
         var rows: [ChatRow] = []
         var lastDay: Date?
         let calendar = Calendar.current
@@ -290,10 +292,12 @@ struct ChatDetailView: View {
         if calendar.isDateInYesterday(date) {
             return AppText.tr("Вчера", "Yesterday")
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: AppText.isRussian ? "ru_RU" : "en_US_POSIX")
-        formatter.dateFormat = "d MMMM"
-        return formatter.string(from: date)
+        return date.formatted(
+            .dateTime
+                .locale(Locale(identifier: AppText.isRussian ? "ru_RU" : "en_US_POSIX"))
+                .day()
+                .month(.wide)
+        )
     }
 
     @ViewBuilder
@@ -520,8 +524,7 @@ struct ChatDetailView: View {
         .opacity(vm.isBusy || !canSend ? 0.6 : 1)
     }
 
-    private func replyQuoteText(for replyId: Int64) -> String? {
-        guard let replied = vm.messages.first(where: { $0.id == replyId }) else { return nil }
+    private func replyQuoteText(for replied: TgMessage) -> String? {
         let body = replied.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let name = replied.senderName, !name.isEmpty {
             if body.isEmpty {
@@ -536,6 +539,17 @@ struct ChatDetailView: View {
             return AppText.tr("Медиа", "Media")
         }
         return nil
+    }
+
+    private func replyPreviewMap(from messages: [TgMessage]) -> [Int64: String] {
+        var map: [Int64: String] = [:]
+        map.reserveCapacity(messages.count)
+        for message in messages {
+            if let preview = replyQuoteText(for: message) {
+                map[message.id] = preview
+            }
+        }
+        return map
     }
 
     private func replyPreview(_ text: String) -> some View {

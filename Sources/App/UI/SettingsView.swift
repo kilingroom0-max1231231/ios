@@ -58,7 +58,7 @@ struct SettingsView: View {
                 }
 
                 Button {
-                    Task { await vm.addAccountAndSwitch() }
+                    vm.addAccount()
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "plus.circle.fill")
@@ -68,7 +68,7 @@ struct SettingsView: View {
                             .foregroundStyle(vm.canAddMoreAccounts ? .primary : .secondary)
                     }
                 }
-                .disabled(!vm.canAddMoreAccounts)
+                .disabled(!vm.canAddMoreAccounts || vm.isSwitchingAccount)
 
                 if let me = vm.me {
                     NavigationLink {
@@ -143,7 +143,10 @@ struct SettingsView: View {
             }
 
             Section(AppText.tr("О приложении", "About")) {
-                settingsRow(icon: "sparkles", title: AppText.tr("Интерфейс", "Interface"), value: AppText.tr("Нативный Apple", "Native Apple"))
+                settingsRow(icon: "app.badge", title: AppText.tr("Клиент", "Client"), value: "Telegram User Client")
+                settingsRow(icon: "hammer.fill", title: AppText.tr("Разработка системы", "System development"), value: "masezev")
+                settingsRow(icon: "paintbrush.fill", title: AppText.tr("Разработка интерфейса", "Interface development"), value: "masezev")
+                settingsRow(icon: "desktopcomputer", title: AppText.tr("Архитектура", "Architecture"), value: "masezev")
                 settingsRow(icon: "lock.shield", title: AppText.tr("Хранилище", "Storage"), value: AppText.tr("Локальная база TDLib", "Local TDLib database"))
                 settingsRow(icon: "photo.on.rectangle", title: AppText.tr("Медиа", "Media"), value: AppText.tr("Встроенный просмотр", "Inline previews"))
             }

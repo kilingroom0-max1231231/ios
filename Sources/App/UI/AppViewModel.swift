@@ -57,6 +57,7 @@ final class AppViewModel: ObservableObject {
     @Published var userProfileGifts: [TgGiftItem] = []
     @Published var isUserProfileLoading = false
     @Published var isUserProfileExtrasLoading = false
+    @Published var isSwitchingAccount = false
 
     private var repository: TelegramRepository?
     private var loadedStoriesForUserId: Int64?
@@ -267,16 +268,19 @@ final class AppViewModel: ObservableObject {
         Task { await start() }
     }
 
-    func addAccountAndSwitch() async {
-        guard let created = accountSessions.addAccount() else {
+    func addAccount() {
+        guard accountSessions.addAccount() != nil else {
             status = AppText.tr("Можно добавить максимум 5 аккаунтов", "You can add up to 5 accounts")
             return
         }
-        await switchAccount(to: created.id)
+        status = AppText.tr("Аккаунт добавлен. Выберите его в списке выше.", "Account added. Choose it in the list above.")
     }
 
     func switchAccount(to accountId: String) async {
         guard accountId != accountSessions.activeAccountId else { return }
+        guard !isSwitchingAccount else { return }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
         accountSessions.setActiveAccount(id: accountId)
 
         // Reset volatile state before new repository bootstrap.
@@ -856,6 +860,7 @@ final class AppViewModel: ObservableObject {
             deduplicatedMessages(byId.values.sorted { $0.createdAt < $1.createdAt }),
             chatId: message.chatId
         )
+        scheduleMediaDownloadIfNeeded(chatId: message.chatId, messages: messages)
     }
 
     private func handleIncomingMessage(_ message: TgMessage) {
