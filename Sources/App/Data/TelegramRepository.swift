@@ -123,6 +123,26 @@ final class TelegramRepository {
         try await client.fetchChatFolders(forceRefresh: force)
     }
 
+    func renameChatFolder(folderId: Int32, title: String) async throws {
+        try await client.renameChatFolder(folderId: folderId, title: title)
+    }
+
+    func addChatToFolder(folderId: Int32, chatId: Int64) async throws {
+        try await client.addChatToFolder(folderId: folderId, chatId: chatId)
+    }
+
+    func removeChatFromFolder(folderId: Int32, chatId: Int64) async throws {
+        try await client.removeChatFromFolder(folderId: folderId, chatId: chatId)
+    }
+
+    func loadChatsInFolder(folderId: Int32, limit: Int = 80) async throws -> [TgChat] {
+        try await loadChats(list: .folder(folderId), limit: limit)
+    }
+
+    func fetchChatFolderIncludedChatIds(folderId: Int32) async throws -> [Int64] {
+        try await client.fetchChatFolderIncludedChatIds(folderId: folderId)
+    }
+
     func archiveChat(chatId: Int64) async throws {
         try await client.addChatToList(chatId: chatId, list: .archive)
     }
@@ -274,12 +294,16 @@ final class TelegramRepository {
         try await client.fetchStickerPickerItems(query: query, limit: limit)
     }
 
-    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> [String] {
+    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> TgAvailableReactions {
         try await client.fetchAvailableReactions(chatId: chatId, messageId: messageId)
     }
 
     func addReaction(chatId: Int64, messageId: Int64, emoji: String) async throws {
         try await client.addMessageReaction(chatId: chatId, messageId: messageId, emoji: emoji)
+    }
+
+    func removeReaction(chatId: Int64, messageId: Int64, reaction: TgMessageReaction) async throws {
+        try await client.removeMessageReaction(chatId: chatId, messageId: messageId, reaction: reaction)
     }
 
     func createGroup(title: String, memberUserIds: [Int64], description: String?) async throws -> Int64 {

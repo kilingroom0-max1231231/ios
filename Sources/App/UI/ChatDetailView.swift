@@ -3,10 +3,6 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-private struct ReactionTarget: Identifiable {
-    let message: TgMessage
-    var id: Int64 { message.id }
-}
 
 struct ChatDetailView: View {
     @ObservedObject var vm: AppViewModel
@@ -24,7 +20,7 @@ struct ChatDetailView: View {
     @State private var showDocumentPicker = false
     @State private var showStickerPicker = false
     @State private var showVideoNoteCamera = false
-    @State private var reactionTarget: ReactionTarget?
+    @State private var messageActionTarget: MessageActionTarget?
     @StateObject private var voiceRecorder = VoiceNoteRecorder()
     @State private var isMicPressing = false
 
@@ -228,17 +224,33 @@ struct ChatDetailView: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(item: $reactionTarget) { target in
-            MessageReactionPicker(
-                emojis: vm.reactionPickerEmojis.isEmpty
-                    ? ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏", "👏"]
-                    : vm.reactionPickerEmojis
-            ) { emoji in
-                Task { await vm.addReaction(to: target.message, emoji: emoji) }
-            }
-            .task {
-                await vm.loadReactionPicker(for: target.message)
-            }
+        .sheet(item: $messageActionTarget) { target in
+            MessageActionsSheet(
+                vm: vm,
+                message: target.message,
+                canSend: canSend,
+                canEdit: target.message.outgoing && !target.message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                captionText: captionForMessage(target.message),
+                onReply: {
+                    vm.startReply(target.message)
+                    isComposerFocused = true
+                },
+                onForward: {
+                    forwardingMessage = target.message
+                },
+                onEdit: {
+                    vm.startEditing(target.message)
+                    isComposerFocused = true
+                },
+                onDelete: { revoke in
+                    Task { await vm.deleteMyMessage(target.message, revoke: revoke) }
+                },
+                onCopy: {
+                    if let text = captionForMessage(target.message) {
+                        UIPasteboard.general.string = text
+                    }
+                }
+            )
         }
         .sheet(item: $forwardingMessage) { message in
             NavigationStack {
@@ -476,11 +488,11 @@ struct ChatDetailView: View {
                         vm.startReply(message)
                         isComposerFocused = true
                     } : nil,
-                    onReact: {
-                        reactionTarget = ReactionTarget(message: message)
+                    onLongPress: {
+                        messageActionTarget = MessageActionTarget(message: message)
                     },
-                    onReactionTap: canSend ? { emoji in
-                        Task { await vm.addReaction(to: message, emoji: emoji) }
+                    onReactionTap: canSend ? { reaction in
+                        Task { await vm.toggleReaction(on: message, reaction: reaction) }
                     } : nil,
                     onForward: {
                         forwardingMessage = message
@@ -777,6 +789,12 @@ struct ChatDetailView: View {
         if !replied.attachments.isEmpty {
             return AppText.tr("Медиа", "Media")
         }
+        return nil
+    }
+
+    private func captionForMessage(_ message: TgMessage) -> String? {
+        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return message.text }
         return nil
     }
 

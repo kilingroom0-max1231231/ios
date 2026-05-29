@@ -10,6 +10,10 @@ protocol TelegramClientProtocol {
 
     func fetchChats(list: TgChatListKind, limit: Int) async throws -> [TgChat]
     func fetchChatFolders(forceRefresh: Bool) async throws -> [TgChatFolder]
+    func fetchChatFolderIncludedChatIds(folderId: Int32) async throws -> [Int64]
+    func renameChatFolder(folderId: Int32, title: String) async throws
+    func addChatToFolder(folderId: Int32, chatId: Int64) async throws
+    func removeChatFromFolder(folderId: Int32, chatId: Int64) async throws
     func addChatToList(chatId: Int64, list: TgChatListKind) async throws
     func removeChatFromList(chatId: Int64, list: TgChatListKind) async throws
     func fetchMessages(chatId: Int64, limit: Int) async throws -> [TgMessage]
@@ -25,8 +29,9 @@ protocol TelegramClientProtocol {
     func sendSticker(chatId: Int64, sticker: TgSticker, replyToMessageId: Int64?) async throws
     func fetchStickerPickerItems(query: String, limit: Int) async throws -> [TgSticker]
     func searchStickerSets(query: String, limit: Int) async throws -> [TgSticker]
-    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> [String]
+    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> TgAvailableReactions
     func addMessageReaction(chatId: Int64, messageId: Int64, emoji: String) async throws
+    func removeMessageReaction(chatId: Int64, messageId: Int64, reaction: TgMessageReaction) async throws
     func createNewSupergroupChat(title: String, isChannel: Bool, description: String?) async throws -> Int64
     func addChatMembers(chatId: Int64, userIds: [Int64]) async throws
     func openPrivateChat(userId: Int64) async throws -> Int64

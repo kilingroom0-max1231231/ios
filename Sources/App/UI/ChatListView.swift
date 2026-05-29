@@ -86,6 +86,19 @@ struct ChatListView: View {
             await vm.refreshChats()
         }
         .toolbar {
+            if !isArchiveMode, vm.selectedChatFolderId != nil {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        if let folder = vm.chatFolders.first(where: { $0.id == vm.selectedChatFolderId }) {
+                            vm.folderSettingsTarget = folder
+                        }
+                    } label: {
+                        Image(systemName: "folder.badge.gearshape")
+                    }
+                    .accessibilityLabel(AppText.tr("Настройки папки", "Folder settings"))
+                }
+            }
+
             ToolbarItem(placement: .principal) {
                 Button {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
@@ -123,6 +136,12 @@ struct ChatListView: View {
         }
         .sheet(isPresented: $showNewConversation) {
             NewConversationView(vm: vm)
+        }
+        .sheet(item: $vm.folderSettingsTarget) { folder in
+            ChatFolderSettingsView(vm: vm, folder: folder)
+        }
+        .sheet(item: $vm.moveChatToFolderTarget) { chat in
+            MoveChatToFolderSheet(vm: vm, chat: chat)
         }
         .sheet(isPresented: peekSheetPresented) {
             if let chatId = vm.peekChatId {
@@ -313,6 +332,22 @@ struct ChatListView: View {
                         : AppText.tr("Заблокировать", "Block"),
                     systemImage: chat.isBlockedByMe ? "hand.raised.slash" : "hand.raised.fill"
                 )
+            }
+        }
+
+        if !isArchiveMode, !vm.chatFolders.isEmpty {
+            Button {
+                vm.moveChatToFolderTarget = chat
+            } label: {
+                Label(AppText.tr("В папку…", "Move to folder…"), systemImage: "folder.badge.plus")
+            }
+        }
+
+        if !isArchiveMode, let folderId = vm.selectedChatFolderId {
+            Button(role: .destructive) {
+                Task { await vm.removeChat(chat, fromFolder: folderId) }
+            } label: {
+                Label(AppText.tr("Убрать из папки", "Remove from folder"), systemImage: "folder.badge.minus")
             }
         }
 

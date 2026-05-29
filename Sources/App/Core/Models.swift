@@ -152,6 +152,12 @@ struct TgMessageReaction: Identifiable, Equatable, Codable {
     var id: String { key }
 }
 
+struct TgAvailableReactions: Equatable {
+    let emojis: [String]
+    /// How many reactions the current user may set on one message (1 without Premium, more with Premium).
+    let maxReactionCount: Int
+}
+
 struct TgMessage: Identifiable, Equatable {
     let id: Int64
     let chatId: Int64
@@ -310,7 +316,7 @@ enum TgChatListKind: Equatable {
         case .archive:
             return ["@type": "chatListArchive"]
         case .folder(let id):
-            return ["@type": "chatListFolder", "chat_folder_id": id]
+            return ["@type": "chatListFolder", "chat_folder_id": NSNumber(value: id)]
         }
     }
 

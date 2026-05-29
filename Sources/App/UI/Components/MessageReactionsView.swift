@@ -6,7 +6,7 @@ struct MessageReactionsView: View {
 
     let reactions: [TgMessageReaction]
     let outgoing: Bool
-    var onTap: ((String) -> Void)?
+    var onTap: ((TgMessageReaction) -> Void)?
 
     var body: some View {
         FlowLayout(spacing: 4) {
@@ -18,7 +18,7 @@ struct MessageReactionsView: View {
 
     private func reactionChip(_ reaction: TgMessageReaction) -> some View {
         Button {
-            onTap?(reaction.emoji)
+            onTap?(reaction)
         } label: {
             HStack(spacing: 4) {
                 Text(reaction.emoji)

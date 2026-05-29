@@ -14,8 +14,8 @@ struct MessageBubbleView: View {
     var onOpenAttachment: ((TgAttachment) -> Void)?
     var onPremiumSticker: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
-    var onReact: (() -> Void)?
-    var onReactionTap: ((String) -> Void)?
+    var onLongPress: (() -> Void)?
+    var onReactionTap: ((TgMessageReaction) -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
@@ -207,31 +207,12 @@ struct MessageBubbleView: View {
         .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
         .padding(.horizontal, horizontalRowPadding)
         .padding(.vertical, 2)
-        .contextMenu {
-            if let captionText {
-                Button(AppText.tr("Скопировать", "Copy")) {
-                    UIPasteboard.general.string = captionText
-                }
+        .highPriorityGesture(
+            LongPressGesture(minimumDuration: 0.38).onEnded { _ in
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                onLongPress?()
             }
-            if message.outgoing {
-                if let onEdit, captionText != nil {
-                    Button(AppText.tr("Изменить", "Edit")) { onEdit() }
-                }
-                if let onDelete {
-                    Button(AppText.tr("Удалить у меня", "Delete for me")) { onDelete(false) }
-                    Button(AppText.tr("Удалить у всех", "Delete for everyone"), role: .destructive) { onDelete(true) }
-                }
-            }
-            if let onReply {
-                Button(AppText.tr("Ответить", "Reply")) { onReply() }
-            }
-            if let onReact {
-                Button(AppText.tr("Реакция", "React")) { onReact() }
-            }
-            if let onForward {
-                Button(AppText.tr("Переслать", "Forward")) { onForward() }
-            }
-        }
+        )
     }
 
     private var bubbleBody: some View {

@@ -24,6 +24,11 @@ struct ChatFolderTabsView: View {
                     ) {
                         Task { await vm.selectChatFolder(folder.id) }
                     }
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                            vm.folderSettingsTarget = folder
+                        }
+                    )
                 }
             }
             .padding(.horizontal, 16)
@@ -43,13 +48,11 @@ struct ChatFolderTabsView: View {
                 if let emoji, !emoji.isEmpty {
                     Text(emoji)
                         .font(.subheadline)
-                } else {
-                    Image(systemName: "folder.fill")
-                        .font(.caption.weight(.semibold))
                 }
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(isSelected ? Color.white : color)
             .padding(.horizontal, 14)

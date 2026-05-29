@@ -23,6 +23,8 @@ final class AppViewModel: ObservableObject {
     @Published var chats: [TgChat] = []
     @Published var chatFolders: [TgChatFolder] = []
     @Published var selectedChatFolderId: Int32?
+    @Published var folderSettingsTarget: TgChatFolder?
+    @Published var moveChatToFolderTarget: TgChat?
     @Published var archivedChats: [TgChat] = []
     @Published var archiveSummary: ArchiveChatSummary?
     @Published var selectedChatId: Int64?
@@ -356,7 +358,7 @@ final class AppViewModel: ObservableObject {
             chat.typingText.map { (chat.id, $0) }
         })
 
-        if chats.isEmpty {
+        if chats.isEmpty, selectedChatFolderId == nil {
             let cached = repository.cachedChats()
             if !cached.isEmpty {
                 chats = sortChats(cached).map { chat in
@@ -848,39 +850,145 @@ final class AppViewModel: ObservableObject {
     }
 
     @Published var reactionPickerEmojis: [String] = []
+    @Published var reactionPickerMaxCount: Int = 1
 
-    func addReaction(to message: TgMessage, emoji: String) async {
+    var currentUserIsPremium: Bool {
+        me?.isPremium == true
+    }
+
+    func toggleReaction(on message: TgMessage, emoji: String) async {
+        let reaction = message.reactions.first(where: { $0.emoji == emoji })
+            ?? TgMessageReaction(key: emoji, emoji: emoji, count: 1, isChosen: false)
+        await toggleReaction(on: message, reaction: reaction)
+    }
+
+    func toggleReaction(on message: TgMessage, reaction: TgMessageReaction) async {
         guard let repository, let chatId = selectedChatId else { return }
-        if !reactionPickerEmojis.isEmpty, !reactionPickerEmojis.contains(emoji) {
+
+        if reaction.isChosen {
+            do {
+                try await repository.removeReaction(chatId: chatId, messageId: message.id, reaction: reaction)
+                patchMessageReactions(chatId: chatId, messageId: message.id) { reactions in
+                    reactions.map { item in
+                        guard item.key == reaction.key else { return item }
+                        let newCount = max(0, item.count - 1)
+                        if newCount == 0 { return nil }
+                        return TgMessageReaction(
+                            key: item.key,
+                            emoji: item.emoji,
+                            count: newCount,
+                            isChosen: false
+                        )
+                    }.compactMap { $0 }
+                }
+            } catch {
+                status = error.localizedDescription
+                await refreshMessages(force: true)
+            }
+            return
+        }
+
+        if !reactionPickerEmojis.isEmpty, !reactionPickerEmojis.contains(reaction.emoji) {
             status = AppText.tr(
                 "Эта реакция недоступна в этом чате",
                 "This reaction is not available in this chat"
             )
             return
         }
+
+        let chosenCount = message.reactions.filter(\.isChosen).count
+        if chosenCount >= reactionPickerMaxCount, reactionPickerMaxCount > 1 {
+            status = AppText.tr(
+                "Максимум реакций: \(reactionPickerMaxCount)",
+                "Maximum reactions: \(reactionPickerMaxCount)"
+            )
+            return
+        }
+        if chosenCount >= 1, reactionPickerMaxCount <= 1 {
+            if let existing = message.reactions.first(where: \.isChosen), existing.key != reaction.key {
+                try? await repository.removeReaction(chatId: chatId, messageId: message.id, reaction: existing)
+            }
+        }
+
         do {
-            try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: emoji)
-            await refreshMessages(force: true)
+            try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: reaction.emoji)
+            patchMessageReactions(chatId: chatId, messageId: message.id) { reactions in
+                var updated = reactions
+                if let index = updated.firstIndex(where: { $0.key == reaction.key }) {
+                    let item = updated[index]
+                    updated[index] = TgMessageReaction(
+                        key: item.key,
+                        emoji: item.emoji,
+                        count: item.count + 1,
+                        isChosen: true
+                    )
+                } else {
+                    updated.append(
+                        TgMessageReaction(key: reaction.key, emoji: reaction.emoji, count: 1, isChosen: true)
+                    )
+                }
+                return updated
+            }
         } catch {
             status = error.localizedDescription
+            await refreshMessages(force: true)
         }
+    }
+
+    private func patchMessageReactions(
+        chatId: Int64,
+        messageId: Int64,
+        transform: ([TgMessageReaction]) -> [TgMessageReaction]
+    ) {
+        guard selectedChatId == chatId,
+              let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        let current = messages[index]
+        let reactions = transform(current.reactions)
+        messages[index] = TgMessage(
+            id: current.id,
+            chatId: current.chatId,
+            text: current.text,
+            outgoing: current.outgoing,
+            createdAt: current.createdAt,
+            isEdited: current.isEdited,
+            replyToMessageId: current.replyToMessageId,
+            isDeleted: current.isDeleted,
+            isReadByPeer: current.isReadByPeer,
+            attachments: current.attachments,
+            mediaAlbumId: current.mediaAlbumId,
+            forwardedFrom: current.forwardedFrom,
+            senderUserId: current.senderUserId,
+            senderName: current.senderName,
+            senderAvatarPath: current.senderAvatarPath,
+            authorSignature: current.authorSignature,
+            viewCount: current.viewCount,
+            reactions: reactions
+        )
+        repository?.upsertMessages([messages[index]])
     }
 
     func loadReactionPicker(for message: TgMessage) async {
         guard let repository, let chatId = selectedChatId else {
             reactionPickerEmojis = defaultReactionEmojis
+            reactionPickerMaxCount = currentUserIsPremium ? 3 : 1
             return
         }
         do {
             let available = try await repository.fetchAvailableReactions(chatId: chatId, messageId: message.id)
-            reactionPickerEmojis = available.isEmpty ? defaultReactionEmojis : available
+            reactionPickerEmojis = available.emojis
+            var maxCount = available.maxReactionCount
+            if currentUserIsPremium {
+                maxCount = max(maxCount, 3)
+            }
+            reactionPickerMaxCount = max(1, maxCount)
         } catch {
             reactionPickerEmojis = defaultReactionEmojis
+            reactionPickerMaxCount = currentUserIsPremium ? 3 : 1
         }
     }
 
     private var defaultReactionEmojis: [String] {
-        ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏", "👏"]
+        ["👍", "❤️", "🔥", "🤣", "😍", "😱", "😢", "🎉", "🙏", "👏", "💯", "🤝"]
     }
 
     func loadDefaultStickers() async {
@@ -989,6 +1097,64 @@ final class AppViewModel: ObservableObject {
         selectedChatFolderId = folderId
         chats = []
         await refreshChats()
+    }
+
+    func refreshChatsPreservingFolder() async {
+        await reloadChatFolders(force: false)
+        await refreshChats()
+    }
+
+    func renameChatFolder(_ folder: TgChatFolder, title: String) async {
+        guard let repository else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try await repository.renameChatFolder(folderId: folder.id, title: trimmed)
+            await reloadChatFolders(force: true)
+            if selectedChatFolderId == folder.id {
+                await refreshChats()
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func addChat(_ chat: TgChat, toFolder folderId: Int32) async {
+        guard let repository else { return }
+        do {
+            try await repository.addChatToFolder(folderId: folderId, chatId: chat.id)
+            moveChatToFolderTarget = nil
+            if selectedChatFolderId == folderId {
+                await refreshChats()
+            } else if selectedChatFolderId == nil {
+                chats.removeAll { $0.id == chat.id }
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func removeChat(_ chat: TgChat, fromFolder folderId: Int32) async {
+        guard let repository else { return }
+        do {
+            try await repository.removeChatFromFolder(folderId: folderId, chatId: chat.id)
+            if selectedChatFolderId == folderId {
+                chats.removeAll { $0.id == chat.id }
+                await refreshChats()
+            }
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func loadIncludedChats(for folderId: Int32) async -> [TgChat] {
+        guard let repository else { return [] }
+        do {
+            return try await repository.loadChatsInFolder(folderId: folderId, limit: 200)
+        } catch {
+            status = error.localizedDescription
+            return []
+        }
     }
 
     func archiveChat(_ chatId: Int64) async {
@@ -1393,8 +1559,7 @@ final class AppViewModel: ObservableObject {
 
         repository.onChatsChanged = { [weak self] in
             Task { @MainActor in
-                await self?.reloadChatFolders(force: false)
-                await self?.refreshChats()
+                await self?.refreshChatsPreservingFolder()
             }
         }
 
