@@ -133,7 +133,7 @@ enum OutgoingMediaFile {
         case .document(let url, _, _):
             try FileManager.default.copyItem(at: url, to: destination)
         }
-        return destination
+        return destination.standardizedFileURL
     }
 }
 
@@ -142,7 +142,7 @@ enum MediaFileImporter {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("photo-\(UUID().uuidString).jpg")
         try data.write(to: url, options: .atomic)
-        return url
+        return url.standardizedFileURL
     }
 
     static func persistPickedFile(_ source: URL) throws -> URL {
@@ -155,6 +155,6 @@ enum MediaFileImporter {
         } else {
             try FileManager.default.copyItem(at: source, to: destination)
         }
-        return destination
+        return destination.standardizedFileURL
     }
 }

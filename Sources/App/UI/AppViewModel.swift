@@ -377,7 +377,6 @@ final class AppViewModel: ObservableObject {
             async let archiveTask = repository.loadArchivedChats(limit: 80)
 
             let (listChats, archived) = try await (listTask, archiveTask)
-            let folders = (try? await repository.loadChatFolders()) ?? chatFolders
             chats = mergeChatsPreservingState(
                 sortChats(listChats),
                 previousById: previousById,
@@ -385,11 +384,22 @@ final class AppViewModel: ObservableObject {
             )
             archivedChats = sortChats(archived)
             archiveSummary = Self.makeArchiveSummary(from: archivedChats)
-            chatFolders = folders
             status = ""
             scheduleChatAvatarRefresh()
+            await reloadChatFolders()
         } catch {
             if chats.isEmpty {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    func reloadChatFolders() async {
+        guard let repository, authState == .ready else { return }
+        do {
+            chatFolders = try await repository.loadChatFolders()
+        } catch {
+            if chatFolders.isEmpty {
                 status = error.localizedDescription
             }
         }
@@ -748,6 +758,7 @@ final class AppViewModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
+            try await repository.openChat(chatId: chatId)
             if let editingMessageId {
                 try await repository.edit(chatId: chatId, messageId: editingMessageId, text: text)
                 self.editingMessageId = nil
@@ -772,6 +783,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
         let replyId = replyingToMessageId
         do {
+            try await repository.openChat(chatId: chatId)
             let path = try media.copyToUploadsDirectory().path
             switch media {
             case .photo:
@@ -787,13 +799,24 @@ final class AppViewModel: ObservableObject {
                 )
                 _ = url
             case .voice(_, let duration, let waveform):
-                try await repository.sendVoiceNote(
-                    chatId: chatId,
-                    localPath: path,
-                    duration: duration,
-                    waveform: waveform,
-                    replyToMessageId: replyId
-                )
+                do {
+                    try await repository.sendVoiceNote(
+                        chatId: chatId,
+                        localPath: path,
+                        duration: duration,
+                        waveform: waveform,
+                        replyToMessageId: replyId
+                    )
+                } catch {
+                    try await repository.sendDocument(
+                        chatId: chatId,
+                        localPath: path,
+                        fileName: "voice.m4a",
+                        mimeType: "audio/mp4",
+                        caption: nil,
+                        replyToMessageId: replyId
+                    )
+                }
             case .videoNote(_, let duration):
                 try await repository.sendVideoNote(chatId: chatId, localPath: path, duration: duration, replyToMessageId: replyId)
             }
@@ -810,9 +833,10 @@ final class AppViewModel: ObservableObject {
         isBusy = true
         defer { isBusy = false }
         do {
+            try await repository.openChat(chatId: chatId)
             try await repository.sendSticker(
                 chatId: chatId,
-                stickerFileId: sticker.fileId,
+                sticker: sticker,
                 replyToMessageId: replyingToMessageId
             )
             replyingToMessageId = nil
@@ -823,18 +847,44 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    @Published var reactionPickerEmojis: [String] = []
+
     func addReaction(to message: TgMessage, emoji: String) async {
         guard let repository, let chatId = selectedChatId else { return }
+        if !reactionPickerEmojis.isEmpty, !reactionPickerEmojis.contains(emoji) {
+            status = AppText.tr(
+                "Эта реакция недоступна в этом чате",
+                "This reaction is not available in this chat"
+            )
+            return
+        }
         do {
             try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: emoji)
-            await refreshMessages(force: false)
+            await refreshMessages(force: true)
         } catch {
             status = error.localizedDescription
         }
     }
 
+    func loadReactionPicker(for message: TgMessage) async {
+        guard let repository, let chatId = selectedChatId else {
+            reactionPickerEmojis = defaultReactionEmojis
+            return
+        }
+        do {
+            let available = try await repository.fetchAvailableReactions(chatId: chatId, messageId: message.id)
+            reactionPickerEmojis = available.isEmpty ? defaultReactionEmojis : available
+        } catch {
+            reactionPickerEmojis = defaultReactionEmojis
+        }
+    }
+
+    private var defaultReactionEmojis: [String] {
+        ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏", "👏"]
+    }
+
     func loadDefaultStickers() async {
-        await searchStickers(query: "😀")
+        await searchStickers(query: "")
     }
 
     func searchStickers(query: String) async {
@@ -842,8 +892,7 @@ final class AppViewModel: ObservableObject {
         isStickerSearchLoading = true
         defer { isStickerSearchLoading = false }
         do {
-            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            stickerSearchResults = try await repository.searchStickers(query: trimmed.isEmpty ? "😀" : trimmed, limit: 32)
+            stickerSearchResults = try await repository.searchStickers(query: query, limit: 40)
         } catch {
             if stickerSearchResults.isEmpty {
                 status = error.localizedDescription
@@ -1365,6 +1414,49 @@ final class AppViewModel: ObservableObject {
                 self?.applyTypingUpdate(update)
             }
         }
+
+        repository.onMessageInteractionUpdated = { [weak self] chatId, messageId, reactions, viewCount in
+            Task { @MainActor in
+                self?.applyMessageInteractionUpdate(
+                    chatId: chatId,
+                    messageId: messageId,
+                    reactions: reactions,
+                    viewCount: viewCount
+                )
+            }
+        }
+    }
+
+    private func applyMessageInteractionUpdate(
+        chatId: Int64,
+        messageId: Int64,
+        reactions: [TgMessageReaction],
+        viewCount: Int?
+    ) {
+        guard selectedChatId == chatId else { return }
+        guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        let current = messages[index]
+        messages[index] = TgMessage(
+            id: current.id,
+            chatId: current.chatId,
+            text: current.text,
+            outgoing: current.outgoing,
+            createdAt: current.createdAt,
+            isEdited: current.isEdited,
+            replyToMessageId: current.replyToMessageId,
+            isDeleted: current.isDeleted,
+            isReadByPeer: current.isReadByPeer,
+            attachments: current.attachments,
+            mediaAlbumId: current.mediaAlbumId,
+            forwardedFrom: current.forwardedFrom,
+            senderUserId: current.senderUserId,
+            senderName: current.senderName,
+            senderAvatarPath: current.senderAvatarPath,
+            authorSignature: current.authorSignature,
+            viewCount: viewCount ?? current.viewCount,
+            reactions: reactions
+        )
+        repository?.upsertMessages([messages[index]])
     }
 
     private func scheduleMessagesReload(chatId: Int64) {
@@ -1406,6 +1498,8 @@ final class AppViewModel: ObservableObject {
                 }
             }
             await refreshMe()
+            await reloadChatFolders()
+            await refreshChats()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
             status = ""
@@ -1990,7 +2084,8 @@ final class AppViewModel: ObservableObject {
                 senderName: message.senderName,
                 senderAvatarPath: message.senderAvatarPath,
                 authorSignature: message.authorSignature,
-                viewCount: message.viewCount
+                viewCount: message.viewCount,
+                reactions: message.reactions
             )
         }
 
@@ -2044,7 +2139,8 @@ final class AppViewModel: ObservableObject {
                 senderName: message.senderName,
                 senderAvatarPath: message.senderAvatarPath,
                 authorSignature: message.authorSignature,
-                viewCount: message.viewCount
+                viewCount: message.viewCount,
+                reactions: message.reactions
             )
         }
     }

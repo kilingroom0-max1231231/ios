@@ -33,9 +33,9 @@ final class LocalMessageStore {
             INSERT INTO messages(
                 message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                 forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                sender_avatar_path, author_signature, view_count
+                sender_avatar_path, author_signature, view_count, reactions_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
               text=CASE
                 WHEN messages.is_deleted = 1 AND length(trim(excluded.text)) = 0 THEN messages.text
@@ -67,7 +67,8 @@ final class LocalMessageStore {
                 THEN excluded.author_signature
                 ELSE messages.author_signature
               END,
-              view_count=COALESCE(excluded.view_count, messages.view_count);
+              view_count=COALESCE(excluded.view_count, messages.view_count),
+              reactions_json=excluded.reactions_json;
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -111,6 +112,7 @@ final class LocalMessageStore {
                 } else {
                     sqlite3_bind_null(stmt, 14)
                 }
+                bindReactionsJSON(stmt, 15, message.reactions)
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
@@ -127,11 +129,11 @@ final class LocalMessageStore {
             let sql = """
             SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                    forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                   sender_avatar_path, author_signature, view_count
+                   sender_avatar_path, author_signature, view_count, reactions_json
             FROM (
                 SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                        forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                       sender_avatar_path, author_signature, view_count
+                       sender_avatar_path, author_signature, view_count, reactions_json
                 FROM messages
                 WHERE chat_id = ?
                 ORDER BY created_at DESC
@@ -167,7 +169,8 @@ final class LocalMessageStore {
                         senderName: optionalTextColumn(stmt, 10),
                         senderAvatarPath: optionalTextColumn(stmt, 11),
                         authorSignature: optionalTextColumn(stmt, 12),
-                        viewCount: optionalIntColumn(stmt, 13)
+                        viewCount: optionalIntColumn(stmt, 13),
+                        reactions: readReactionsJSON(stmt, 14)
                     )
                 )
             }
@@ -300,6 +303,7 @@ final class LocalMessageStore {
             sender_avatar_path TEXT,
             author_signature TEXT,
             view_count INTEGER,
+            reactions_json TEXT,
             PRIMARY KEY (chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
@@ -338,7 +342,8 @@ final class LocalMessageStore {
             ("sender_name", "TEXT"),
             ("sender_avatar_path", "TEXT"),
             ("author_signature", "TEXT"),
-            ("view_count", "INTEGER")
+            ("view_count", "INTEGER"),
+            ("reactions_json", "TEXT")
         ]
         for (name, type) in columns where !columnExists("messages", name) {
             let sql = "ALTER TABLE messages ADD COLUMN \(name) \(type);"
@@ -426,6 +431,25 @@ final class LocalMessageStore {
     private func optionalIntColumn(_ stmt: OpaquePointer?, _ col: Int32) -> Int? {
         guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
         return Int(sqlite3_column_int(stmt, col))
+    }
+
+    private func bindReactionsJSON(_ stmt: OpaquePointer?, _ index: Int32, _ reactions: [TgMessageReaction]) {
+        guard let data = try? JSONEncoder().encode(reactions),
+              let json = String(data: data, encoding: .utf8) else {
+            sqlite3_bind_text(stmt, index, "[]", -1, sqliteTransient)
+            return
+        }
+        sqlite3_bind_text(stmt, index, (json as NSString).utf8String, -1, sqliteTransient)
+    }
+
+    private func readReactionsJSON(_ stmt: OpaquePointer?, _ col: Int32) -> [TgMessageReaction] {
+        guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return [] }
+        let json = readText(stmt, col)
+        guard let data = json.data(using: .utf8),
+              let reactions = try? JSONDecoder().decode([TgMessageReaction].self, from: data) else {
+            return []
+        }
+        return reactions
     }
 
     private func bindOptionalText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String?) {

@@ -120,7 +120,8 @@ struct ChatPeekView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
+                        reactions: merged.reactions.isEmpty ? next.reactions : merged.reactions
                     )
                 }
                 nextIndex += 1
@@ -143,7 +144,8 @@ struct ChatPeekView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount
+                    viewCount: merged.viewCount,
+                    reactions: merged.reactions
                 )
             }
             out.append(merged)

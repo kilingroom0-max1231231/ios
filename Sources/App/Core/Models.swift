@@ -142,6 +142,16 @@ struct TgChat: Identifiable, Equatable, Codable {
     }
 }
 
+struct TgMessageReaction: Identifiable, Equatable, Codable {
+    /// Stable key: emoji or `custom:<id>`.
+    let key: String
+    let emoji: String
+    let count: Int
+    let isChosen: Bool
+
+    var id: String { key }
+}
+
 struct TgMessage: Identifiable, Equatable {
     let id: Int64
     let chatId: Int64
@@ -160,6 +170,7 @@ struct TgMessage: Identifiable, Equatable {
     let senderAvatarPath: String?
     let authorSignature: String?
     let viewCount: Int?
+    let reactions: [TgMessageReaction]
 
     init(
         id: Int64,
@@ -178,7 +189,8 @@ struct TgMessage: Identifiable, Equatable {
         senderName: String? = nil,
         senderAvatarPath: String? = nil,
         authorSignature: String? = nil,
-        viewCount: Int? = nil
+        viewCount: Int? = nil,
+        reactions: [TgMessageReaction] = []
     ) {
         self.id = id
         self.chatId = chatId
@@ -197,6 +209,7 @@ struct TgMessage: Identifiable, Equatable {
         self.senderAvatarPath = senderAvatarPath
         self.authorSignature = authorSignature
         self.viewCount = viewCount
+        self.reactions = reactions
     }
 
     func markedDeleted() -> TgMessage {
@@ -217,7 +230,8 @@ struct TgMessage: Identifiable, Equatable {
             senderName: senderName,
             senderAvatarPath: senderAvatarPath,
             authorSignature: authorSignature,
-            viewCount: viewCount
+            viewCount: viewCount,
+            reactions: reactions
         )
     }
 
@@ -242,7 +256,8 @@ struct TgMessage: Identifiable, Equatable {
             senderName: senderName ?? previous.senderName,
             senderAvatarPath: senderAvatarPath ?? previous.senderAvatarPath,
             authorSignature: authorSignature ?? previous.authorSignature,
-            viewCount: viewCount ?? previous.viewCount
+            viewCount: viewCount ?? previous.viewCount,
+            reactions: reactions
         )
     }
 
@@ -453,11 +468,34 @@ struct TgStoryItem: Identifiable, Equatable {
 struct TgSticker: Identifiable, Equatable {
     let fileId: Int64
     let emoji: String
+    let width: Int
+    let height: Int
     let displayPath: String?
     let animationPath: String?
     let isAnimated: Bool
+    let localPath: String?
 
     var id: Int64 { fileId }
+
+    init(
+        fileId: Int64,
+        emoji: String,
+        width: Int = 512,
+        height: Int = 512,
+        displayPath: String? = nil,
+        animationPath: String? = nil,
+        isAnimated: Bool = false,
+        localPath: String? = nil
+    ) {
+        self.fileId = fileId
+        self.emoji = emoji
+        self.width = width
+        self.height = height
+        self.displayPath = displayPath
+        self.animationPath = animationPath
+        self.isAnimated = isAnimated
+        self.localPath = localPath
+    }
 }
 
 struct TgGiftItem: Identifiable, Equatable {
@@ -558,6 +596,7 @@ enum TelegramEvent {
     case chatsChanged
     case chatChanged(Int64)
     case chatTypingChanged(chatId: Int64, userId: Int64?, actionKey: String?)
+    case messageInteractionUpdated(chatId: Int64, messageId: Int64, reactions: [TgMessageReaction], viewCount: Int?)
 }
 
 struct ChatTypingUpdate: Equatable {

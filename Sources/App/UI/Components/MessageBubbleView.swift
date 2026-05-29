@@ -15,6 +15,7 @@ struct MessageBubbleView: View {
     var onPremiumSticker: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
     var onReact: (() -> Void)?
+    var onReactionTap: ((String) -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
@@ -181,6 +182,16 @@ struct MessageBubbleView: View {
                 }
 
                 bubbleBody
+
+                if !message.reactions.isEmpty {
+                    MessageReactionsView(
+                        reactions: message.reactions,
+                        outgoing: message.outgoing,
+                        onTap: onReactionTap
+                    )
+                    .padding(.horizontal, 2)
+                    .padding(.top, 2)
+                }
             }
             .frame(
                 minWidth: 0,

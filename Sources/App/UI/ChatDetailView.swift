@@ -28,7 +28,6 @@ struct ChatDetailView: View {
     @StateObject private var voiceRecorder = VoiceNoteRecorder()
     @State private var isMicPressing = false
 
-    private let quickReactionEmojis = ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏"]
 
     private enum ChatScrollAnchor {
         static let bottom = "chat-scroll-bottom"
@@ -186,8 +185,11 @@ struct ChatDetailView: View {
         .sheet(isPresented: $showPhotoPicker) {
             PhotoLibraryPicker { data in
                 Task {
-                    if let url = try? MediaFileImporter.persistPhotoData(data) {
+                    do {
+                        let url = try MediaFileImporter.persistPhotoData(data)
                         await vm.sendOutgoingMedia(.photo(url))
+                    } catch {
+                        vm.status = error.localizedDescription
                     }
                 }
             }
@@ -195,10 +197,13 @@ struct ChatDetailView: View {
         .sheet(isPresented: $showDocumentPicker) {
             DocumentPicker { url in
                 Task {
-                    if let persisted = try? MediaFileImporter.persistPickedFile(url) {
+                    do {
+                        let persisted = try MediaFileImporter.persistPickedFile(url)
                         let name = url.lastPathComponent
                         let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
                         await vm.sendOutgoingMedia(.document(persisted, fileName: name, mimeType: mime))
+                    } catch {
+                        vm.status = error.localizedDescription
                     }
                 }
             }
@@ -211,18 +216,28 @@ struct ChatDetailView: View {
         .fullScreenCover(isPresented: $showVideoNoteCamera) {
             VideoNoteCameraPicker { url in
                 Task {
-                    let asset = AVURLAsset(url: url)
-                    let duration = max(1, Int(CMTimeGetSeconds(asset.duration)))
-                    if let persisted = try? MediaFileImporter.persistPickedFile(url) {
+                    do {
+                        let asset = AVURLAsset(url: url)
+                        let duration = max(1, Int(CMTimeGetSeconds(asset.duration)))
+                        let persisted = try MediaFileImporter.persistPickedFile(url)
                         await vm.sendOutgoingMedia(.videoNote(persisted, duration: duration))
+                    } catch {
+                        vm.status = error.localizedDescription
                     }
                 }
             }
             .ignoresSafeArea()
         }
         .sheet(item: $reactionTarget) { target in
-            MessageReactionPicker(emojis: quickReactionEmojis) { emoji in
+            MessageReactionPicker(
+                emojis: vm.reactionPickerEmojis.isEmpty
+                    ? ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏", "👏"]
+                    : vm.reactionPickerEmojis
+            ) { emoji in
                 Task { await vm.addReaction(to: target.message, emoji: emoji) }
+            }
+            .task {
+                await vm.loadReactionPicker(for: target.message)
             }
         }
         .sheet(item: $forwardingMessage) { message in
@@ -464,6 +479,9 @@ struct ChatDetailView: View {
                     onReact: {
                         reactionTarget = ReactionTarget(message: message)
                     },
+                    onReactionTap: canSend ? { emoji in
+                        Task { await vm.addReaction(to: message, emoji: emoji) }
+                    } : nil,
                     onForward: {
                         forwardingMessage = message
                     },
@@ -663,7 +681,11 @@ struct ChatDetailView: View {
                                     vm.status = AppText.tr("Нет доступа к микрофону", "Microphone access denied")
                                     return
                                 }
-                                try? voiceRecorder.start()
+                                do {
+                                    try voiceRecorder.start()
+                                } catch {
+                                    vm.status = error.localizedDescription
+                                }
                             }
                         }
                     }
@@ -843,7 +865,8 @@ struct ChatDetailView: View {
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
                         authorSignature: merged.authorSignature ?? next.authorSignature,
-                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0)
+                        viewCount: max(merged.viewCount ?? 0, next.viewCount ?? 0),
+                        reactions: merged.reactions.isEmpty ? next.reactions : merged.reactions
                     )
                 }
                 j += 1
@@ -867,7 +890,8 @@ struct ChatDetailView: View {
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,
                     authorSignature: merged.authorSignature,
-                    viewCount: merged.viewCount
+                    viewCount: merged.viewCount,
+                    reactions: merged.reactions
                 )
             }
 

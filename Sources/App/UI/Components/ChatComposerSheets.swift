@@ -208,6 +208,11 @@ struct StickerPickerView: View {
             .onChange(of: query) { value in
                 Task { await vm.searchStickers(query: value) }
             }
+            .overlay {
+                if vm.isStickerSearchLoading && vm.stickerSearchResults.isEmpty {
+                    ProgressView()
+                }
+            }
         }
     }
 }
@@ -218,20 +223,22 @@ struct MessageReactionPicker: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        HStack(spacing: 16) {
-            ForEach(emojis, id: \.self) { emoji in
-                Button {
-                    onPick(emoji)
-                    dismiss()
-                } label: {
-                    Text(emoji)
-                        .font(.system(size: 32))
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 16) {
+                ForEach(emojis, id: \.self) { emoji in
+                    Button {
+                        onPick(emoji)
+                        dismiss()
+                    } label: {
+                        Text(emoji)
+                            .font(.system(size: 32))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
         .presentationDetents([.height(100)])
         .presentationDragIndicator(.visible)
     }

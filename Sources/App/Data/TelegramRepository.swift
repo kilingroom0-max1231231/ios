@@ -25,6 +25,7 @@ final class TelegramRepository {
     var onMessageUpserted: ((TgMessage) -> Void)?
     var onMessagesDeleted: ((Int64, [Int64]) -> Void)?
     var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
+    var onMessageInteractionUpdated: ((Int64, Int64, [TgMessageReaction], Int?) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore, chatStore: LocalChatStore) {
         self.client = client
@@ -63,6 +64,8 @@ final class TelegramRepository {
                 self.onChatChanged?(chatId)
             case .chatTypingChanged(let chatId, let userId, let actionKey):
                 self.onTypingChanged?(ChatTypingUpdate(chatId: chatId, userId: userId, actionKey: actionKey))
+            case .messageInteractionUpdated(let chatId, let messageId, let reactions, let viewCount):
+                self.onMessageInteractionUpdated?(chatId, messageId, reactions, viewCount)
             }
         }
     }
@@ -263,12 +266,16 @@ final class TelegramRepository {
         try await client.sendVideoNote(chatId: chatId, localPath: localPath, duration: duration, length: 480, replyToMessageId: replyToMessageId)
     }
 
-    func sendSticker(chatId: Int64, stickerFileId: Int64, replyToMessageId: Int64?) async throws {
-        try await client.sendSticker(chatId: chatId, stickerFileId: stickerFileId, replyToMessageId: replyToMessageId)
+    func sendSticker(chatId: Int64, sticker: TgSticker, replyToMessageId: Int64?) async throws {
+        try await client.sendSticker(chatId: chatId, sticker: sticker, replyToMessageId: replyToMessageId)
     }
 
-    func searchStickers(query: String, limit: Int = 24) async throws -> [TgSticker] {
-        try await client.searchStickerSets(query: query, limit: limit)
+    func searchStickers(query: String, limit: Int = 40) async throws -> [TgSticker] {
+        try await client.fetchStickerPickerItems(query: query, limit: limit)
+    }
+
+    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> [String] {
+        try await client.fetchAvailableReactions(chatId: chatId, messageId: messageId)
     }
 
     func addReaction(chatId: Int64, messageId: Int64, emoji: String) async throws {
@@ -308,6 +315,10 @@ final class TelegramRepository {
 
     func delete(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws {
         try await client.deleteMessages(chatId: chatId, messageIds: messageIds, revoke: revoke)
+    }
+
+    func upsertMessages(_ messages: [TgMessage]) {
+        try? store.upsert(messages: messages)
     }
 
     func storedMessages(chatId: Int64, limit: Int = 500) throws -> [TgMessage] {

@@ -69,7 +69,7 @@ struct ChatListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
-                if !isArchiveMode, !vm.chatFolders.isEmpty {
+                if !isArchiveMode {
                     ChatFolderTabsView(vm: vm)
                 }
                 if searchVisible || !vm.chatSearch.isEmpty {

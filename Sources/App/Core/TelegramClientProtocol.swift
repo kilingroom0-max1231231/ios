@@ -22,8 +22,10 @@ protocol TelegramClientProtocol {
     func sendDocument(chatId: Int64, localPath: String, fileName: String?, mimeType: String?, caption: String?, replyToMessageId: Int64?) async throws
     func sendVoiceNote(chatId: Int64, localPath: String, duration: Int, waveform: [Int], replyToMessageId: Int64?) async throws
     func sendVideoNote(chatId: Int64, localPath: String, duration: Int, length: Int, replyToMessageId: Int64?) async throws
-    func sendSticker(chatId: Int64, stickerFileId: Int64, replyToMessageId: Int64?) async throws
+    func sendSticker(chatId: Int64, sticker: TgSticker, replyToMessageId: Int64?) async throws
+    func fetchStickerPickerItems(query: String, limit: Int) async throws -> [TgSticker]
     func searchStickerSets(query: String, limit: Int) async throws -> [TgSticker]
+    func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> [String]
     func addMessageReaction(chatId: Int64, messageId: Int64, emoji: String) async throws
     func createNewSupergroupChat(title: String, isChannel: Bool, description: String?) async throws -> Int64
     func addChatMembers(chatId: Int64, userIds: [Int64]) async throws
