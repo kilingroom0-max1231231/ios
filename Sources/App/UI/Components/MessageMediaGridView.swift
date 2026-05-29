@@ -114,24 +114,17 @@ struct MessageMediaThumbnail: View {
     private var thumbnailContent: some View {
         switch attachment.kind {
         case .photo:
-            if let image = attachment.localImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
+            CachedLocalImage(path: attachment.localPath, contentMode: .fill) {
                 placeholder("photo")
             }
+            .scaledToFill()
         case .video, .animation:
             VideoThumbnailView(url: attachment.localURL)
         case .sticker, .gift:
-            if let image = attachment.localImage {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(6)
-            } else {
+            CachedLocalImage(path: attachment.localPath, contentMode: .fit) {
                 placeholder(attachment.kind == .gift ? "gift.fill" : "face.smiling")
             }
+            .padding(6)
         default:
             placeholder("photo")
         }

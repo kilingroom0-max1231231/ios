@@ -9,7 +9,11 @@ struct ChatDetailView: View {
     @State private var showProfile = false
     @State private var mediaSelection: MediaViewerSelection?
     @State private var forwardingMessage: TgMessage?
-    @State private var bottomScrollAnchorId: Int64?
+    @State private var didInitialScrollToBottom = false
+
+    private enum ChatScrollAnchor {
+        static let bottom = "chat-scroll-bottom"
+    }
 
     private var selectedChat: TgChat? {
         vm.chats.first(where: { $0.id == chatId })
@@ -68,11 +72,13 @@ struct ChatDetailView: View {
         .toolbar(.hidden, for: .tabBar)
         .transparentNavigationBar()
         .task(id: chatId) {
+            didInitialScrollToBottom = false
             vm.setChatVisible(chatId)
             await vm.selectChat(chatId)
         }
         .onDisappear {
             vm.setChatVisible(nil)
+            didInitialScrollToBottom = false
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -220,6 +226,10 @@ struct ChatDetailView: View {
                                 }
                         }
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(ChatScrollAnchor.bottom)
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 2)
@@ -233,27 +243,25 @@ struct ChatDetailView: View {
                         }
                     }
             )
-            .onChange(of: vm.messages.last?.id) { newId in
-                bottomScrollAnchorId = newId ?? grouped.last?.id
+            .onChange(of: vm.visibleMessages.count) { _ in
+                requestScrollToBottom(proxy: proxy, animated: !didInitialScrollToBottom)
             }
-            .onChange(of: bottomScrollAnchorId) { anchorId in
-                guard let anchorId else { return }
-                scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
+            .onChange(of: grouped.last?.id) { _ in
+                requestScrollToBottom(proxy: proxy, animated: !didInitialScrollToBottom)
+            }
+            .onChange(of: vm.chatMediaGeneration) { _ in
+                requestScrollToBottom(proxy: proxy, animated: false)
             }
             .onChange(of: isComposerFocused) { focused in
-                if focused, let anchorId = bottomScrollAnchorId {
-                    scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
+                if focused {
+                    requestScrollToBottom(proxy: proxy, animated: true)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                guard let anchorId = bottomScrollAnchorId else { return }
-                scrollToBottom(proxy: proxy, anchorId: anchorId, animated: true)
+                requestScrollToBottom(proxy: proxy, animated: true)
             }
             .onAppear {
-                bottomScrollAnchorId = grouped.last?.id
-                if let anchorId = bottomScrollAnchorId {
-                    scrollToBottom(proxy: proxy, anchorId: anchorId, animated: false)
-                }
+                requestScrollToBottom(proxy: proxy, animated: false)
             }
         }
     }
@@ -411,15 +419,29 @@ struct ChatDetailView: View {
         }
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, anchorId: Int64, animated: Bool) {
+    private func requestScrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        guard !groupedMessages.isEmpty else { return }
+
         let scroll = {
-            proxy.scrollTo(anchorId, anchor: .bottom)
+            proxy.scrollTo(ChatScrollAnchor.bottom, anchor: .bottom)
+            if let lastId = groupedMessages.last?.id {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
         }
+
         DispatchQueue.main.async {
-            if animated {
-                withAnimation(.easeOut(duration: 0.22), scroll)
-            } else {
+            scroll()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 scroll()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                scroll()
+                didInitialScrollToBottom = true
+            }
+            if animated {
+                withAnimation(.easeOut(duration: 0.22)) {
+                    scroll()
+                }
             }
         }
     }

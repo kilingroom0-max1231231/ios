@@ -8,6 +8,8 @@ struct AvatarView: View {
     var size: CGFloat = 50
     var isSavedMessages: Bool = false
 
+    @State private var avatarImage: UIImage?
+
     var body: some View {
         Group {
             if isSavedMessages {
@@ -18,8 +20,8 @@ struct AvatarView: View {
                             .font(.system(size: size * 0.38, weight: .semibold))
                             .foregroundStyle(.white)
                     }
-            } else if let image = loadAvatarImage() {
-                Image(uiImage: image)
+            } else if let avatarImage {
+                Image(uiImage: avatarImage)
                     .resizable()
                     .scaledToFill()
             } else {
@@ -39,11 +41,16 @@ struct AvatarView: View {
                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
-    }
-
-    private func loadAvatarImage() -> UIImage? {
-        guard let imagePath, !imagePath.isEmpty else { return nil }
-        return LocalImageCache.shared.image(path: imagePath)
+        .task(id: imagePath) {
+            guard let imagePath, !imagePath.isEmpty else {
+                avatarImage = nil
+                return
+            }
+            let loaded = await Task.detached(priority: .utility) {
+                LocalImageCache.shared.image(path: imagePath, maxPixelSize: max(size * 3, 96))
+            }.value
+            avatarImage = loaded
+        }
     }
 
     private func avatarInitials(_ value: String) -> String {

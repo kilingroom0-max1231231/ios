@@ -58,8 +58,10 @@ final class AppViewModel: ObservableObject {
     @Published var isUserProfileLoading = false
     @Published var isUserProfileExtrasLoading = false
     @Published var isSwitchingAccount = false
+    @Published private(set) var chatMediaGeneration = 0
 
     private var repository: TelegramRepository?
+    private var messagesReloadTasks: [Int64: Task<Void, Never>] = [:]
     private var loadedStoriesForUserId: Int64?
     private var loadedGiftsForUserId: Int64?
     private var mediaDownloadsInProgress: Set<Int64> = []
@@ -550,26 +552,41 @@ final class AppViewModel: ObservableObject {
         guard hasMissingMedia, !mediaDownloadsInProgress.contains(chatId) else { return }
 
         mediaDownloadsInProgress.insert(chatId)
-        Task { [weak self] in
-            await self?.downloadMedia(chatId: chatId)
+        let repository = repository
+        Task.detached(priority: .utility) { [weak self] in
+            await Self.runMediaDownload(chatId: chatId, repository: repository, owner: self)
         }
     }
 
-    private func downloadMedia(chatId: Int64) async {
+    private static func runMediaDownload(
+        chatId: Int64,
+        repository: TelegramRepository?,
+        owner: AppViewModel?
+    ) async {
         guard let repository else {
-            mediaDownloadsInProgress.remove(chatId)
+            await MainActor.run {
+                owner?.mediaDownloadsInProgress.remove(chatId)
+            }
             return
         }
 
-        defer { mediaDownloadsInProgress.remove(chatId) }
+        defer {
+            Task { @MainActor in
+                owner?.mediaDownloadsInProgress.remove(chatId)
+            }
+        }
 
         do {
             let downloadedMessages = try await repository.downloadMedia(chatId: chatId)
-            if selectedChatId == chatId {
-                replaceMessagesPreservingDisplay(downloadedMessages, chatId: chatId)
+            await MainActor.run {
+                guard let owner, owner.selectedChatId == chatId else { return }
+                owner.replaceMessagesPreservingDisplay(downloadedMessages, chatId: chatId)
+                owner.chatMediaGeneration += 1
             }
         } catch {
-            status = error.localizedDescription
+            await MainActor.run {
+                owner?.status = error.localizedDescription
+            }
         }
     }
 
@@ -1010,15 +1027,7 @@ final class AppViewModel: ObservableObject {
         repository.onMessagesChanged = { [weak self] chatId in
             guard let self else { return }
             Task { @MainActor in
-                if self.peekChatId == chatId {
-                    await self.reloadPeekMessages(chatId: chatId)
-                }
-                if self.selectedChatId == chatId {
-                    await self.reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
-                    if self.visibleChatId == chatId {
-                        await self.markChatRead(chatId)
-                    }
-                }
+                self.scheduleMessagesReload(chatId: chatId)
             }
         }
 
@@ -1044,6 +1053,24 @@ final class AppViewModel: ObservableObject {
             Task { @MainActor in
                 self?.applyTypingUpdate(update)
             }
+        }
+    }
+
+    private func scheduleMessagesReload(chatId: Int64) {
+        messagesReloadTasks[chatId]?.cancel()
+        messagesReloadTasks[chatId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard let self, !Task.isCancelled else { return }
+            if self.peekChatId == chatId {
+                await self.reloadPeekMessages(chatId: chatId)
+            }
+            if self.selectedChatId == chatId {
+                await self.reloadMessagesFromStore(chatId: chatId, mergeWithExisting: true)
+                if self.visibleChatId == chatId {
+                    await self.markChatRead(chatId)
+                }
+            }
+            self.messagesReloadTasks[chatId] = nil
         }
     }
 

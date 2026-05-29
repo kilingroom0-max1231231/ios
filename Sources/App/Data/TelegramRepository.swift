@@ -103,7 +103,7 @@ final class TelegramRepository {
     }
 
     func loadChats() async throws -> [TgChat] {
-        let remote = try await client.fetchChats(limit: 200)
+        let remote = try await client.fetchChats(limit: 80)
         try? chatStore.write(chats: remote)
         return remote
     }
@@ -123,9 +123,9 @@ final class TelegramRepository {
         }
 
         var stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
-        let needsEnrichment = stored.filter(Self.needsDisplayEnrichment)
+        let needsEnrichment = stored.suffix(60).filter(Self.needsDisplayEnrichment)
         if !needsEnrichment.isEmpty {
-            let enriched = try await client.enrichMessages(needsEnrichment)
+            let enriched = try await client.enrichMessages(Array(needsEnrichment))
             try store.upsert(messages: enriched)
             stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
         }
@@ -297,17 +297,69 @@ final class TelegramRepository {
         try await client.setName(firstName: firstName, lastName: lastName)
     }
 
-    func downloadMedia(chatId: Int64) async throws -> [TgMessage] {
-        let current = try store.read(chatId: chatId)
-        for message in current {
+    static let mediaDownloadRecentMessageLimit = 48
+    static let mediaDownloadConcurrency = 4
+
+    func downloadMedia(
+        chatId: Int64,
+        recentMessageLimit: Int = TelegramRepository.mediaDownloadRecentMessageLimit
+    ) async throws -> [TgMessage] {
+        let current = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+        let recent = Array(current.suffix(recentMessageLimit))
+
+        struct DownloadJob {
+            let messageId: Int64
+            let fileId: Int64
+        }
+
+        var jobs: [DownloadJob] = []
+        jobs.reserveCapacity(recent.count * 2)
+        for message in recent {
             for attachment in message.attachments {
                 guard (attachment.localPath?.isEmpty ?? true), let fileId = attachment.fileId else { continue }
-                if let path = try await client.downloadFile(fileId: fileId) {
-                    try store.setAttachmentLocalPath(chatId: chatId, messageId: message.id, fileId: fileId, localPath: path)
+                jobs.append(DownloadJob(messageId: message.id, fileId: fileId))
+            }
+        }
+
+        guard !jobs.isEmpty else {
+            return current
+        }
+
+        var iterator = jobs.makeIterator()
+        await withTaskGroup(of: (Int64, Int64, String?).self) { group in
+            var inFlight = 0
+
+            func enqueueNext() {
+                guard let job = iterator.next() else { return }
+                inFlight += 1
+                group.addTask { [client] in
+                    let path = try? await client.downloadFile(fileId: job.fileId)
+                    return (job.messageId, job.fileId, path)
+                }
+            }
+
+            let initial = min(Self.mediaDownloadConcurrency, jobs.count)
+            for _ in 0..<initial {
+                enqueueNext()
+            }
+
+            for await result in group {
+                inFlight -= 1
+                if let path = result.2, !path.isEmpty {
+                    try? store.setAttachmentLocalPath(
+                        chatId: chatId,
+                        messageId: result.0,
+                        fileId: result.1,
+                        localPath: path
+                    )
+                }
+                if inFlight < Self.mediaDownloadConcurrency {
+                    enqueueNext()
                 }
             }
         }
-        return try store.read(chatId: chatId)
+
+        return try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
     }
 
     func loadChatProfile(chatId: Int64) async throws -> ChatProfile {

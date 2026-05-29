@@ -1395,7 +1395,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 .joined(separator: " ")
             let username = (user["username"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
             let displayName = name.isEmpty ? (username ?? "User") : name
-            let avatarPath = try await resolveUserAvatarPath(user)
+            let avatarPath = try await resolveUserAvatarPath(user, downloadIfMissing: false)
             let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
             userInfoCache[userId] = (
                 name: displayName,
@@ -1756,7 +1756,22 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         )
     }
 
-    private func resolveUserAvatarPath(_ user: [String: Any]) async throws -> String? {
+    private func localCompletedFilePath(from file: [String: Any]) -> String? {
+        guard
+            let local = file["local"] as? [String: Any],
+            (local["is_downloading_completed"] as? Bool) == true,
+            let path = local["path"] as? String,
+            !path.isEmpty
+        else {
+            return nil
+        }
+        return path
+    }
+
+    private func resolveUserAvatarPath(
+        _ user: [String: Any],
+        downloadIfMissing: Bool = true
+    ) async throws -> String? {
         guard
             let profilePhoto = user["profile_photo"] as? [String: Any],
             let file = (profilePhoto["big"] as? [String: Any]) ?? (profilePhoto["small"] as? [String: Any])
@@ -1764,17 +1779,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return nil
         }
 
-        if
-            let local = file["local"] as? [String: Any],
-            let path = local["path"] as? String,
-            !path.isEmpty {
+        if let path = localCompletedFilePath(from: file) {
             return path
         }
 
-        if let fileId = int64Value(file["id"]) {
-            return try await downloadFile(fileId: fileId)
+        guard downloadIfMissing, let fileId = int64Value(file["id"]) else {
+            return nil
         }
-        return nil
+        return try await downloadFile(fileId: fileId)
     }
 
     private func memberRole(_ status: [String: Any]?) -> String? {
@@ -1788,7 +1800,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
-    private func resolveChatAvatarPath(_ chat: [String: Any], preferBig: Bool = false) async throws -> String? {
+    private func resolveChatAvatarPath(
+        _ chat: [String: Any],
+        preferBig: Bool = false,
+        downloadIfMissing: Bool = true
+    ) async throws -> String? {
         guard
             let photo = chat["photo"] as? [String: Any],
             let file = preferredAvatarFile(from: photo, preferBig: preferBig)
@@ -1796,18 +1812,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return nil
         }
 
-        if
-            let local = file["local"] as? [String: Any],
-            let path = local["path"] as? String,
-            !path.isEmpty {
+        if let path = localCompletedFilePath(from: file) {
             return path
         }
 
-        if let fileId = int64Value(file["id"]) {
-            return try await downloadFile(fileId: fileId)
+        guard downloadIfMissing, let fileId = int64Value(file["id"]) else {
+            return nil
         }
-
-        return nil
+        return try await downloadFile(fileId: fileId)
     }
 
     private func preferredAvatarFile(from photo: [String: Any], preferBig: Bool) -> [String: Any]? {
@@ -1862,7 +1874,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         let effectiveTitle = (kind == .savedMessages) ? AppText.tr("Избранное", "Saved Messages") : title
-        let avatarPath: String? = (kind == .savedMessages) ? nil : (try await resolveChatAvatarPath(chat))
+        let avatarPath: String? = (kind == .savedMessages)
+            ? nil
+            : (try await resolveChatAvatarPath(chat, downloadIfMissing: false))
 
         var finalSendInfo = sendInfo
         if isBlockedByMe {

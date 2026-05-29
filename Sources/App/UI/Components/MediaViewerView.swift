@@ -47,13 +47,10 @@ struct MessageAttachmentPreview: View {
             onOpen?()
         } label: {
             ZStack {
-                if let image = attachment.localImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
+                CachedLocalImage(path: attachment.localPath, contentMode: .fill) {
                     loadingPlaceholder(systemImage: "photo", title: "Фото загружается")
                 }
+                .scaledToFill()
             }
             .frame(height: 180)
             .frame(maxWidth: .infinity)
@@ -886,6 +883,36 @@ extension TgAttachment {
     }
 }
 
+struct CachedLocalImage<Placeholder: View>: View {
+    let path: String?
+    var contentMode: ContentMode = .fill
+    @ViewBuilder var placeholder: () -> Placeholder
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: path) {
+            guard let path, !path.isEmpty else {
+                image = nil
+                return
+            }
+            let loaded = await Task.detached(priority: .userInitiated) {
+                LocalImageCache.shared.image(path: path, maxPixelSize: 720)
+            }.value
+            image = loaded
+        }
+    }
+}
+
 final class LocalImageCache {
     static let shared = LocalImageCache()
     private let cache = NSCache<NSString, UIImage>()
@@ -895,18 +922,36 @@ final class LocalImageCache {
         cache.totalCostLimit = 80 * 1024 * 1024
     }
 
-    func image(path: String) -> UIImage? {
-        let key = path as NSString
+    func image(path: String, maxPixelSize: CGFloat? = nil) -> UIImage? {
+        let cacheKey = maxPixelSize.map { "\(path)|\(Int($0))" } ?? path
+        let key = cacheKey as NSString
         if let cached = cache.object(forKey: key) {
             return cached
         }
 
-        guard let image = UIImage(contentsOfFile: path) else {
+        guard var image = UIImage(contentsOfFile: path) else {
             return nil
+        }
+
+        if let maxPixelSize {
+            image = downscaled(image, maxPixelSize: maxPixelSize) ?? image
         }
 
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
         cache.setObject(image, forKey: key, cost: cost)
         return image
+    }
+
+    private func downscaled(_ image: UIImage, maxPixelSize: CGFloat) -> UIImage? {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxPixelSize, longest > 0 else { return image }
+
+        let scale = maxPixelSize / longest
+        let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
     }
 }
