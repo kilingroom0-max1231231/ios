@@ -4,6 +4,51 @@ enum Glass {
     static func fieldBackground() -> some ShapeStyle { .ultraThinMaterial }
 }
 
+extension View {
+    /// Standard iOS 26 Liquid Glass surface with a material fallback on older systems.
+    @ViewBuilder
+    func glassSurface(cornerRadius: CGFloat) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        } else {
+            self.legacyGlassSurface(cornerRadius: cornerRadius)
+        }
+        #else
+        self.legacyGlassSurface(cornerRadius: cornerRadius)
+        #endif
+    }
+
+    private func legacyGlassSurface(cornerRadius: CGFloat) -> some View {
+        background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+            }
+    }
+}
+
+/// Groups Liquid Glass shapes so they blend and morph together on iOS 26.
+/// Falls back to a plain container on older systems.
+struct LiquidGlassGroup<Content: View>: View {
+    var spacing: CGFloat = 12
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content()
+            }
+        } else {
+            content()
+        }
+        #else
+        content()
+        #endif
+    }
+}
+
 public extension View {
     @ViewBuilder
     func applyLiquidGlassIfAvailable(cornerRadius: CGFloat = 18, interactive: Bool = false) -> some View {

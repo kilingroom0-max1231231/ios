@@ -189,26 +189,28 @@ struct MessageActionsOverlay: View {
             maxExpandedReactionsHeight: maxExpandedReactionsHeight
         )
 
-        return ZStack {
-            reactionsPanel(
-                width: layout.panelWidth,
-                maxExpandedHeight: maxExpandedReactionsHeight
-            )
-            .scaleEffect(reactionsScale, anchor: .bottom)
-            .opacity(panelsOpacity)
-            .offset(y: panelsOffset)
-            .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
-
-            highlightedBubble
-                .scaleEffect(bubbleScale)
-                .frame(width: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
-                .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
-
-            actionsMenu(width: layout.panelWidth)
-                .scaleEffect(actionsScale, anchor: .top)
+        return LiquidGlassGroup(spacing: 18) {
+            ZStack {
+                reactionsPanel(
+                    width: layout.panelWidth,
+                    maxExpandedHeight: maxExpandedReactionsHeight
+                )
+                .scaleEffect(reactionsScale, anchor: .bottom)
                 .opacity(panelsOpacity)
-                .offset(y: -panelsOffset)
-                .position(x: layout.panelCenterX, y: layout.actionsCenterY)
+                .offset(y: panelsOffset)
+                .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
+
+                highlightedBubble
+                    .scaleEffect(bubbleScale)
+                    .frame(width: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
+                    .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
+
+                actionsMenu(width: layout.panelWidth)
+                    .scaleEffect(actionsScale, anchor: .top)
+                    .opacity(panelsOpacity)
+                    .offset(y: -panelsOffset)
+                    .position(x: layout.panelCenterX, y: layout.actionsCenterY)
+            }
         }
         .allowsHitTesting(true)
         .animation(panelSpring, value: reactionsExpanded)
@@ -217,20 +219,22 @@ struct MessageActionsOverlay: View {
     private func centeredFallback(size: CGSize, safeTop: CGFloat, safeBottom: CGFloat) -> some View {
         let midY = (safeTop + size.height - safeBottom) / 2
         let fallbackMaxReactionsH = min(152, size.height * 0.22)
-        return VStack(spacing: 12) {
-            reactionsPanel(width: min(size.width - 32, 360), maxExpandedHeight: fallbackMaxReactionsH)
-                .scaleEffect(reactionsScale, anchor: .bottom)
-                .opacity(panelsOpacity)
-                .offset(y: panelsOffset)
-            highlightedBubble
-                .scaleEffect(bubbleScale)
-                .padding(.horizontal, 12)
-            actionsMenu(width: min(size.width - 48, 280))
-                .scaleEffect(actionsScale, anchor: .top)
-                .opacity(panelsOpacity)
-                .offset(y: -panelsOffset)
+        return LiquidGlassGroup(spacing: 18) {
+            VStack(spacing: 12) {
+                reactionsPanel(width: min(size.width - 32, 360), maxExpandedHeight: fallbackMaxReactionsH)
+                    .scaleEffect(reactionsScale, anchor: .bottom)
+                    .opacity(panelsOpacity)
+                    .offset(y: panelsOffset)
+                highlightedBubble
+                    .scaleEffect(bubbleScale)
+                    .padding(.horizontal, 12)
+                actionsMenu(width: min(size.width - 48, 280))
+                    .scaleEffect(actionsScale, anchor: .top)
+                    .opacity(panelsOpacity)
+                    .offset(y: -panelsOffset)
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
         .position(x: size.width / 2, y: midY)
         .animation(panelSpring, value: reactionsExpanded)
     }
@@ -370,11 +374,7 @@ struct MessageActionsOverlay: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: width, height: currentHeight)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-        }
+        .glassSurface(cornerRadius: 26)
         .shadow(color: .black.opacity(0.18), radius: reactionsExpanded ? 14 : 8, y: 6)
     }
 
@@ -440,8 +440,10 @@ struct MessageActionsOverlay: View {
                 }
                 .foregroundStyle(.secondary)
                 .frame(width: 44, height: 44)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.quaternary)
+                }
             } else {
                 Label(
                     AppText.tr("Все реакции (\(pickerItems.count))", "All reactions (\(pickerItems.count))"),
@@ -475,12 +477,12 @@ struct MessageActionsOverlay: View {
             ReactionPickerItemView(item: item, compact: compact)
                 .frame(width: compact ? nil : 44, height: compact ? 40 : 44)
                 .frame(maxWidth: compact ? .infinity : nil)
-                .background(
-                    isChosen
-                        ? AppColors.accent.opacity(0.28)
-                        : Color.white.opacity(0.08)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background {
+                    if isChosen {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(AppColors.accent.opacity(0.28))
+                    }
+                }
         }
         .buttonStyle(.plain)
         .disabled(!canSend)
@@ -593,11 +595,7 @@ struct MessageActionsOverlay: View {
         }
         .padding(.vertical, 4)
         .frame(width: width)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-        }
+        .glassSurface(cornerRadius: 22)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
     }
 
