@@ -62,9 +62,19 @@ struct MessageActionsOverlay: View {
     @State private var bubbleScale: CGFloat = 0.9
     @State private var panelsOpacity: Double = 0
     @State private var panelsOffset: CGFloat = 16
+    @State private var reactionsScale: CGFloat = 0.88
+    @State private var actionsScale: CGFloat = 0.92
+
+    private let collapsedReactionsHeight: CGFloat = 56
+    private let expandedRowHeight: CGFloat = 42
+    private let expandedMaxRowsVisible: CGFloat = 3.5
 
     private var reactionGridColumns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 6), count: reactionsExpanded ? 8 : 6)
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+    }
+
+    private var panelSpring: Animation {
+        .spring(response: 0.36, dampingFraction: 0.82)
     }
 
     private var message: TgMessage {
@@ -104,7 +114,13 @@ struct MessageActionsOverlay: View {
                         messageFrame: frame,
                         containerSize: size,
                         safeTop: safeTop,
-                        safeBottom: safeBottom
+                        safeBottom: safeBottom,
+                        maxExpandedReactionsHeight: maxExpandedReactionsHeight(
+                            messageFrame: frame,
+                            safeTop: safeTop,
+                            containerHeight: size.height,
+                            safeBottom: safeBottom
+                        )
                     )
                 } else {
                     centeredFallback(size: size, safeTop: safeTop, safeBottom: safeBottom)
@@ -124,16 +140,31 @@ struct MessageActionsOverlay: View {
             withAnimation(.spring(response: 0.42, dampingFraction: 0.82).delay(0.04)) {
                 panelsOpacity = 1
                 panelsOffset = 0
+                reactionsScale = 1
+                actionsScale = 1
             }
         }
         .task {
             await vm.loadReactionPicker(for: message)
-            if appSettings.expandReactionPickerByDefault || pickerItems.count > 14 {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    reactionsExpanded = true
-                }
+            if appSettings.expandReactionPickerByDefault, canExpandReactions {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                expandReactionsPanel()
             }
         }
+    }
+
+    private func maxExpandedReactionsHeight(
+        messageFrame: CGRect,
+        safeTop: CGFloat,
+        containerHeight: CGFloat,
+        safeBottom: CGFloat
+    ) -> CGFloat {
+        let gap: CGFloat = 12
+        let spaceAbove = messageFrame.minY - safeTop - gap
+        let spaceBelow = containerHeight - safeBottom - messageFrame.maxY - gap
+        let preferred = expandedMaxRowsVisible * expandedRowHeight + 36
+        let cap = min(spaceAbove, spaceBelow * 0.55, 168)
+        return max(96, min(preferred, cap))
     }
 
     private var backdrop: some View {
@@ -147,20 +178,26 @@ struct MessageActionsOverlay: View {
         messageFrame: CGRect,
         containerSize: CGSize,
         safeTop: CGFloat,
-        safeBottom: CGFloat
+        safeBottom: CGFloat,
+        maxExpandedReactionsHeight: CGFloat
     ) -> some View {
         let layout = overlayLayout(
             messageFrame: messageFrame,
             containerSize: containerSize,
             safeTop: safeTop,
-            safeBottom: safeBottom
+            safeBottom: safeBottom,
+            maxExpandedReactionsHeight: maxExpandedReactionsHeight
         )
 
         return ZStack {
-            reactionsPanel(width: layout.panelWidth)
-                .opacity(panelsOpacity)
-                .offset(y: panelsOffset)
-                .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
+            reactionsPanel(
+                width: layout.panelWidth,
+                maxExpandedHeight: maxExpandedReactionsHeight
+            )
+            .scaleEffect(reactionsScale, anchor: .bottom)
+            .opacity(panelsOpacity)
+            .offset(y: panelsOffset)
+            .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
 
             highlightedBubble
                 .scaleEffect(bubbleScale)
@@ -168,28 +205,34 @@ struct MessageActionsOverlay: View {
                 .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
             actionsMenu(width: layout.panelWidth)
+                .scaleEffect(actionsScale, anchor: .top)
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
                 .position(x: layout.panelCenterX, y: layout.actionsCenterY)
         }
         .allowsHitTesting(true)
+        .animation(panelSpring, value: reactionsExpanded)
     }
 
     private func centeredFallback(size: CGSize, safeTop: CGFloat, safeBottom: CGFloat) -> some View {
         let midY = (safeTop + size.height - safeBottom) / 2
+        let fallbackMaxReactionsH = min(152, size.height * 0.22)
         return VStack(spacing: 12) {
-            reactionsPanel(width: min(size.width - 32, 360))
+            reactionsPanel(width: min(size.width - 32, 360), maxExpandedHeight: fallbackMaxReactionsH)
+                .scaleEffect(reactionsScale, anchor: .bottom)
                 .opacity(panelsOpacity)
                 .offset(y: panelsOffset)
             highlightedBubble
                 .scaleEffect(bubbleScale)
                 .padding(.horizontal, 12)
             actionsMenu(width: min(size.width - 48, 280))
+                .scaleEffect(actionsScale, anchor: .top)
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
         }
         .frame(maxWidth: .infinity)
         .position(x: size.width / 2, y: midY)
+        .animation(panelSpring, value: reactionsExpanded)
     }
 
     private struct OverlayLayout {
@@ -205,20 +248,20 @@ struct MessageActionsOverlay: View {
         messageFrame: CGRect,
         containerSize: CGSize,
         safeTop: CGFloat,
-        safeBottom: CGFloat
+        safeBottom: CGFloat,
+        maxExpandedReactionsHeight: CGFloat
     ) -> OverlayLayout {
         let panelWidth = min(containerSize.width - 24, 360)
-        let reactionsH = reactionsPanelHeight
+        let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
         let actionsH = actionsMenuHeight
         let gap: CGFloat = 10
 
         let bubbleCenterX = messageFrame.midX
         var bubbleCenterY = messageFrame.midY
+        let bubbleHalf = messageFrame.height / 2
 
         let contentTop = safeTop + 8 + reactionsH + gap
         let contentBottom = containerSize.height - safeBottom - 8 - actionsH - gap
-
-        let bubbleHalf = messageFrame.height / 2
         let minBubbleY = contentTop + bubbleHalf
         let maxBubbleY = contentBottom - bubbleHalf
         if minBubbleY <= maxBubbleY {
@@ -236,7 +279,16 @@ struct MessageActionsOverlay: View {
             return max(inset + half, min(containerSize.width - inset - half, messageFrame.minX + half))
         }()
 
-        let reactionsCenterY = bubbleCenterY - bubbleHalf - gap - reactionsH / 2
+        // Anchor reactions panel bottom edge just above the message bubble.
+        var reactionsBottom = bubbleCenterY - bubbleHalf - gap
+        var reactionsCenterY = reactionsBottom - reactionsH / 2
+        let minReactionsTop = safeTop + 10
+        let reactionsTop = reactionsCenterY - reactionsH / 2
+        if reactionsTop < minReactionsTop {
+            reactionsCenterY = minReactionsTop + reactionsH / 2
+            reactionsBottom = reactionsCenterY + reactionsH / 2
+        }
+
         let actionsCenterY = bubbleCenterY + bubbleHalf + gap + actionsH / 2
 
         return OverlayLayout(
@@ -249,14 +301,15 @@ struct MessageActionsOverlay: View {
         )
     }
 
-    private var reactionsPanelHeight: CGFloat {
+    private func reactionsPanelHeight(maxExpandedHeight: CGFloat) -> CGFloat {
         if reactionsExpanded {
-            let columns = 8.0
+            let columns = 7.0
             let rows = ceil(Double(pickerItems.count) / columns)
-            let scrollHeight = min(260, 44 + rows * 44)
-            return scrollHeight + (canExpandReactions ? 32 : 8)
+            let contentHeight = rows * expandedRowHeight
+            let scrollHeight = min(maxExpandedHeight - 28, contentHeight)
+            return min(maxExpandedHeight, scrollHeight + 28)
         }
-        return 60
+        return collapsedReactionsHeight
     }
 
     private var actionsMenuHeight: CGFloat {
@@ -275,56 +328,108 @@ struct MessageActionsOverlay: View {
         .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
     }
 
-    private func reactionsPanel(width: CGFloat) -> some View {
-        VStack(spacing: 6) {
-            if reactionsExpanded {
-                ScrollView {
-                    LazyVGrid(columns: reactionGridColumns, spacing: 6) {
-                        ForEach(pickerItems) { item in
-                            reactionButton(item: item, compact: true)
-                        }
-                    }
-                    .padding(.horizontal, 2)
-                }
-                .frame(maxHeight: 260)
+    private func reactionsPanel(width: CGFloat, maxExpandedHeight: CGFloat) -> some View {
+        let expandedHeight = reactionsPanelHeight(maxExpandedHeight: maxExpandedHeight)
+        let currentHeight = reactionsExpanded ? expandedHeight : collapsedReactionsHeight
 
-                if canExpandReactions {
+        return VStack(spacing: 6) {
+            ZStack(alignment: .bottom) {
+                if !reactionsExpanded {
+                    compactReactionsStrip
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.85, anchor: .bottom).combined(with: .opacity),
+                                removal: .scale(scale: 0.9, anchor: .bottom).combined(with: .opacity)
+                            )
+                        )
+                }
+
+                if reactionsExpanded {
+                    expandedReactionsGrid(maxHeight: maxExpandedHeight - 30)
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.88, anchor: .bottom).combined(with: .opacity),
+                                removal: .scale(scale: 0.92, anchor: .bottom).combined(with: .opacity)
+                            )
+                        )
+                }
+            }
+            .frame(height: reactionsExpanded ? expandedHeight - (canExpandReactions ? 26 : 0) : collapsedReactionsHeight - 4)
+            .clipped()
+
+            if canExpandReactions {
+                if reactionsExpanded {
                     collapseReactionsButton
-                }
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(pickerItems) { item in
-                            reactionButton(item: item, compact: false)
-                        }
-                        if canExpandReactions {
-                            expandReactionsButton(compact: true)
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-
-                if canExpandReactions {
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
                     expandReactionsButton(compact: false)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: width)
+        .frame(width: width, height: currentHeight)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
         }
+        .shadow(color: .black.opacity(0.18), radius: reactionsExpanded ? 14 : 8, y: 6)
+    }
+
+    private var compactReactionsStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(pickerItems) { item in
+                    reactionButton(item: item, compact: false)
+                }
+                if canExpandReactions {
+                    expandReactionsButton(compact: true)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    private func expandedReactionsGrid(maxHeight: CGFloat) -> some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            LazyVGrid(columns: reactionGridColumns, spacing: 6) {
+                ForEach(Array(pickerItems.enumerated()), id: \.element.id) { index, item in
+                    reactionButton(item: item, compact: true)
+                        .opacity(panelsOpacity)
+                        .scaleEffect(panelsOpacity)
+                        .animation(
+                            panelSpring.delay(0.02 * Double(min(index, 12))),
+                            value: reactionsExpanded
+                        )
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
+        .frame(maxHeight: max(72, maxHeight))
+    }
+
+    private func expandReactionsPanel() {
+        appSettings.reactionHaptic(.light)
+        withAnimation(panelSpring) {
+            reactionsExpanded = true
+            reactionsScale = 1
+        }
+    }
+
+    private func collapseReactionsPanel() {
+        appSettings.reactionHaptic(.light)
+        withAnimation(panelSpring) {
+            reactionsExpanded = false
+            reactionsScale = 1
+        }
     }
 
     private func expandReactionsButton(compact: Bool) -> some View {
         Button {
-            appSettings.reactionHaptic(.light)
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
-                reactionsExpanded = true
-            }
+            expandReactionsPanel()
         } label: {
             if compact {
                 VStack(spacing: 2) {
@@ -351,10 +456,7 @@ struct MessageActionsOverlay: View {
 
     private var collapseReactionsButton: some View {
         Button {
-            appSettings.reactionHaptic(.light)
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
-                reactionsExpanded = false
-            }
+            collapseReactionsPanel()
         } label: {
             Label(AppText.tr("Свернуть", "Collapse"), systemImage: "chevron.up")
                 .font(.caption.weight(.semibold))
@@ -382,6 +484,8 @@ struct MessageActionsOverlay: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSend)
+        .scaleEffect(isChosen ? 1.08 : 1)
+        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isChosen)
     }
 
     private struct ActionItem: Identifiable {
@@ -499,13 +603,16 @@ struct MessageActionsOverlay: View {
 
     private func dismiss() {
         appSettings.reactionHaptic(.light)
-        withAnimation(.easeIn(duration: 0.18)) {
+        withAnimation(.easeIn(duration: 0.2)) {
             backdropOpacity = 0
             panelsOpacity = 0
-            panelsOffset = 10
-            bubbleScale = 0.94
+            panelsOffset = 12
+            bubbleScale = 0.92
+            reactionsScale = 0.86
+            actionsScale = 0.9
+            reactionsExpanded = false
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
             onDismiss()
         }
     }
