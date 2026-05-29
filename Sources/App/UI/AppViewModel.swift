@@ -64,6 +64,8 @@ final class AppViewModel: ObservableObject {
     @Published var isUserProfileExtrasLoading = false
     @Published var isSwitchingAccount = false
     @Published private(set) var chatMediaGeneration = 0
+    @Published var stickerSearchResults: [TgSticker] = []
+    @Published var isStickerSearchLoading = false
 
     private var repository: TelegramRepository?
     private var messagesReloadTasks: [Int64: Task<Void, Never>] = [:]
@@ -757,10 +759,118 @@ final class AppViewModel: ObservableObject {
             }
             composeText = ""
             replyingToMessageId = nil
+            await refreshMessages(force: true)
             await refreshChats()
         } catch {
             status = error.localizedDescription
         }
+    }
+
+    func sendOutgoingMedia(_ media: OutgoingMediaFile) async {
+        guard let repository, let chatId = selectedChatId else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let replyId = replyingToMessageId
+        do {
+            let path = try media.copyToUploadsDirectory().path
+            switch media {
+            case .photo:
+                try await repository.sendPhoto(chatId: chatId, localPath: path, caption: nil, replyToMessageId: replyId)
+            case .document(let url, let fileName, let mimeType):
+                try await repository.sendDocument(
+                    chatId: chatId,
+                    localPath: path,
+                    fileName: fileName,
+                    mimeType: mimeType,
+                    caption: nil,
+                    replyToMessageId: replyId
+                )
+                _ = url
+            case .voice(_, let duration, let waveform):
+                try await repository.sendVoiceNote(
+                    chatId: chatId,
+                    localPath: path,
+                    duration: duration,
+                    waveform: waveform,
+                    replyToMessageId: replyId
+                )
+            case .videoNote(_, let duration):
+                try await repository.sendVideoNote(chatId: chatId, localPath: path, duration: duration, replyToMessageId: replyId)
+            }
+            replyingToMessageId = nil
+            await refreshMessages(force: true)
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func sendSticker(_ sticker: TgSticker) async {
+        guard let repository, let chatId = selectedChatId else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.sendSticker(
+                chatId: chatId,
+                stickerFileId: sticker.fileId,
+                replyToMessageId: replyingToMessageId
+            )
+            replyingToMessageId = nil
+            await refreshMessages(force: true)
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func addReaction(to message: TgMessage, emoji: String) async {
+        guard let repository, let chatId = selectedChatId else { return }
+        do {
+            try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: emoji)
+            await refreshMessages(force: false)
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func loadDefaultStickers() async {
+        await searchStickers(query: "😀")
+    }
+
+    func searchStickers(query: String) async {
+        guard let repository else { return }
+        isStickerSearchLoading = true
+        defer { isStickerSearchLoading = false }
+        do {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            stickerSearchResults = try await repository.searchStickers(query: trimmed.isEmpty ? "😀" : trimmed, limit: 32)
+        } catch {
+            if stickerSearchResults.isEmpty {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    func createGroup(title: String, description: String, memberUserIds: [Int64]) async throws -> Int64 {
+        guard let repository else { throw NSError(domain: "App", code: -1) }
+        let desc = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try await repository.createGroup(title: title, memberUserIds: memberUserIds, description: desc.isEmpty ? nil : desc)
+    }
+
+    func createChannel(title: String, description: String) async throws -> Int64 {
+        guard let repository else { throw NSError(domain: "App", code: -1) }
+        let desc = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try await repository.createChannel(title: title, description: desc.isEmpty ? nil : desc)
+    }
+
+    func openChatByUsername(_ username: String) async throws -> Int64 {
+        guard let repository else { throw NSError(domain: "App", code: -1) }
+        return try await repository.openChatByUsername(username)
+    }
+
+    func joinChatByInviteLink(_ link: String) async throws -> Int64 {
+        guard let repository else { throw NSError(domain: "App", code: -1) }
+        return try await repository.joinByInviteLink(link)
     }
 
     func startEditing(_ message: TgMessage) {

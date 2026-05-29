@@ -14,6 +14,7 @@ struct MessageBubbleView: View {
     var onOpenAttachment: ((TgAttachment) -> Void)?
     var onPremiumSticker: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
+    var onReact: (() -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
@@ -212,6 +213,9 @@ struct MessageBubbleView: View {
             }
             if let onReply {
                 Button(AppText.tr("Ответить", "Reply")) { onReply() }
+            }
+            if let onReact {
+                Button(AppText.tr("Реакция", "React")) { onReact() }
             }
             if let onForward {
                 Button(AppText.tr("Переслать", "Forward")) { onForward() }

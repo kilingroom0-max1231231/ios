@@ -129,8 +129,11 @@ struct PremiumUpsellSheet: View {
         } else if context.previewPath != nil || context.previewAnimationPath != nil {
             StickerMediaView(
                 displayPath: context.previewPath,
-                animationPath: context.previewAnimationPath,
-                isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false,
+                animationPath: context.previewAnimationPath ?? context.previewPath,
+                isAnimated: context.previewAnimationPath != nil
+                    || TGSFileLoader.isTGSPath(context.previewPath)
+                    || (context.previewPath.map(StickerMediaView.isPlayableVideoPath) ?? false),
+                playbackMode: .animated,
                 maxSide: 140
             )
             .frame(maxWidth: .infinity)
@@ -152,7 +155,10 @@ struct PremiumUpsellSheet: View {
                 StickerMediaView(
                     displayPath: badgePath,
                     animationPath: context.previewAnimationPath ?? badgePath,
-                    isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false,
+                    isAnimated: context.previewAnimationPath != nil
+                        || TGSFileLoader.isTGSPath(badgePath)
+                        || StickerMediaView.isPlayableVideoPath(badgePath),
+                    playbackMode: .animated,
                     maxSide: 52
                 )
                 .frame(width: 52, height: 52)

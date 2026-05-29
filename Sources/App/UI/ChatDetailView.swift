@@ -1,5 +1,12 @@
+import AVFoundation
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
+
+private struct ReactionTarget: Identifiable {
+    let message: TgMessage
+    var id: Int64 { message.id }
+}
 
 struct ChatDetailView: View {
     @ObservedObject var vm: AppViewModel
@@ -12,6 +19,16 @@ struct ChatDetailView: View {
     @State private var didInitialScrollToBottom = false
     @State private var isPinnedToBottom = true
     @State private var premiumUpsellContext: PremiumUpsellContext?
+    @State private var showAttachmentMenu = false
+    @State private var showPhotoPicker = false
+    @State private var showDocumentPicker = false
+    @State private var showStickerPicker = false
+    @State private var showVideoNoteCamera = false
+    @State private var reactionTarget: ReactionTarget?
+    @StateObject private var voiceRecorder = VoiceNoteRecorder()
+    @State private var isMicPressing = false
+
+    private let quickReactionEmojis = ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏"]
 
     private enum ChatScrollAnchor {
         static let bottom = "chat-scroll-bottom"
@@ -149,6 +166,64 @@ struct ChatDetailView: View {
         }
         .sheet(item: $premiumUpsellContext) { context in
             PremiumUpsellSheet(context: context)
+        }
+        .sheet(isPresented: $showAttachmentMenu) {
+            ChatAttachmentMenu(
+                onPhoto: {
+                    showAttachmentMenu = false
+                    showPhotoPicker = true
+                },
+                onFile: {
+                    showAttachmentMenu = false
+                    showDocumentPicker = true
+                },
+                onSticker: {
+                    showAttachmentMenu = false
+                    showStickerPicker = true
+                }
+            )
+        }
+        .sheet(isPresented: $showPhotoPicker) {
+            PhotoLibraryPicker { data in
+                Task {
+                    if let url = try? MediaFileImporter.persistPhotoData(data) {
+                        await vm.sendOutgoingMedia(.photo(url))
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showDocumentPicker) {
+            DocumentPicker { url in
+                Task {
+                    if let persisted = try? MediaFileImporter.persistPickedFile(url) {
+                        let name = url.lastPathComponent
+                        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                        await vm.sendOutgoingMedia(.document(persisted, fileName: name, mimeType: mime))
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showStickerPicker) {
+            StickerPickerView(vm: vm) { sticker in
+                Task { await vm.sendSticker(sticker) }
+            }
+        }
+        .fullScreenCover(isPresented: $showVideoNoteCamera) {
+            VideoNoteCameraPicker { url in
+                Task {
+                    let asset = AVURLAsset(url: url)
+                    let duration = max(1, Int(CMTimeGetSeconds(asset.duration)))
+                    if let persisted = try? MediaFileImporter.persistPickedFile(url) {
+                        await vm.sendOutgoingMedia(.videoNote(persisted, duration: duration))
+                    }
+                }
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(item: $reactionTarget) { target in
+            MessageReactionPicker(emojis: quickReactionEmojis) { emoji in
+                Task { await vm.addReaction(to: target.message, emoji: emoji) }
+            }
         }
         .sheet(item: $forwardingMessage) { message in
             NavigationStack {
@@ -386,6 +461,9 @@ struct ChatDetailView: View {
                         vm.startReply(message)
                         isComposerFocused = true
                     } : nil,
+                    onReact: {
+                        reactionTarget = ReactionTarget(message: message)
+                    },
                     onForward: {
                         forwardingMessage = message
                     },
@@ -524,36 +602,93 @@ struct ChatDetailView: View {
 
     private var composerBar: some View {
         VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 8) {
-                composerSideButton(systemName: "paperclip") {
-                    // Attachment picker — later
-                }
-                .opacity(canSend ? 1 : 0.4)
-                .disabled(!canSend)
-
-                messageInputIsland
-
-                if vm.editingMessageId != nil {
-                    composerSideButton(systemName: "xmark") {
-                        vm.cancelEditing()
-                        isComposerFocused = false
+            if voiceRecorder.isRecording {
+                VoiceRecordingOverlay(
+                    recorder: voiceRecorder,
+                    onCancel: {
+                        voiceRecorder.cancel()
+                    },
+                    onSend: {
+                        Task {
+                            guard let result = voiceRecorder.stop() else { return }
+                            await vm.sendOutgoingMedia(.voice(result.url, duration: result.duration, waveform: result.waveform))
+                        }
                     }
-                    .disabled(vm.isBusy)
-                    sendIslandButton
-                } else if isComposeTextEmpty {
-                    composerSideButton(systemName: "mic.fill") {
-                        // Voice message — later
+                )
+            } else {
+                HStack(alignment: .bottom, spacing: 8) {
+                    composerSideButton(systemName: "paperclip") {
+                        showAttachmentMenu = true
                     }
                     .opacity(canSend ? 1 : 0.4)
                     .disabled(!canSend)
-                } else {
-                    sendIslandButton
+
+                    messageInputIsland
+
+                    if vm.editingMessageId != nil {
+                        composerSideButton(systemName: "xmark") {
+                            vm.cancelEditing()
+                            isComposerFocused = false
+                        }
+                        .disabled(vm.isBusy)
+                        sendIslandButton
+                    } else if isComposeTextEmpty {
+                        micButton
+                    } else {
+                        sendIslandButton
+                    }
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    private var micButton: some View {
+        Image(systemName: "mic.fill")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .background(.ultraThinMaterial, in: Circle())
+            .opacity(canSend ? 1 : 0.4)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard canSend, !voiceRecorder.isRecording else { return }
+                        if !isMicPressing {
+                            isMicPressing = true
+                            Task {
+                                guard await voiceRecorder.requestPermission() else {
+                                    vm.status = AppText.tr("Нет доступа к микрофону", "Microphone access denied")
+                                    return
+                                }
+                                try? voiceRecorder.start()
+                            }
+                        }
+                    }
+                    .onEnded { value in
+                        isMicPressing = false
+                        guard voiceRecorder.isRecording else { return }
+                        if value.translation.height < -80 {
+                            showVideoNoteCamera = true
+                            voiceRecorder.cancel()
+                        } else if let result = voiceRecorder.stop() {
+                            Task {
+                                await vm.sendOutgoingMedia(.voice(result.url, duration: result.duration, waveform: result.waveform))
+                            }
+                        } else {
+                            voiceRecorder.cancel()
+                        }
+                    }
+            )
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.35).onEnded { _ in
+                    guard canSend else { return }
+                    showVideoNoteCamera = true
+                }
+            )
+            .disabled(!canSend)
     }
 
     private var messageInputIsland: some View {

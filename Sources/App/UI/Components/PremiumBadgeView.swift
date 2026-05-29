@@ -26,8 +26,8 @@ struct PremiumBadgeView: View {
             StickerMediaView(
                 displayPath: imagePath,
                 animationPath: animatedStickerPath,
-                isAnimated: StickerMediaView.isPlayableVideoPath(imagePath),
-                playbackMode: size <= 18 ? .staticPreview : .animated,
+                isAnimated: animatedStickerPath != nil,
+                playbackMode: .animated,
                 maxSide: size * 1.35
             )
             .frame(width: size, height: size)

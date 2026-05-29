@@ -12,6 +12,7 @@ struct ChatListView: View {
     @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
     @State private var navigationPath = NavigationPath()
+    @State private var showNewConversation = false
 
     private var isArchiveMode: Bool { mode == .archive }
     private var listKind: TgChatListKind { isArchiveMode ? .archive : vm.mainListKind }
@@ -103,11 +104,25 @@ struct ChatListView: View {
                 .buttonStyle(.plain)
             }
 
+            if !isArchiveMode {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showNewConversation = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .accessibilityLabel(AppText.tr("Новый чат", "New chat"))
+                }
+            }
+
             if !visiblePinnedChats.isEmpty && vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     EditButton()
                 }
             }
+        }
+        .sheet(isPresented: $showNewConversation) {
+            NewConversationView(vm: vm)
         }
         .sheet(isPresented: peekSheetPresented) {
             if let chatId = vm.peekChatId {

@@ -936,8 +936,8 @@ final class LocalImageCache {
     private let cache = NSCache<NSString, UIImage>()
 
     private init() {
-        cache.countLimit = 72
-        cache.totalCostLimit = 48 * 1024 * 1024
+        cache.countLimit = 48
+        cache.totalCostLimit = 32 * 1024 * 1024
     }
 
     func image(path: String, maxPixelSize: CGFloat? = nil) -> UIImage? {

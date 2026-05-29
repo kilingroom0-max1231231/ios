@@ -58,8 +58,12 @@ struct StickerMediaView: View {
 
     @ViewBuilder
     private var staticPreviewContent: some View {
-        CachedLocalImage(path: staticRasterPath, contentMode: .fit) {
-            loadingPlaceholder
+        if let tgsPath {
+            LottieStickerView(tgsPath: tgsPath, maxSide: maxSide ?? 96, isPlaying: false)
+        } else {
+            CachedLocalImage(path: staticRasterPath, contentMode: .fit) {
+                loadingPlaceholder
+            }
         }
     }
 
@@ -99,15 +103,8 @@ struct StickerMediaView: View {
     }
 
     private var loadingPlaceholder: some View {
-        Image(systemName: "gift.fill")
-            .font(.title)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [AppColors.accent, .pink.opacity(0.85)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+        ProgressView()
+            .scaleEffect(0.75)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -123,9 +120,8 @@ struct LoopingVideoStickerView: View {
         Group {
             if playbackFailed {
                 CachedLocalImage(path: fallbackPath ?? url?.path, contentMode: .fit) {
-                    Image(systemName: "gift.fill")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
+                    ProgressView()
+                        .scaleEffect(0.75)
                 }
             } else if let player {
                 VideoPlayer(player: player)

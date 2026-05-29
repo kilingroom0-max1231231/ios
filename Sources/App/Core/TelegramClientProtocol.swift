@@ -18,6 +18,18 @@ protocol TelegramClientProtocol {
     func enrichMessages(_ messages: [TgMessage]) async throws -> [TgMessage]
     func forwardMessages(fromChatId: Int64, toChatId: Int64, messageIds: [Int64]) async throws
     func sendMessage(chatId: Int64, text: String, replyToMessageId: Int64?) async throws
+    func sendPhoto(chatId: Int64, localPath: String, caption: String?, replyToMessageId: Int64?) async throws
+    func sendDocument(chatId: Int64, localPath: String, fileName: String?, mimeType: String?, caption: String?, replyToMessageId: Int64?) async throws
+    func sendVoiceNote(chatId: Int64, localPath: String, duration: Int, waveform: [Int], replyToMessageId: Int64?) async throws
+    func sendVideoNote(chatId: Int64, localPath: String, duration: Int, length: Int, replyToMessageId: Int64?) async throws
+    func sendSticker(chatId: Int64, stickerFileId: Int64, replyToMessageId: Int64?) async throws
+    func searchStickerSets(query: String, limit: Int) async throws -> [TgSticker]
+    func addMessageReaction(chatId: Int64, messageId: Int64, emoji: String) async throws
+    func createNewSupergroupChat(title: String, isChannel: Bool, description: String?) async throws -> Int64
+    func addChatMembers(chatId: Int64, userIds: [Int64]) async throws
+    func openPrivateChat(userId: Int64) async throws -> Int64
+    func searchPublicChat(username: String) async throws -> TgChat?
+    func joinChatByInviteLink(_ inviteLink: String) async throws -> Int64
     func editMessage(chatId: Int64, messageId: Int64, text: String) async throws
     func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws
     func downloadFile(fileId: Int64) async throws -> String?
@@ -55,6 +67,7 @@ protocol TelegramClientProtocol {
     func fetchContacts() async throws -> [TgContact]
     func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
     func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat]
+    func enrichChatsWithPremiumBadges(_ chats: [TgChat]) async throws -> [TgChat]
     func registerPushDevice(token: Data, sandbox: Bool) async throws
     func processPushNotification() async
 }

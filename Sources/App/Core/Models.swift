@@ -450,6 +450,16 @@ struct TgStoryItem: Identifiable, Equatable {
     let isViewed: Bool
 }
 
+struct TgSticker: Identifiable, Equatable {
+    let fileId: Int64
+    let emoji: String
+    let displayPath: String?
+    let animationPath: String?
+    let isAnimated: Bool
+
+    var id: Int64 { fileId }
+}
+
 struct TgGiftItem: Identifiable, Equatable {
     let id: String
     let title: String

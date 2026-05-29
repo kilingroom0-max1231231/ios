@@ -105,10 +105,11 @@ final class TelegramRepository {
     func loadChats(list: TgChatListKind = .main, limit: Int = 80) async throws -> [TgChat] {
         let remote = try await client.fetchChats(list: list, limit: limit)
         let withAvatars = try await client.enrichChatsWithAvatarPaths(remote)
+        let enriched = try await client.enrichChatsWithPremiumBadges(withAvatars)
         if list == .main {
-            try? chatStore.write(chats: withAvatars)
+            try? chatStore.write(chats: enriched)
         }
-        return withAvatars
+        return enriched
     }
 
     func loadArchivedChats(limit: Int = 80) async throws -> [TgChat] {
@@ -246,6 +247,61 @@ final class TelegramRepository {
         try await client.sendMessage(chatId: chatId, text: text, replyToMessageId: replyToMessageId)
     }
 
+    func sendPhoto(chatId: Int64, localPath: String, caption: String?, replyToMessageId: Int64?) async throws {
+        try await client.sendPhoto(chatId: chatId, localPath: localPath, caption: caption, replyToMessageId: replyToMessageId)
+    }
+
+    func sendDocument(chatId: Int64, localPath: String, fileName: String?, mimeType: String?, caption: String?, replyToMessageId: Int64?) async throws {
+        try await client.sendDocument(chatId: chatId, localPath: localPath, fileName: fileName, mimeType: mimeType, caption: caption, replyToMessageId: replyToMessageId)
+    }
+
+    func sendVoiceNote(chatId: Int64, localPath: String, duration: Int, waveform: [Int], replyToMessageId: Int64?) async throws {
+        try await client.sendVoiceNote(chatId: chatId, localPath: localPath, duration: duration, waveform: waveform, replyToMessageId: replyToMessageId)
+    }
+
+    func sendVideoNote(chatId: Int64, localPath: String, duration: Int, replyToMessageId: Int64?) async throws {
+        try await client.sendVideoNote(chatId: chatId, localPath: localPath, duration: duration, length: 480, replyToMessageId: replyToMessageId)
+    }
+
+    func sendSticker(chatId: Int64, stickerFileId: Int64, replyToMessageId: Int64?) async throws {
+        try await client.sendSticker(chatId: chatId, stickerFileId: stickerFileId, replyToMessageId: replyToMessageId)
+    }
+
+    func searchStickers(query: String, limit: Int = 24) async throws -> [TgSticker] {
+        try await client.searchStickerSets(query: query, limit: limit)
+    }
+
+    func addReaction(chatId: Int64, messageId: Int64, emoji: String) async throws {
+        try await client.addMessageReaction(chatId: chatId, messageId: messageId, emoji: emoji)
+    }
+
+    func createGroup(title: String, memberUserIds: [Int64], description: String?) async throws -> Int64 {
+        let chatId = try await client.createNewSupergroupChat(title: title, isChannel: false, description: description)
+        if !memberUserIds.isEmpty {
+            try await client.addChatMembers(chatId: chatId, userIds: memberUserIds)
+        }
+        return chatId
+    }
+
+    func createChannel(title: String, description: String?) async throws -> Int64 {
+        try await client.createNewSupergroupChat(title: title, isChannel: true, description: description)
+    }
+
+    func openPrivateChat(userId: Int64) async throws -> Int64 {
+        try await client.openPrivateChat(userId: userId)
+    }
+
+    func openChatByUsername(_ username: String) async throws -> Int64 {
+        guard let chat = try await client.searchPublicChat(username: username) else {
+            throw NSError(domain: "TelegramRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not found"])
+        }
+        return chat.id
+    }
+
+    func joinByInviteLink(_ link: String) async throws -> Int64 {
+        try await client.joinChatByInviteLink(link)
+    }
+
     func edit(chatId: Int64, messageId: Int64, text: String) async throws {
         try await client.editMessage(chatId: chatId, messageId: messageId, text: text)
     }
@@ -338,8 +394,8 @@ final class TelegramRepository {
         try await client.setName(firstName: firstName, lastName: lastName)
     }
 
-    static let mediaDownloadRecentMessageLimit = 36
-    static let mediaDownloadConcurrency = 3
+    static let mediaDownloadRecentMessageLimit = 24
+    static let mediaDownloadConcurrency = 2
 
     func downloadMedia(
         chatId: Int64,

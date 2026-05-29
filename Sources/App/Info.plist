@@ -37,7 +37,11 @@
         <string>UIInterfaceOrientationPortrait</string>
     </array>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Выбор изображения для обоев чата.</string>
+    <string>Отправка фото в чатах и выбор обоев.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Запись голосовых сообщений и видеокружков.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Запись видеокружков и съёмка для чатов.</string>
     <key>NSContactsUsageDescription</key>
     <string>Синхронизация контактов телефона с Telegram, чтобы находить друзей в приложении.</string>
     <key>NSUserNotificationsUsageDescription</key>
