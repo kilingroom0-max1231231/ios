@@ -298,61 +298,63 @@ struct ChatDetailView: View {
 
     @ViewBuilder
     private func messageRow(for message: TgMessage, replyPreview: String?) -> some View {
-        if isServiceMessage(message) {
-            Text(message.text)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 26)
-                .padding(.vertical, 4)
-            return
-        }
+        Group {
+            if isServiceMessage(message) {
+                Text(message.text)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 26)
+                    .padding(.vertical, 4)
+            } else {
+                let bubble = MessageBubbleView(
+                    message: message,
+                    chatKind: selectedChat?.kind ?? .unknown,
+                    peerAvatarPath: selectedChat?.avatarPath,
+                    peerTitle: selectedChat?.title,
+                    replyPreviewText: replyPreview,
+                    onOpenAttachment: { attachment in
+                        let attachments = mediaAttachments
+                        if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                            mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                        } else {
+                            mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                        }
+                    },
+                    onReply: canSend ? {
+                        vm.startReply(message)
+                        isComposerFocused = true
+                    } : nil,
+                    onForward: {
+                        forwardingMessage = message
+                    },
+                    onEdit: {
+                        vm.startEditing(message)
+                        isComposerFocused = true
+                    },
+                    onDelete: { revoke in
+                        Task { await vm.deleteMyMessage(message, revoke: revoke) }
+                    }
+                )
 
-        let bubble = MessageBubbleView(
-            message: message,
-            chatKind: selectedChat?.kind ?? .unknown,
-            peerAvatarPath: selectedChat?.avatarPath,
-            peerTitle: selectedChat?.title,
-            replyPreviewText: replyPreview,
-            onOpenAttachment: { attachment in
-                let attachments = mediaAttachments
-                if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
-                    mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                let swipe = swipeSettings.primaryAction
+                if swipe != .off,
+                   let handler = swipeActionHandler(for: message, action: swipe) {
+                    SwipeableMessageRow(
+                        actionIcon: swipe.systemImage,
+                        actionColor: swipe.accentColor,
+                        onSwipe: handler
+                    ) {
+                        bubble
+                    }
                 } else {
-                    mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                    bubble
                 }
-            },
-            onReply: canSend ? {
-                vm.startReply(message)
-                isComposerFocused = true
-            } : nil,
-            onForward: {
-                forwardingMessage = message
-            },
-            onEdit: {
-                vm.startEditing(message)
-                isComposerFocused = true
-            },
-            onDelete: { revoke in
-                Task { await vm.deleteMyMessage(message, revoke: revoke) }
             }
-        )
-
-        if let swipe = swipeSettings.primaryAction, swipe != .off,
-           let handler = swipeActionHandler(for: message, action: swipe) {
-            SwipeableMessageRow(
-                actionIcon: swipe.systemImage,
-                actionColor: swipe.accentColor,
-                onSwipe: handler
-            ) {
-                bubble
-            }
-        } else {
-            bubble
         }
     }
 

@@ -33,7 +33,7 @@ enum MessageSwipeAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    var accentColor: Color {
+    @MainActor var accentColor: Color {
         switch self {
         case .off: return .secondary
         case .reply: return AppColors.accent
@@ -53,12 +53,12 @@ final class MessageSwipeSettingsStore: ObservableObject {
         didSet { persist() }
     }
 
-    private let primaryKey = "messageSwipe.primaryAction"
-    private let legacyOrderKey = "messageSwipe.actionOrder"
-    private let legacyDisabledKey = "messageSwipe.disabled"
+    private static let primaryKey = "messageSwipe.primaryAction"
+    private static let legacyOrderKey = "messageSwipe.actionOrder"
+    private static let legacyDisabledKey = "messageSwipe.disabled"
 
     private init() {
-        if let raw = UserDefaults.standard.string(forKey: primaryKey),
+        if let raw = UserDefaults.standard.string(forKey: Self.primaryKey),
            let action = MessageSwipeAction(rawValue: raw) {
             primaryAction = action
         } else {
@@ -71,9 +71,9 @@ final class MessageSwipeSettingsStore: ObservableObject {
     }
 
     private static func migrateLegacyAction() -> MessageSwipeAction? {
-        guard let order = UserDefaults.standard.stringArray(forKey: legacyOrderKey) else { return nil }
+        guard let order = UserDefaults.standard.stringArray(forKey: Self.legacyOrderKey) else { return nil }
         let disabled = Set(
-            (UserDefaults.standard.stringArray(forKey: legacyDisabledKey) ?? [])
+            (UserDefaults.standard.stringArray(forKey: Self.legacyDisabledKey) ?? [])
                 .compactMap(MessageSwipeAction.init(rawValue:))
         )
         let enabled = order.compactMap(MessageSwipeAction.init(rawValue:)).filter { !disabled.contains($0) }
@@ -81,6 +81,6 @@ final class MessageSwipeSettingsStore: ObservableObject {
     }
 
     private func persist() {
-        UserDefaults.standard.set(primaryAction.rawValue, forKey: primaryKey)
+        UserDefaults.standard.set(primaryAction.rawValue, forKey: Self.primaryKey)
     }
 }
