@@ -355,6 +355,33 @@ struct TgGiftItem: Identifiable, Equatable {
     let title: String
     let subtitle: String?
     let stickerPath: String?
+    let senderUserId: Int64?
+    let senderName: String?
+    let senderAvatarPath: String?
+    let senderIsPremium: Bool
+    let senderPremiumBadgePath: String?
+
+    init(
+        id: String,
+        title: String,
+        subtitle: String? = nil,
+        stickerPath: String? = nil,
+        senderUserId: Int64? = nil,
+        senderName: String? = nil,
+        senderAvatarPath: String? = nil,
+        senderIsPremium: Bool = false,
+        senderPremiumBadgePath: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.stickerPath = stickerPath
+        self.senderUserId = senderUserId
+        self.senderName = senderName
+        self.senderAvatarPath = senderAvatarPath
+        self.senderIsPremium = senderIsPremium
+        self.senderPremiumBadgePath = senderPremiumBadgePath
+    }
 }
 
 struct ChatMember: Identifiable, Equatable {

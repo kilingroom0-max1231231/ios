@@ -154,6 +154,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return withReadState.sorted(by: { $0.createdAt < $1.createdAt })
     }
 
+    func enrichMessages(_ messages: [TgMessage]) async throws -> [TgMessage] {
+        try await enrichMessagesWithSenderInfo(messages)
+    }
+
     func fetchOlderMessages(chatId: Int64, fromMessageId: Int64, limit: Int = 200) async throws -> [TgMessage] {
         let response = try await sendRequest([
             "@type": "getChatHistory",
@@ -985,9 +989,40 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         var items: [TgGiftItem] = []
         for (index, entry) in gifts.enumerated() {
             guard let gift = entry["gift"] as? [String: Any] else { continue }
-            let giftId = (gift["id"] as? String) ?? "\(index)"
+            let giftId = (entry["received_gift_id"] as? String) ?? (gift["id"] as? String) ?? "\(index)"
             let title = (gift["title"] as? String) ?? AppText.tr("Подарок", "Gift")
-            let senderName = entry["sender_name"] as? String
+            var senderName = entry["sender_name"] as? String
+            var senderUserId: Int64?
+            var senderAvatarPath: String?
+            var senderIsPremium = false
+            var senderPremiumBadgePath: String?
+
+            if let sender = entry["sender_id"] as? [String: Any],
+               let senderType = sender["@type"] as? String,
+               senderType == "messageSenderUser",
+               let userId = int64Value(sender["user_id"]) {
+                senderUserId = userId
+                if let user = try? await sendRequest([
+                    "@type": "getUser",
+                    "user_id": userId
+                ]) {
+                    let firstName = user["first_name"] as? String ?? ""
+                    let lastName = user["last_name"] as? String ?? ""
+                    let name = [firstName, lastName]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " ")
+                    if !name.isEmpty {
+                        senderName = name
+                    } else if let username = activeUsername(from: user) {
+                        senderName = "@\(username)"
+                    }
+                    senderAvatarPath = try? await resolveUserAvatarPath(user)
+                    senderIsPremium = (user["is_premium"] as? Bool) ?? false
+                    senderPremiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+                }
+            }
+
             var stickerPath: String?
             if let sticker = gift["sticker"] as? [String: Any],
                let stickerFile = sticker["sticker"] as? [String: Any],
@@ -999,7 +1034,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     id: giftId,
                     title: title,
                     subtitle: senderName,
-                    stickerPath: stickerPath
+                    stickerPath: stickerPath,
+                    senderUserId: senderUserId,
+                    senderName: senderName,
+                    senderAvatarPath: senderAvatarPath,
+                    senderIsPremium: senderIsPremium,
+                    senderPremiumBadgePath: senderPremiumBadgePath
                 )
             )
         }

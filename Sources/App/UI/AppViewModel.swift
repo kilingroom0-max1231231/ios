@@ -92,6 +92,24 @@ final class AppViewModel: ObservableObject {
         return chats.first(where: { $0.id == selectedChatId })
     }
 
+    var visibleMessages: [TgMessage] {
+        guard !AppSettingsStore.shared.keepDeletedMessages else { return messages }
+        return messages.filter { !$0.isDeleted }
+    }
+
+    func applyKeepDeletedMessagesPreference() async {
+        guard let repository, let chatId = selectedChatId else { return }
+        if AppSettingsStore.shared.keepDeletedMessages {
+            await reloadMessagesFromStore(chatId: chatId, mergeWithExisting: false)
+            return
+        }
+
+        try? repository.purgeDeletedMessages(chatId: chatId)
+        messages = messages.filter { !$0.isDeleted }
+        peekMessages = peekMessages.filter { !$0.isDeleted }
+        await patchDeletedChatPreview(chatId: chatId)
+    }
+
     func start() async {
         phase = .loading
         bootstrapError = nil
@@ -293,10 +311,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectChat(_ chatId: Int64) async {
+        if selectedChatId != chatId {
+            messages = []
+        }
         selectedChatId = chatId
         await refreshChatSendPermissions(chatId: chatId)
         await loadMessagesFromCache(chatId: chatId)
-        await refreshMessages()
+        await refreshMessages(force: true)
         if visibleChatId == chatId {
             await markChatRead(chatId)
         }
@@ -338,7 +359,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func refreshMessages() async {
+    func refreshMessages(force: Bool = false) async {
         guard let repository, let chatId = selectedChatId else { return }
 
         if messages.isEmpty {
@@ -351,7 +372,11 @@ final class AppViewModel: ObservableObject {
 
         do {
             let syncedMessages = try await repository.syncMessages(chatId: chatId)
-            replaceMessagesPreservingDisplay(syncedMessages, chatId: chatId)
+            if force || messages.isEmpty {
+                messages = applyReadState(deduplicatedMessages(syncedMessages), chatId: chatId)
+            } else {
+                replaceMessagesPreservingDisplay(syncedMessages, chatId: chatId)
+            }
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             if messages.isEmpty {
@@ -443,10 +468,13 @@ final class AppViewModel: ObservableObject {
 
     func openChat(chatId: Int64) async {
         mainTabIndex = 0
+        if selectedChatId != chatId {
+            messages = []
+        }
         selectedChatId = chatId
         navigationTargetChatId = chatId
         await loadMessagesFromCache(chatId: chatId)
-        await refreshMessages()
+        await refreshMessages(force: true)
         if visibleChatId == chatId {
             await markChatRead(chatId)
         }
@@ -772,7 +800,11 @@ final class AppViewModel: ObservableObject {
     private func applyUpsertedMessage(_ message: TgMessage) {
         guard selectedChatId == message.chatId else { return }
         var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-        byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
+        if message.isDeleted && !AppSettingsStore.shared.keepDeletedMessages {
+            byId.removeValue(forKey: message.id)
+        } else {
+            byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
+        }
         messages = applyReadState(
             deduplicatedMessages(byId.values.sorted { $0.createdAt < $1.createdAt }),
             chatId: message.chatId
@@ -849,15 +881,23 @@ final class AppViewModel: ObservableObject {
     private func applyMessagesDeleted(chatId: Int64, messageIds: Set<Int64>) async {
         guard !messageIds.isEmpty else { return }
 
-        let markDeleted: (TgMessage) -> TgMessage = { message in
-            messageIds.contains(message.id) ? message.markedDeleted() : message
-        }
-
-        if selectedChatId == chatId {
-            messages = messages.map(markDeleted)
-        }
-        if peekChatId == chatId {
-            peekMessages = peekMessages.map(markDeleted)
+        if AppSettingsStore.shared.keepDeletedMessages {
+            let markDeleted: (TgMessage) -> TgMessage = { message in
+                messageIds.contains(message.id) ? message.markedDeleted() : message
+            }
+            if selectedChatId == chatId {
+                messages = messages.map(markDeleted)
+            }
+            if peekChatId == chatId {
+                peekMessages = peekMessages.map(markDeleted)
+            }
+        } else {
+            if selectedChatId == chatId {
+                messages = messages.filter { !messageIds.contains($0.id) }
+            }
+            if peekChatId == chatId {
+                peekMessages = peekMessages.filter { !messageIds.contains($0.id) }
+            }
         }
 
         guard let repository else { return }

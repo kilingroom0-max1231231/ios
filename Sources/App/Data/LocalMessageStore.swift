@@ -30,8 +30,12 @@ final class LocalMessageStore {
     func upsert(messages: [TgMessage]) throws {
         try queue.sync {
             let sql = """
-            INSERT INTO messages(message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from, reply_to_message_id)
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO messages(
+                message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
+                forwarded_from, reply_to_message_id, sender_user_id, sender_name,
+                sender_avatar_path, author_signature, view_count
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
               text=CASE
                 WHEN messages.is_deleted = 1 AND length(trim(excluded.text)) = 0 THEN messages.text
@@ -46,7 +50,24 @@ final class LocalMessageStore {
                 THEN excluded.forwarded_from
                 ELSE messages.forwarded_from
               END,
-              reply_to_message_id=COALESCE(excluded.reply_to_message_id, messages.reply_to_message_id);
+              reply_to_message_id=COALESCE(excluded.reply_to_message_id, messages.reply_to_message_id),
+              sender_user_id=COALESCE(excluded.sender_user_id, messages.sender_user_id),
+              sender_name=CASE
+                WHEN excluded.sender_name IS NOT NULL AND length(trim(excluded.sender_name)) > 0
+                THEN excluded.sender_name
+                ELSE messages.sender_name
+              END,
+              sender_avatar_path=CASE
+                WHEN excluded.sender_avatar_path IS NOT NULL AND length(trim(excluded.sender_avatar_path)) > 0
+                THEN excluded.sender_avatar_path
+                ELSE messages.sender_avatar_path
+              END,
+              author_signature=CASE
+                WHEN excluded.author_signature IS NOT NULL AND length(trim(excluded.author_signature)) > 0
+                THEN excluded.author_signature
+                ELSE messages.author_signature
+              END,
+              view_count=COALESCE(excluded.view_count, messages.view_count);
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -77,6 +98,19 @@ final class LocalMessageStore {
                 } else {
                     sqlite3_bind_null(stmt, 9)
                 }
+                if let senderUserId = message.senderUserId {
+                    sqlite3_bind_int64(stmt, 10, senderUserId)
+                } else {
+                    sqlite3_bind_null(stmt, 10)
+                }
+                bindOptionalText(stmt, 11, message.senderName)
+                bindOptionalText(stmt, 12, message.senderAvatarPath)
+                bindOptionalText(stmt, 13, message.authorSignature)
+                if let viewCount = message.viewCount {
+                    sqlite3_bind_int(stmt, 14, Int32(viewCount))
+                } else {
+                    sqlite3_bind_null(stmt, 14)
+                }
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
@@ -91,7 +125,9 @@ final class LocalMessageStore {
     func read(chatId: Int64, limit: Int = 200) throws -> [TgMessage] {
         try queue.sync {
             let sql = """
-            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id, forwarded_from, reply_to_message_id
+            SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
+                   forwarded_from, reply_to_message_id, sender_user_id, sender_name,
+                   sender_avatar_path, author_signature, view_count
             FROM messages
             WHERE chat_id = ?
             ORDER BY created_at ASC
@@ -120,11 +156,52 @@ final class LocalMessageStore {
                         isDeleted: sqlite3_column_int(stmt, 5) == 1,
                         attachments: try readAttachments(chatId: chatId, messageId: sqlite3_column_int64(stmt, 0)),
                         mediaAlbumId: (sqlite3_column_type(stmt, 6) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 6),
-                        forwardedFrom: (sqlite3_column_type(stmt, 7) == SQLITE_NULL) ? nil : readText(stmt, 7)
+                        forwardedFrom: (sqlite3_column_type(stmt, 7) == SQLITE_NULL) ? nil : readText(stmt, 7),
+                        senderUserId: (sqlite3_column_type(stmt, 9) == SQLITE_NULL) ? nil : sqlite3_column_int64(stmt, 9),
+                        senderName: optionalTextColumn(stmt, 10),
+                        senderAvatarPath: optionalTextColumn(stmt, 11),
+                        authorSignature: optionalTextColumn(stmt, 12),
+                        viewCount: optionalIntColumn(stmt, 13)
                     )
                 )
             }
             return out
+        }
+    }
+
+    func purgeDeletedMessages(chatId: Int64) throws {
+        try queue.sync {
+            let sql = "DELETE FROM messages WHERE chat_id = ? AND is_deleted = 1;"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw NSError(domain: "LocalMessageStore", code: 22, userInfo: nil)
+            }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_int64(stmt, 1, chatId)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw NSError(domain: "LocalMessageStore", code: 23, userInfo: nil)
+            }
+        }
+    }
+
+    func removeMessages(chatId: Int64, messageIds: [Int64]) throws {
+        guard !messageIds.isEmpty else { return }
+        try queue.sync {
+            var deleteStmt: OpaquePointer?
+            let deleteSQL = "DELETE FROM messages WHERE chat_id = ? AND message_id = ?;"
+            guard sqlite3_prepare_v2(db, deleteSQL, -1, &deleteStmt, nil) == SQLITE_OK else {
+                throw NSError(domain: "LocalMessageStore", code: 20, userInfo: nil)
+            }
+            defer { sqlite3_finalize(deleteStmt) }
+
+            for messageId in messageIds {
+                sqlite3_reset(deleteStmt)
+                sqlite3_bind_int64(deleteStmt, 1, chatId)
+                sqlite3_bind_int64(deleteStmt, 2, messageId)
+                guard sqlite3_step(deleteStmt) == SQLITE_DONE else {
+                    throw NSError(domain: "LocalMessageStore", code: 21, userInfo: nil)
+                }
+            }
         }
     }
 
@@ -212,6 +289,11 @@ final class LocalMessageStore {
             media_album_id INTEGER,
             forwarded_from TEXT,
             reply_to_message_id INTEGER,
+            sender_user_id INTEGER,
+            sender_name TEXT,
+            sender_avatar_path TEXT,
+            author_signature TEXT,
+            view_count INTEGER,
             PRIMARY KEY (chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
@@ -244,14 +326,17 @@ final class LocalMessageStore {
 
     private func migrateSchemaIfNeeded() throws {
         guard tableExists("messages") else { return }
-        if !columnExists("messages", "reply_to_message_id") {
-            let result = sqlite3_exec(
-                db,
-                "ALTER TABLE messages ADD COLUMN reply_to_message_id INTEGER;",
-                nil,
-                nil,
-                nil
-            )
+        let columns: [(String, String)] = [
+            ("reply_to_message_id", "INTEGER"),
+            ("sender_user_id", "INTEGER"),
+            ("sender_name", "TEXT"),
+            ("sender_avatar_path", "TEXT"),
+            ("author_signature", "TEXT"),
+            ("view_count", "INTEGER")
+        ]
+        for (name, type) in columns where !columnExists("messages", name) {
+            let sql = "ALTER TABLE messages ADD COLUMN \(name) \(type);"
+            let result = sqlite3_exec(db, sql, nil, nil, nil)
             guard result == SQLITE_OK else {
                 throw NSError(
                     domain: "LocalMessageStore",
@@ -324,6 +409,25 @@ final class LocalMessageStore {
     private func readText(_ stmt: OpaquePointer?, _ col: Int32) -> String {
         guard let c = sqlite3_column_text(stmt, col) else { return "" }
         return String(cString: c)
+    }
+
+    private func optionalTextColumn(_ stmt: OpaquePointer?, _ col: Int32) -> String? {
+        guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
+        let value = readText(stmt, col).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func optionalIntColumn(_ stmt: OpaquePointer?, _ col: Int32) -> Int? {
+        guard sqlite3_column_type(stmt, col) != SQLITE_NULL else { return nil }
+        return Int(sqlite3_column_int(stmt, col))
+    }
+
+    private func bindOptionalText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String?) {
+        if let value, !value.isEmpty {
+            sqlite3_bind_text(stmt, index, (value as NSString).utf8String, -1, sqliteTransient)
+        } else {
+            sqlite3_bind_null(stmt, index)
+        }
     }
 
     private func replaceAttachments(chatId: Int64, messageId: Int64, attachments: [TgAttachment]) throws {

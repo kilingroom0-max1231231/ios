@@ -5,6 +5,7 @@ struct AppShellView: View {
     @StateObject private var appearance = AppAppearanceStore.shared
     @StateObject private var language = AppLanguageStore.shared
     @StateObject private var swipeSettings = MessageSwipeSettingsStore.shared
+    @StateObject private var appSettings = AppSettingsStore.shared
 
     var body: some View {
         Group {
@@ -70,6 +71,7 @@ struct AppShellView: View {
         .environmentObject(appearance)
         .environmentObject(language)
         .environmentObject(swipeSettings)
+        .environmentObject(appSettings)
         .task {
             await vm.start()
         }

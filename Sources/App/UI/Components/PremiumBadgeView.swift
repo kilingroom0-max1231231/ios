@@ -36,28 +36,17 @@ struct PremiumBadgeView: View {
     }
 }
 
-/// Premium badge immediately after @username (nickname).
-struct UsernameWithPremium: View {
+/// @username line without premium badge (badge is on display name).
+struct UsernameLine: View {
     let username: String
-    let isPremium: Bool
-    var badgeImagePath: String?
     var font: Font = .caption
     var color: Color = .secondary
 
     var body: some View {
-        HStack(spacing: 3) {
-            Text("@\(username)")
-                .font(font)
-                .foregroundStyle(color)
-                .lineLimit(1)
-            if isPremium {
-                PremiumBadgeView(imagePath: badgeImagePath, size: badgeSize)
-            }
-        }
-    }
-
-    private var badgeSize: CGFloat {
-        font == .subheadline ? 12 : 11
+        Text("@\(username)")
+            .font(font)
+            .foregroundStyle(color)
+            .lineLimit(1)
     }
 }
 
@@ -67,8 +56,8 @@ struct DisplayNameWithPremium: View {
     var badgeImagePath: String?
     var font: Font = .headline
     var lineLimit: Int = 1
-    /// When false, premium is shown only on the username line (Telegram-style).
-    var showBadgeOnName: Bool = false
+    /// Premium emoji/status is shown next to the display name (Telegram-style).
+    var showBadgeOnName: Bool = true
 
     var body: some View {
         HStack(spacing: 4) {

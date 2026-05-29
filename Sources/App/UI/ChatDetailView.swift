@@ -189,46 +189,45 @@ struct ChatDetailView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(groupedMessages) { message in
                         let replyPreview = message.replyToMessageId.flatMap { replyId in
-                            vm.messages.first(where: { $0.id == replyId })?.text
+                            replyQuoteText(for: replyId)
                         }
-                        MessageBubbleView(
-                            message: message,
-                            chatKind: selectedChat?.kind ?? .unknown,
-                            peerAvatarPath: selectedChat?.avatarPath,
-                            peerTitle: selectedChat?.title,
-                            replyPreviewText: replyPreview,
-                            onOpenAttachment: { attachment in
-                                let attachments = mediaAttachments
-                                if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
-                                    mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
-                                } else {
-                                    mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                        SwipeableMessageRow(actions: swipeActions(for: message)) {
+                            MessageBubbleView(
+                                message: message,
+                                chatKind: selectedChat?.kind ?? .unknown,
+                                peerAvatarPath: selectedChat?.avatarPath,
+                                peerTitle: selectedChat?.title,
+                                replyPreviewText: replyPreview,
+                                onOpenAttachment: { attachment in
+                                    let attachments = mediaAttachments
+                                    if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                                        mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                                    } else {
+                                        mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                                    }
+                                },
+                                onReply: canSend ? {
+                                    vm.startReply(message)
+                                    isComposerFocused = true
+                                } : nil,
+                                onForward: {
+                                    forwardingMessage = message
+                                },
+                                onEdit: {
+                                    vm.startEditing(message)
+                                    isComposerFocused = true
+                                },
+                                onDelete: { revoke in
+                                    Task { await vm.deleteMyMessage(message, revoke: revoke) }
                                 }
-                            },
-                            onReply: canSend ? {
-                                vm.startReply(message)
-                                isComposerFocused = true
-                            } : nil,
-                            onForward: {
-                                forwardingMessage = message
-                            },
-                            onEdit: {
-                                vm.startEditing(message)
-                                isComposerFocused = true
-                            },
-                            onDelete: { revoke in
-                                Task { await vm.deleteMyMessage(message, revoke: revoke) }
+                            )
+                        }
+                        .id(message.id)
+                        .onAppear {
+                            if message.id == groupedMessages.first?.id {
+                                Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
                             }
-                        )
-                            .id(message.id)
-                            .onAppear {
-                                if message.id == groupedMessages.first?.id {
-                                    Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
-                                }
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                messageSwipeActions(for: message)
-                            }
+                        }
                     }
                 }
                 .padding(.vertical, 8)
@@ -268,53 +267,59 @@ struct ChatDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func messageSwipeActions(for message: TgMessage) -> some View {
-        ForEach(swipeSettings.enabledOrderedActions) { action in
+    private func swipeActions(for message: TgMessage) -> [MessageSwipeActionButton] {
+        swipeSettings.enabledOrderedActions.compactMap { action in
             switch action {
             case .reply:
-                if canSend {
-                    Button {
-                        vm.startReply(message)
-                        isComposerFocused = true
-                    } label: {
-                        Label(MessageSwipeAction.reply.title, systemImage: MessageSwipeAction.reply.systemImage)
-                    }
-                    .tint(AppColors.accent)
+                guard canSend else { return nil }
+                return MessageSwipeActionButton(
+                    id: action.rawValue,
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    color: AppColors.accent
+                ) {
+                    vm.startReply(message)
+                    isComposerFocused = true
                 }
             case .forward:
-                Button {
+                return MessageSwipeActionButton(
+                    id: action.rawValue,
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    color: .orange
+                ) {
                     forwardingMessage = message
-                } label: {
-                    Label(MessageSwipeAction.forward.title, systemImage: MessageSwipeAction.forward.systemImage)
                 }
-                .tint(.orange)
             case .quote:
-                if canSend {
-                    Button {
-                        vm.quoteMessage(message)
-                        isComposerFocused = true
-                    } label: {
-                        Label(MessageSwipeAction.quote.title, systemImage: MessageSwipeAction.quote.systemImage)
-                    }
-                    .tint(.teal)
+                guard canSend else { return nil }
+                return MessageSwipeActionButton(
+                    id: action.rawValue,
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    color: .teal
+                ) {
+                    vm.quoteMessage(message)
+                    isComposerFocused = true
                 }
             case .pin:
-                if canPinMessages {
-                    Button {
-                        Task { await vm.pinMessage(message) }
-                    } label: {
-                        Label(MessageSwipeAction.pin.title, systemImage: MessageSwipeAction.pin.systemImage)
-                    }
-                    .tint(.indigo)
+                guard canPinMessages else { return nil }
+                return MessageSwipeActionButton(
+                    id: action.rawValue,
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    color: .indigo
+                ) {
+                    Task { await vm.pinMessage(message) }
                 }
             case .delete:
-                if message.outgoing {
-                    Button(role: .destructive) {
-                        Task { await vm.deleteMyMessage(message, revoke: true) }
-                    } label: {
-                        Label(MessageSwipeAction.delete.title, systemImage: MessageSwipeAction.delete.systemImage)
-                    }
+                guard message.outgoing else { return nil }
+                return MessageSwipeActionButton(
+                    id: action.rawValue,
+                    title: action.title,
+                    systemImage: action.systemImage,
+                    color: .red
+                ) {
+                    Task { await vm.deleteMyMessage(message, revoke: true) }
                 }
             }
         }
@@ -442,6 +447,24 @@ struct ChatDetailView: View {
         .opacity(vm.isBusy || !canSend ? 0.6 : 1)
     }
 
+    private func replyQuoteText(for replyId: Int64) -> String? {
+        guard let replied = vm.messages.first(where: { $0.id == replyId }) else { return nil }
+        let body = replied.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let name = replied.senderName, !name.isEmpty {
+            if body.isEmpty {
+                return name
+            }
+            return "\(name): \(body)"
+        }
+        if !body.isEmpty {
+            return body
+        }
+        if !replied.attachments.isEmpty {
+            return AppText.tr("Медиа", "Media")
+        }
+        return nil
+    }
+
     private func replyPreview(_ text: String) -> some View {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let previewText = trimmedText.isEmpty ? AppText.tr("Сообщение", "Message") : trimmedText
@@ -479,7 +502,7 @@ struct ChatDetailView: View {
 
     private var groupedMessages: [TgMessage] {
         // Merge album messages (TDLib `media_album_id`) into one bubble.
-        let items = vm.messages
+        let items = vm.visibleMessages
         var out: [TgMessage] = []
         var i = 0
         while i < items.count {

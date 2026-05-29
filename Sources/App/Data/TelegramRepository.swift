@@ -35,7 +35,9 @@ final class TelegramRepository {
             case .authChanged(let state):
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
-                try? self.store.upsert(messages: [message])
+                if AppSettingsStore.keepDeletedMessagesValue || !message.isDeleted {
+                    try? self.store.upsert(messages: [message])
+                }
                 self.onMessageUpserted?(message)
                 self.onIncomingMessage?(message)
                 self.onMessagesChanged?(message.chatId)
@@ -48,7 +50,11 @@ final class TelegramRepository {
                 self.onMessagesChanged?(chatId)
                 self.onChatChanged?(chatId)
             case .messagesDeleted(let chatId, let messageIds):
-                try? self.store.markDeleted(chatId: chatId, messageIds: messageIds)
+                if AppSettingsStore.keepDeletedMessagesValue {
+                    try? self.store.markDeleted(chatId: chatId, messageIds: messageIds)
+                } else {
+                    try? self.store.removeMessages(chatId: chatId, messageIds: messageIds)
+                }
                 self.onMessagesDeleted?(chatId, messageIds)
                 self.onMessagesChanged?(chatId)
                 self.onChatChanged?(chatId)
@@ -103,17 +109,28 @@ final class TelegramRepository {
         return remote
     }
 
-    static let initialMessagePageSize = 20
+    static let initialMessagePageSize = 100
     static let olderMessagePageSize = 40
     static let peekMessagePageSize = 20
 
     func syncMessages(chatId: Int64, limit: Int = TelegramRepository.initialMessagePageSize) async throws -> [TgMessage] {
         let remote = try await client.fetchMessages(chatId: chatId, limit: limit)
-        if !remote.isEmpty {
-            try store.upsert(messages: remote)
+        let persistable = AppSettingsStore.keepDeletedMessagesValue
+            ? remote
+            : remote.filter { !$0.isDeleted }
+        if !persistable.isEmpty {
+            try store.upsert(messages: persistable)
             try store.cleanupTemporaryOutgoingDuplicates(chatId: chatId)
         }
-        let stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+
+        var stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+        let needsEnrichment = stored.filter(Self.needsDisplayEnrichment)
+        if !needsEnrichment.isEmpty {
+            let enriched = try await client.enrichMessages(needsEnrichment)
+            try store.upsert(messages: enriched)
+            stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+        }
+
         return Self.mergeStoredMessages(stored, withRemoteEnrichment: remote)
     }
 
@@ -125,6 +142,16 @@ final class TelegramRepository {
             guard let enriched = remoteById[message.id] else { return message }
             return enriched.mergingPreservingDisplayFields(from: message)
         }
+    }
+
+    private static func needsDisplayEnrichment(_ message: TgMessage) -> Bool {
+        guard !message.outgoing else { return false }
+        if let userId = message.senderUserId, userId != 0 {
+            if message.senderName == nil || message.senderAvatarPath == nil {
+                return true
+            }
+        }
+        return false
     }
 
     func peekMessages(chatId: Int64, limit: Int = TelegramRepository.peekMessagePageSize) async throws -> [TgMessage] {
@@ -191,7 +218,15 @@ final class TelegramRepository {
     }
 
     func storedMessages(chatId: Int64, limit: Int = 500) throws -> [TgMessage] {
-        try store.read(chatId: chatId, limit: limit)
+        let messages = try store.read(chatId: chatId, limit: limit)
+        guard AppSettingsStore.keepDeletedMessagesValue else {
+            return messages.filter { !$0.isDeleted }
+        }
+        return messages
+    }
+
+    func purgeDeletedMessages(chatId: Int64) throws {
+        try store.purgeDeletedMessages(chatId: chatId)
     }
 
     func searchChats(query: String) async throws -> [TgChat] {

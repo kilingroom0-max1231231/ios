@@ -25,14 +25,13 @@ struct SettingsView: View {
                         DisplayNameWithPremium(
                             name: vm.me?.displayName ?? AppText.tr("Telegram User Client", "Telegram User Client"),
                             isPremium: vm.me?.isPremium ?? false,
+                            badgeImagePath: vm.me?.premiumBadgePath,
                             font: .headline
                         )
 
                         if let username = vm.me?.username, !username.isEmpty {
-                            UsernameWithPremium(
+                            UsernameLine(
                                 username: username,
-                                isPremium: vm.me?.isPremium ?? false,
-                                badgeImagePath: vm.me?.premiumBadgePath,
                                 font: .subheadline,
                                 color: .secondary
                             )
@@ -58,7 +57,9 @@ struct SettingsView: View {
                             DisplayNameWithPremium(
                                 name: AppText.tr("Мой профиль", "My profile"),
                                 isPremium: me.isPremium,
-                                font: .body
+                                badgeImagePath: me.premiumBadgePath,
+                                font: .body,
+                                showBadgeOnName: false
                             )
                         }
                     }
@@ -78,6 +79,21 @@ struct SettingsView: View {
 
             Section(AppText.tr("Приложение", "Application")) {
                 NavigationLink {
+                    AppSettingsView(
+                        vm: vm,
+                        appSettings: AppSettingsStore.shared,
+                        swipeSettings: MessageSwipeSettingsStore.shared
+                    )
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundStyle(AppColors.accent)
+                            .frame(width: 28)
+                        Text(AppText.tr("Настройки приложения", "App settings"))
+                    }
+                }
+
+                NavigationLink {
                     AppearanceSettingsView(appearance: AppAppearanceStore.shared)
                 } label: {
                     HStack(spacing: 12) {
@@ -85,17 +101,6 @@ struct SettingsView: View {
                             .foregroundStyle(AppColors.accent)
                             .frame(width: 28)
                         Text(AppText.tr("Оформление", "Appearance"))
-                    }
-                }
-
-                NavigationLink {
-                    MessageSwipeSettingsView(store: MessageSwipeSettingsStore.shared)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "hand.draw")
-                            .foregroundStyle(AppColors.accent)
-                            .frame(width: 28)
-                        Text(AppText.tr("Свайп сообщения", "Message swipe"))
                     }
                 }
 

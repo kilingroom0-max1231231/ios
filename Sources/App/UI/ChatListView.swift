@@ -355,6 +355,7 @@ private struct ChatCardView: View {
                     DisplayNameWithPremium(
                         name: chat.title,
                         isPremium: chat.kind == .private && chat.peerIsPremium,
+                        badgeImagePath: chat.peerPremiumBadgePath,
                         font: .headline,
                         lineLimit: 1
                     )
@@ -398,10 +399,8 @@ private struct ChatCardView: View {
                 if chat.kind == .private,
                    let username = chat.peerUsername,
                    !username.isEmpty {
-                    UsernameWithPremium(
+                    UsernameLine(
                         username: username,
-                        isPremium: chat.peerIsPremium,
-                        badgeImagePath: chat.peerPremiumBadgePath,
                         font: .caption,
                         color: .secondary
                     )

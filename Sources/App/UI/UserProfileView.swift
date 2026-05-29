@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UserProfileView: View {
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var appSettings: AppSettingsStore
     let userId: Int64
 
     @State private var selectedTab: Tab = .overview
@@ -107,16 +108,15 @@ struct UserProfileView: View {
             DisplayNameWithPremium(
                 name: profile.displayName,
                 isPremium: profile.isPremium,
+                badgeImagePath: profile.premiumBadgePath,
                 font: .title2.weight(.bold),
                 lineLimit: 2
             )
             .multilineTextAlignment(.center)
 
             if let username = profile.username, !username.isEmpty {
-                UsernameWithPremium(
+                UsernameLine(
                     username: username,
-                    isPremium: profile.isPremium,
-                    badgeImagePath: profile.premiumBadgePath,
                     font: .subheadline,
                     color: AppColors.accent
                 )
@@ -170,6 +170,23 @@ struct UserProfileView: View {
         }
 
         Section(AppText.tr("Информация", "Info")) {
+            if appSettings.showProfileChatKind {
+                profileRow(
+                    icon: "person.fill",
+                    title: AppText.tr("Тип", "Type"),
+                    value: AppText.tr("Пользователь", "User")
+                )
+            }
+
+            if appSettings.showProfileUserId {
+                profileRow(
+                    icon: "number",
+                    title: AppText.tr("ID пользователя", "User ID"),
+                    value: "\(profile.userId)",
+                    monospaced: true
+                )
+            }
+
             if let bio = profile.bio, !bio.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(AppText.tr("О себе", "Bio"))
@@ -222,9 +239,12 @@ struct UserProfileView: View {
     }
 
     private func giftsTab(_ profile: UserProfileDetail) -> some View {
-        Section(AppText.tr("Подарки", "Gifts")) {
+        Section {
             if vm.isUserProfileExtrasLoading && vm.userProfileGifts.isEmpty {
                 ProgressView()
+                    .tint(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
             } else if vm.userProfileGifts.isEmpty {
                 if profile.giftCount > 0 {
                     Text(AppText.tr("Подарки скрыты или недоступны в этой версии TDLib", "Gifts are hidden or unavailable in this TDLib build"))
@@ -235,40 +255,13 @@ struct UserProfileView: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                ForEach(vm.userProfileGifts) { gift in
-                    HStack(spacing: 12) {
-                        giftIcon(gift)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(gift.title)
-                                .font(.subheadline.weight(.semibold))
-                            if let subtitle = gift.subtitle, !subtitle.isEmpty {
-                                Text(subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
+                GiftsGridView(gifts: vm.userProfileGifts)
             }
         }
+        .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+        .listRowBackground(Color.black)
         .onAppear {
             Task { await vm.loadUserProfileGifts(userId: userId) }
-        }
-    }
-
-    @ViewBuilder
-    private func giftIcon(_ gift: TgGiftItem) -> some View {
-        if let path = gift.stickerPath, let image = LocalImageCache.shared.image(path: path) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 44, height: 44)
-        } else {
-            Image(systemName: "gift.fill")
-                .font(.title2)
-                .foregroundStyle(AppColors.accent)
-                .frame(width: 44, height: 44)
         }
     }
 
@@ -277,5 +270,25 @@ struct UserProfileView: View {
             return AppText.tr("Вы заблокировали", "You blocked them")
         }
         return AppText.tr("Ограничил(а) вас", "Restricted you")
+    }
+
+    private func profileRow(icon: String, title: String, value: String, monospaced: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.body)
+                .foregroundStyle(AppColors.accent)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(monospaced ? .subheadline.monospacedDigit() : .subheadline)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

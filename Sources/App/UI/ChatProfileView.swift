@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatProfileView: View {
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var appSettings: AppSettingsStore
     let profile: ChatProfile
     @Namespace private var avatarNamespace
     @State private var selectedTab: ProfileTab = .overview
@@ -172,16 +173,15 @@ struct ChatProfileView: View {
             DisplayNameWithPremium(
                 name: profile.title,
                 isPremium: profile.isPremium,
+                badgeImagePath: profile.premiumBadgePath,
                 font: .title2.weight(.bold),
                 lineLimit: 2
             )
             .multilineTextAlignment(.center)
 
             if let username = profile.username, !username.isEmpty {
-                UsernameWithPremium(
+                UsernameLine(
                     username: username,
-                    isPremium: profile.isPremium,
-                    badgeImagePath: profile.premiumBadgePath,
                     font: .subheadline,
                     color: AppColors.accent
                 )
@@ -235,13 +235,26 @@ struct ChatProfileView: View {
                 profileRow(icon: "at", title: "Username", value: "@\(username)")
             }
 
-            profileRow(icon: "person.text.rectangle", title: "Тип", value: kindText(profile.kind))
+            if appSettings.showProfileChatKind {
+                profileRow(
+                    icon: "person.text.rectangle",
+                    title: AppText.tr("Тип", "Type"),
+                    value: kindText(profile.kind)
+                )
+            }
 
             if let members = profile.membersCount {
                 profileRow(icon: "person.2.fill", title: "Участники", value: membersText(members))
             }
 
-            profileRow(icon: "number", title: "Chat ID", value: "\(profile.chatId)", monospaced: true)
+            if appSettings.showProfileChatId {
+                profileRow(
+                    icon: "number",
+                    title: AppText.tr("ID чата", "Chat ID"),
+                    value: "\(profile.chatId)",
+                    monospaced: true
+                )
+            }
         }
 
         if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -290,13 +303,12 @@ struct ChatProfileView: View {
                 DisplayNameWithPremium(
                     name: member.title,
                     isPremium: member.isPremium,
+                    badgeImagePath: member.premiumBadgePath,
                     font: .subheadline.weight(.semibold)
                 )
                 if let username = member.username, !username.isEmpty {
-                    UsernameWithPremium(
+                    UsernameLine(
                         username: username,
-                        isPremium: member.isPremium,
-                        badgeImagePath: member.premiumBadgePath,
                         font: .caption,
                         color: .secondary
                     )
@@ -343,39 +355,21 @@ struct ChatProfileView: View {
     }
 
     private var userGiftsSection: some View {
-        Section(AppText.tr("Подарки", "Gifts")) {
+        Section {
             if vm.isUserProfileExtrasLoading && vm.userProfileGifts.isEmpty {
                 ProgressView()
+                    .tint(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
             } else if vm.userProfileGifts.isEmpty {
                 Text(AppText.tr("Нет подарков", "No gifts"))
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(vm.userProfileGifts) { gift in
-                    HStack(spacing: 12) {
-                        if let path = gift.stickerPath, let image = LocalImageCache.shared.image(path: path) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 40, height: 40)
-                        } else {
-                            Image(systemName: "gift.fill")
-                                .foregroundStyle(AppColors.accent)
-                                .frame(width: 40, height: 40)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(gift.title)
-                                .font(.subheadline.weight(.semibold))
-                            if let subtitle = gift.subtitle, !subtitle.isEmpty {
-                                Text(subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
+                GiftsGridView(gifts: vm.userProfileGifts)
             }
         }
+        .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+        .listRowBackground(Color.black)
         .onAppear {
             if let userId = profile.userId {
                 Task { await vm.loadUserProfileGifts(userId: userId) }
