@@ -286,6 +286,9 @@ struct UserProfileView: View {
         .onAppear {
             Task { await vm.loadUserProfileGifts(userId: userId) }
         }
+        .onDisappear {
+            TGSFileLoader.clearAnimationCache()
+        }
     }
 
     private func blockText(_ profile: UserProfileDetail) -> String {

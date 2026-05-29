@@ -7,19 +7,58 @@ struct GiftsGridView: View {
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
     private let stickerSide: CGFloat = 64
+    private let pageSize = 24
+
+    @State private var visibleCount: Int
+
+    init(gifts: [TgGiftItem]) {
+        self.gifts = gifts
+        _visibleCount = State(initialValue: min(24, gifts.count))
+    }
 
     private var cellBackground: Color {
         Color(uiColor: .secondarySystemGroupedBackground)
     }
 
+    private var displayedGifts: [TgGiftItem] {
+        Array(gifts.prefix(visibleCount))
+    }
+
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(gifts) { gift in
-                GiftGridCell(
-                    gift: gift,
-                    cellBackground: cellBackground,
-                    stickerSide: stickerSide
-                )
+        VStack(spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(displayedGifts) { gift in
+                    GiftGridCell(
+                        gift: gift,
+                        cellBackground: cellBackground,
+                        stickerSide: stickerSide
+                    )
+                }
+            }
+
+            if visibleCount < gifts.count {
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        visibleCount = min(visibleCount + pageSize, gifts.count)
+                    }
+                } label: {
+                    Text(AppText.tr(
+                        "Показать ещё (\(gifts.count - visibleCount))",
+                        "Show more (\(gifts.count - visibleCount))"
+                    ))
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .tint(AppColors.accent)
+            }
+        }
+        .onChange(of: gifts.count) { count in
+            if visibleCount > count {
+                visibleCount = count
+            } else if visibleCount == 0 {
+                visibleCount = min(pageSize, count)
             }
         }
     }
@@ -76,6 +115,7 @@ private struct GiftGridCell: View {
             displayPath: gift.stickerPath,
             animationPath: gift.animationPath,
             isAnimated: gift.isAnimated,
+            playbackMode: .staticPreview,
             maxSide: stickerSide
         )
     }

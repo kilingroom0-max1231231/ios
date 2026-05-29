@@ -2,30 +2,55 @@ import SwiftUI
 import UIKit
 
 struct ChatListView: View {
+    enum Mode {
+        case main
+        case archive
+    }
+
     @ObservedObject var vm: AppViewModel
+    var mode: Mode = .main
     @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
     @State private var navigationPath = NavigationPath()
 
+    private var isArchiveMode: Bool { mode == .archive }
+    private var listKind: TgChatListKind { isArchiveMode ? .archive : vm.mainListKind }
+
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        if isArchiveMode {
             chatListContent
-        }
-        .onChange(of: vm.navigationTargetChatId) { target in
-            guard let target else { return }
-            navigationPath.append(target)
-            vm.navigationTargetChatId = nil
+        } else {
+            NavigationStack(path: $navigationPath) {
+                chatListContent
+            }
+            .onChange(of: vm.navigationTargetChatId) { target in
+                guard let target else { return }
+                navigationPath.append(target)
+                vm.navigationTargetChatId = nil
+            }
         }
     }
 
     private var chatListContent: some View {
         List {
+            if !isArchiveMode, let summary = vm.archiveSummary {
+                NavigationLink {
+                    ChatListView(vm: vm, mode: .archive)
+                } label: {
+                    ArchiveChatRowView(summary: summary)
+                }
+                .buttonStyle(ChatRowPressStyle())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+            }
+
             ForEach(visiblePinnedChats) { chat in
                 chatRow(chat)
             }
             .onMove { source, destination in
                 guard vm.chatSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                Task { await vm.movePinnedChats(from: source, to: destination) }
+                Task { await vm.movePinnedChats(from: source, to: destination, list: listKind) }
             }
 
             ForEach(visibleOtherChats) { chat in
@@ -35,19 +60,24 @@ struct ChatListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
-        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: vm.filteredChats)
+        .animation(.spring(response: 0.28, dampingFraction: 0.88), value: displayedChats)
         .navigationDestination(for: Int64.self) { chatId in
             ChatDetailView(vm: vm, chatId: chatId)
         }
         .transparentNavigationBar()
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top, spacing: 0) {
-            if searchVisible || !vm.chatSearch.isEmpty {
-                searchField
+            VStack(spacing: 0) {
+                if !isArchiveMode, !vm.chatFolders.isEmpty {
+                    ChatFolderTabsView(vm: vm)
+                }
+                if searchVisible || !vm.chatSearch.isEmpty {
+                    searchField
+                }
             }
         }
         .overlay {
-            if vm.chats.isEmpty && !vm.isBusy {
+            if displayedChats.isEmpty && !vm.isBusy {
                 emptyChatsView
             }
         }
@@ -66,7 +96,7 @@ struct ChatListView: View {
                         searchFocused = false
                     }
                 } label: {
-                    Text(AppText.tr("Чаты", "Chats"))
+                    Text(isArchiveMode ? AppText.tr("Архив", "Archived") : AppText.tr("Чаты", "Chats"))
                         .font(.headline)
                         .foregroundStyle(.primary)
                 }
@@ -88,12 +118,16 @@ struct ChatListView: View {
         }
     }
 
+    private var displayedChats: [TgChat] {
+        isArchiveMode ? vm.filteredArchivedChats : vm.filteredChats
+    }
+
     private var visiblePinnedChats: [TgChat] {
-        vm.filteredChats.filter(\.isPinned)
+        displayedChats.filter(\.isPinned)
     }
 
     private var visibleOtherChats: [TgChat] {
-        vm.filteredChats.filter { !$0.isPinned }
+        displayedChats.filter { !$0.isPinned }
     }
 
     private var peekSheetPresented: Binding<Bool> {
@@ -137,26 +171,44 @@ struct ChatListView: View {
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
-                Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned) }
+                Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned, list: listKind) }
             } label: {
                 Label(chat.isPinned ? AppText.tr("Открепить", "Unpin") : AppText.tr("Закрепить", "Pin"), systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
             }
             .tint(.orange)
 
-            Button {
-                Task {
-                    if chat.unreadCount > 0 || chat.isMarkedUnread {
-                        await vm.markChatRead(chat.id, force: true)
-                    } else {
-                        await vm.markChatUnread(chat.id)
-                    }
+            if isArchiveMode {
+                Button {
+                    Task { await vm.unarchiveChat(chat.id) }
+                } label: {
+                    Label(AppText.tr("Из архива", "Unarchive"), systemImage: "tray.and.arrow.up")
                 }
-            } label: {
-                Label(chat.unreadCount > 0 || chat.isMarkedUnread ? AppText.tr("Прочитано", "Read") : AppText.tr("Не прочитано", "Unread"), systemImage: chat.unreadCount > 0 || chat.isMarkedUnread ? "envelope.open" : "envelope.badge")
+                .tint(AppColors.accent)
+            } else {
+                Button {
+                    Task {
+                        if chat.unreadCount > 0 || chat.isMarkedUnread {
+                            await vm.markChatRead(chat.id, force: true)
+                        } else {
+                            await vm.markChatUnread(chat.id)
+                        }
+                    }
+                } label: {
+                    Label(chat.unreadCount > 0 || chat.isMarkedUnread ? AppText.tr("Прочитано", "Read") : AppText.tr("Не прочитано", "Unread"), systemImage: chat.unreadCount > 0 || chat.isMarkedUnread ? "envelope.open" : "envelope.badge")
+                }
+                .tint(AppColors.accent)
             }
-            .tint(AppColors.accent)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !isArchiveMode {
+                Button {
+                    Task { await vm.archiveChat(chat.id) }
+                } label: {
+                    Label(AppText.tr("В архив", "Archive"), systemImage: "archivebox")
+                }
+                .tint(.gray)
+            }
+
             Button(role: .destructive) {
                 Task {
                     if chat.kind == .basicGroup || chat.kind == .supergroup || chat.kind == .channel {
@@ -181,9 +233,23 @@ struct ChatListView: View {
     @ViewBuilder
     private func chatContextMenu(for chat: TgChat) -> some View {
         Button {
-            Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned) }
+            Task { await vm.setChatPinned(chat.id, pinned: !chat.isPinned, list: listKind) }
         } label: {
             Label(chat.isPinned ? AppText.tr("Открепить", "Unpin") : AppText.tr("Закрепить", "Pin"), systemImage: chat.isPinned ? "pin.slash" : "pin.fill")
+        }
+
+        if isArchiveMode {
+            Button {
+                Task { await vm.unarchiveChat(chat.id) }
+            } label: {
+                Label(AppText.tr("Из архива", "Unarchive"), systemImage: "tray.and.arrow.up")
+            }
+        } else {
+            Button {
+                Task { await vm.archiveChat(chat.id) }
+            } label: {
+                Label(AppText.tr("В архив", "Archive"), systemImage: "archivebox")
+            }
         }
 
         if chat.isMuted {
@@ -313,16 +379,16 @@ struct ChatListView: View {
     private var emptyChatsView: some View {
         if #available(iOS 17.0, *) {
             ContentUnavailableView(
-                AppText.tr("Нет чатов", "No chats"),
-                systemImage: "bubble.left.and.bubble.right",
+                isArchiveMode ? AppText.tr("Архив пуст", "Archive is empty") : AppText.tr("Нет чатов", "No chats"),
+                systemImage: isArchiveMode ? "archivebox" : "bubble.left.and.bubble.right",
                 description: Text(AppText.tr("Потяните вниз для обновления", "Pull down to refresh"))
             )
         } else {
             VStack(spacing: 10) {
-                Image(systemName: "bubble.left.and.bubble.right")
+                Image(systemName: isArchiveMode ? "archivebox" : "bubble.left.and.bubble.right")
                     .font(.system(size: 34))
                     .foregroundStyle(.secondary)
-                Text(AppText.tr("Нет чатов", "No chats"))
+                Text(isArchiveMode ? AppText.tr("Архив пуст", "Archive is empty") : AppText.tr("Нет чатов", "No chats"))
                     .font(.headline)
                 Text(AppText.tr("Потяните вниз для обновления", "Pull down to refresh"))
                     .font(.subheadline)

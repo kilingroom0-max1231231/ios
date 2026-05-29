@@ -1,11 +1,19 @@
 import AVKit
 import SwiftUI
 
+enum StickerPlaybackMode {
+  /// Lottie / video loops (use sparingly — one per screen area).
+    case animated
+    /// WebP/PNG thumbnail only — for dense grids.
+    case staticPreview
+}
+
 /// Shows a sticker or gift: static preview, WebM loop, or loading placeholder.
 struct StickerMediaView: View {
     let displayPath: String?
     let animationPath: String?
     var isAnimated: Bool = false
+    var playbackMode: StickerPlaybackMode = .animated
     /// Caps Lottie/video layout so grid cells do not expand to full animation bounds.
     var maxSide: CGFloat? = nil
 
@@ -38,19 +46,46 @@ struct StickerMediaView: View {
 
     var body: some View {
         Group {
-            if let tgsPath {
-                LottieStickerView(tgsPath: tgsPath, maxSide: maxSide ?? 96)
-            } else if shouldPlayVideo, let animationURL {
-                LoopingVideoStickerView(url: animationURL, fallbackPath: rasterDisplayPath)
-                    .frame(maxWidth: maxSide, maxHeight: maxSide)
+            if playbackMode == .staticPreview {
+                staticPreviewContent
             } else {
-                CachedLocalImage(path: rasterDisplayPath, contentMode: .fit) {
-                    loadingPlaceholder
-                }
+                animatedContent
             }
         }
         .frame(width: maxSide, height: maxSide)
         .clipped()
+    }
+
+    @ViewBuilder
+    private var staticPreviewContent: some View {
+        CachedLocalImage(path: staticRasterPath, contentMode: .fit) {
+            loadingPlaceholder
+        }
+    }
+
+    @ViewBuilder
+    private var animatedContent: some View {
+        if let tgsPath {
+            LottieStickerView(tgsPath: tgsPath, maxSide: maxSide ?? 96, isPlaying: true)
+        } else if shouldPlayVideo, let animationURL {
+            LoopingVideoStickerView(url: animationURL, fallbackPath: rasterDisplayPath)
+                .frame(maxWidth: maxSide, maxHeight: maxSide)
+        } else {
+            CachedLocalImage(path: rasterDisplayPath, contentMode: .fit) {
+                loadingPlaceholder
+            }
+        }
+    }
+
+    /// Thumbnail for grid cells — never decodes TGS here.
+    private var staticRasterPath: String? {
+        if let displayPath, !displayPath.isEmpty, Self.isRasterImagePath(displayPath) {
+            return displayPath
+        }
+        if let animationPath, !animationPath.isEmpty, Self.isRasterImagePath(animationPath) {
+            return animationPath
+        }
+        return nil
     }
 
     static func isPlayableVideoPath(_ path: String) -> Bool {

@@ -1,7 +1,11 @@
 import Foundation
+import Lottie
 import zlib
 
 enum TGSFileLoader {
+    private static let lock = NSLock()
+    private static var animationCache: [String: LottieAnimation] = [:]
+    private static let maxCachedAnimations = 24
     /// Telegram `.tgs` stickers are gzip-compressed Lottie JSON.
     static func lottieJSONData(path: String) -> Data? {
         guard path.lowercased().hasSuffix(".tgs") else { return nil }
@@ -16,19 +20,45 @@ enum TGSFileLoader {
 
     /// Writes decompressed Lottie JSON next to the `.tgs` file (reused on next launch).
     static func cachedLottieJSONPath(forTGSPath path: String) -> String? {
-        guard let json = lottieJSONData(path: path) else { return nil }
         let jsonURL = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("json")
-        if FileManager.default.fileExists(atPath: jsonURL.path),
-           let existing = try? Data(contentsOf: jsonURL),
-           existing == json {
+        if FileManager.default.fileExists(atPath: jsonURL.path) {
             return jsonURL.path
         }
+        guard let json = lottieJSONData(path: path) else { return nil }
         do {
             try json.write(to: jsonURL, options: .atomic)
             return jsonURL.path
         } catch {
             return nil
         }
+    }
+
+    static func cachedLottieAnimation(forTGSPath path: String) -> LottieAnimation? {
+        lock.lock()
+        if let cached = animationCache[path] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        guard let jsonPath = cachedLottieJSONPath(forTGSPath: path),
+              let animation = LottieAnimation.filepath(jsonPath) else {
+            return nil
+        }
+
+        lock.lock()
+        if animationCache.count >= maxCachedAnimations, let key = animationCache.keys.first {
+            animationCache.removeValue(forKey: key)
+        }
+        animationCache[path] = animation
+        lock.unlock()
+        return animation
+    }
+
+    static func clearAnimationCache() {
+        lock.lock()
+        animationCache.removeAll()
+        lock.unlock()
     }
 
     private static func gunzip(_ data: Data) -> Data? {

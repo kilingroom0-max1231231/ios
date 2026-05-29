@@ -102,11 +102,29 @@ final class TelegramRepository {
         try await client.submitPassword(password)
     }
 
-    func loadChats() async throws -> [TgChat] {
-        let remote = try await client.fetchChats(limit: 80)
+    func loadChats(list: TgChatListKind = .main, limit: Int = 80) async throws -> [TgChat] {
+        let remote = try await client.fetchChats(list: list, limit: limit)
         let withAvatars = try await client.enrichChatsWithAvatarPaths(remote)
-        try? chatStore.write(chats: withAvatars)
+        if list == .main {
+            try? chatStore.write(chats: withAvatars)
+        }
         return withAvatars
+    }
+
+    func loadArchivedChats(limit: Int = 80) async throws -> [TgChat] {
+        try await loadChats(list: .archive, limit: limit)
+    }
+
+    func loadChatFolders() async throws -> [TgChatFolder] {
+        try await client.fetchChatFolders()
+    }
+
+    func archiveChat(chatId: Int64) async throws {
+        try await client.addChatToList(chatId: chatId, list: .archive)
+    }
+
+    func unarchiveChat(chatId: Int64) async throws {
+        try await client.removeChatFromList(chatId: chatId, list: .archive)
     }
 
     func enrichChatAvatars(_ chats: [TgChat]) async throws -> [TgChat] {
@@ -272,7 +290,7 @@ final class TelegramRepository {
         try await client.fetchActiveStories(chatId: chatId)
     }
 
-    func loadUserGifts(userId: Int64, limit: Int = 100) async throws -> [TgGiftItem] {
+    func loadUserGifts(userId: Int64, limit: Int = 72) async throws -> [TgGiftItem] {
         try await client.fetchReceivedGifts(userId: userId, limit: limit)
     }
 
@@ -411,12 +429,12 @@ final class TelegramRepository {
         try await client.markChatUnread(chatId: chatId, unread: unread)
     }
 
-    func setChatPinned(chatId: Int64, pinned: Bool) async throws {
-        try await client.setChatPinned(chatId: chatId, pinned: pinned)
+    func setChatPinned(chatId: Int64, pinned: Bool, list: TgChatListKind = .main) async throws {
+        try await client.setChatPinned(chatId: chatId, pinned: pinned, list: list)
     }
 
-    func reorderPinnedChats(chatIds: [Int64]) async throws {
-        try await client.reorderPinnedChats(chatIds: chatIds)
+    func reorderPinnedChats(chatIds: [Int64], list: TgChatListKind = .main) async throws {
+        try await client.reorderPinnedChats(chatIds: chatIds, list: list)
     }
 
     func setChatMute(chatId: Int64, duration: ChatMuteDuration) async throws {

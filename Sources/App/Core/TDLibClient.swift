@@ -118,10 +118,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
-    func fetchChats(limit: Int = 50) async throws -> [TgChat] {
+    func fetchChats(list: TgChatListKind = .main, limit: Int = 50) async throws -> [TgChat] {
         let response = try await sendRequest([
             "@type": "getChats",
-            "chat_list": ["@type": "chatListMain"],
+            "chat_list": list.tdlibDictionary,
             "limit": limit
         ])
         guard let ids = response["chat_ids"] as? [Any] else { return [] }
@@ -133,11 +133,51 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 "@type": "getChat",
                 "chat_id": id
             ])
-            if let chat = try await parseChatSummary(chatResp) {
+            if let chat = try await parseChatSummary(chatResp, listKind: list) {
                 chats.append(chat)
             }
         }
         return chats.sorted(by: chatSort)
+    }
+
+    func fetchChatFolders() async throws -> [TgChatFolder] {
+        let response = try await sendRequest(["@type": "getChatFolders"])
+        var folderIds: [Int32] = []
+
+        if let ids = response["chat_folder_ids"] as? [Any] {
+            folderIds = ids.compactMap { int32Value($0) }
+        } else if let folders = response["folders"] as? [[String: Any]] {
+            folderIds = folders.compactMap { int32Value($0["id"]) }
+        }
+
+        var result: [TgChatFolder] = []
+        result.reserveCapacity(folderIds.count)
+        for folderId in folderIds {
+            let folderResp = try await sendRequest([
+                "@type": "getChatFolder",
+                "chat_folder_id": folderId
+            ])
+            if let folder = parseChatFolder(folderResp) {
+                result.append(folder)
+            }
+        }
+        return result
+    }
+
+    func addChatToList(chatId: Int64, list: TgChatListKind) async throws {
+        _ = try await sendRequest([
+            "@type": "addChatToList",
+            "chat_id": chatId,
+            "chat_list": list.tdlibDictionary
+        ])
+    }
+
+    func removeChatFromList(chatId: Int64, list: TgChatListKind) async throws {
+        _ = try await sendRequest([
+            "@type": "removeChatFromList",
+            "chat_id": chatId,
+            "chat_list": list.tdlibDictionary
+        ])
     }
 
     func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat] {
@@ -555,19 +595,19 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
-    func setChatPinned(chatId: Int64, pinned: Bool) async throws {
+    func setChatPinned(chatId: Int64, pinned: Bool, list: TgChatListKind = .main) async throws {
         _ = try await sendRequest([
             "@type": "toggleChatIsPinned",
-            "chat_list": ["@type": "chatListMain"],
+            "chat_list": list.tdlibDictionary,
             "chat_id": chatId,
             "is_pinned": pinned
         ])
     }
 
-    func reorderPinnedChats(chatIds: [Int64]) async throws {
+    func reorderPinnedChats(chatIds: [Int64], list: TgChatListKind = .main) async throws {
         _ = try await sendRequest([
             "@type": "setPinnedChats",
-            "chat_list": ["@type": "chatListMain"],
+            "chat_list": list.tdlibDictionary,
             "chat_ids": chatIds
         ])
     }
@@ -2131,7 +2171,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return (photo["small"] as? [String: Any]) ?? (photo["big"] as? [String: Any])
     }
 
-    private func parseChatSummary(_ chat: [String: Any]) async throws -> TgChat? {
+    private func parseChatSummary(_ chat: [String: Any], listKind: TgChatListKind = .main) async throws -> TgChat? {
         guard let id = int64Value(chat["id"]), let title = chat["title"] as? String else {
             return nil
         }
@@ -2140,7 +2180,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let lastMessage = lastMessageObject.flatMap { parseMessage($0, fallbackChatId: id) }
         let lastReadOutboxMessageId = int64Value(chat["last_read_outbox_message_id"]) ?? 0
         let unreadCount = (chat["unread_count"] as? Int) ?? Int(int64Value(chat["unread_count"]) ?? 0)
-        let position = mainChatPosition(chat)
+        let position = chatPosition(chat, listKind: listKind)
         let notification = notificationInfo(chat["notification_settings"] as? [String: Any])
         let statusInfo = try await resolveChatStatusInfo(chat)
         let sendInfo = try await resolveChatSendPermissions(chat)
@@ -2236,13 +2276,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return (lhs.lastMessageDate ?? .distantPast) > (rhs.lastMessageDate ?? .distantPast)
     }
 
-    private func mainChatPosition(_ chat: [String: Any]) -> (isPinned: Bool, order: Int64?) {
+    private func chatPosition(_ chat: [String: Any], listKind: TgChatListKind) -> (isPinned: Bool, order: Int64?) {
         let positions = chat["positions"] as? [[String: Any]] ?? []
         for position in positions {
-            guard
-                let list = position["list"] as? [String: Any],
-                (list["@type"] as? String) == "chatListMain"
-            else { continue }
+            guard let list = position["list"] as? [String: Any] else { continue }
+            guard (list["@type"] as? String) == listKind.listTypeName else { continue }
+            if case .folder(let folderId) = listKind {
+                guard int32Value(list["chat_folder_id"]) == folderId else { continue }
+            }
 
             return (
                 (position["is_pinned"] as? Bool) ?? false,
@@ -2250,6 +2291,21 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             )
         }
         return (false, nil)
+    }
+
+    private func parseChatFolder(_ json: [String: Any]) -> TgChatFolder? {
+        guard let id = int32Value(json["id"]) else { return nil }
+        let title = (json["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = (title?.isEmpty == false) ? title! : AppText.tr("Папка", "Folder")
+        var iconEmoji: String?
+        if let icon = json["icon"] as? [String: Any], let iconName = icon["name"] as? String {
+            let trimmed = iconName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, trimmed.count <= 4 {
+                iconEmoji = trimmed
+            }
+        }
+        let colorId = (json["color_id"] as? Int) ?? Int(int32Value(json["color_id"]) ?? 0)
+        return TgChatFolder(id: id, title: resolvedTitle, iconEmoji: iconEmoji, colorId: colorId)
     }
 
     private func notificationInfo(_ settings: [String: Any]?) -> (isMuted: Bool, muteUntil: Date?) {
@@ -2742,6 +2798,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         if let value = any as? Int { return Int64(value) }
         if let value = any as? NSNumber { return value.int64Value }
         if let value = any as? String { return Int64(value) }
+        return nil
+    }
+
+    private func int32Value(_ any: Any?) -> Int32? {
+        if let value = any as? Int32 { return value }
+        if let value = any as? Int { return Int32(value) }
+        if let value = any as? NSNumber { return value.int32Value }
+        if let value = any as? String { return Int32(value) }
         return nil
     }
 

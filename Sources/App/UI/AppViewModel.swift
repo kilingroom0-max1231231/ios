@@ -21,6 +21,10 @@ final class AppViewModel: ObservableObject {
     @Published var password = ""
 
     @Published var chats: [TgChat] = []
+    @Published var chatFolders: [TgChatFolder] = []
+    @Published var selectedChatFolderId: Int32?
+    @Published var archivedChats: [TgChat] = []
+    @Published var archiveSummary: ArchiveChatSummary?
     @Published var selectedChatId: Int64?
     @Published var visibleChatId: Int64?
     @Published var messages: [TgMessage] = []
@@ -109,6 +113,20 @@ final class AppViewModel: ObservableObject {
             $0.title.localizedCaseInsensitiveContains(query)
                 || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(query) ?? false)
         }
+    }
+
+    var filteredArchivedChats: [TgChat] {
+        let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return archivedChats }
+        return archivedChats.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || ($0.lastMessagePreview?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
+
+    var mainListKind: TgChatListKind {
+        if let folderId = selectedChatFolderId { return .folder(folderId) }
+        return .main
     }
 
     var selectedChat: TgChat? {
@@ -279,6 +297,10 @@ final class AppViewModel: ObservableObject {
         code = ""
         password = ""
         chats = []
+        chatFolders = []
+        selectedChatFolderId = nil
+        archivedChats = []
+        archiveSummary = nil
         messages = []
         selectedChatId = nil
         authState = .waitPhone
@@ -308,9 +330,11 @@ final class AppViewModel: ObservableObject {
 
         // Reset volatile state before new repository bootstrap.
         chats = []
+        chatFolders = []
+        selectedChatFolderId = nil
+        archivedChats = []
+        archiveSummary = nil
         messages = []
-        selectedChatId = nil
-        visibleChatId = nil
         chatProfile = nil
         chatMembers = []
         chatMediaMessages = []
@@ -347,11 +371,19 @@ final class AppViewModel: ObservableObject {
 
         do {
             let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
+            async let listTask = repository.loadChats(list: mainListKind, limit: 80)
+            async let archiveTask = repository.loadArchivedChats(limit: 80)
+
+            let (listChats, archived) = try await (listTask, archiveTask)
+            let folders = (try? await repository.loadChatFolders()) ?? chatFolders
             chats = mergeChatsPreservingState(
-                sortChats(try await repository.loadChats()),
+                sortChats(listChats),
                 previousById: previousById,
                 typingByChat: typingByChat
             )
+            archivedChats = sortChats(archived)
+            archiveSummary = Self.makeArchiveSummary(from: archivedChats)
+            chatFolders = folders
             status = ""
             scheduleChatAvatarRefresh()
         } catch {
@@ -793,16 +825,52 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func setChatPinned(_ chatId: Int64, pinned: Bool) async {
+    func selectChatFolder(_ folderId: Int32?) async {
+        guard selectedChatFolderId != folderId else { return }
+        selectedChatFolderId = folderId
+        chats = []
+        await refreshChats()
+    }
+
+    func archiveChat(_ chatId: Int64) async {
         guard let repository else { return }
+        chats.removeAll { $0.id == chatId }
+        do {
+            try await repository.archiveChat(chatId: chatId)
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+            await refreshChats()
+        }
+    }
+
+    func unarchiveChat(_ chatId: Int64) async {
+        guard let repository else { return }
+        archivedChats.removeAll { $0.id == chatId }
+        do {
+            try await repository.unarchiveChat(chatId: chatId)
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
+            await refreshChats()
+        }
+    }
+
+    func setChatPinned(_ chatId: Int64, pinned: Bool, list: TgChatListKind? = nil) async {
+        guard let repository else { return }
+        let targetList = list ?? mainListKind
         updateLocalChat(chatId) { chat in
             chat.isPinned = pinned
             chat.pinOrder = pinned ? Int64(Date().timeIntervalSince1970) : nil
         }
-        chats = sortChats(chats)
+        if targetList == .archive {
+            archivedChats = sortChats(archivedChats)
+        } else {
+            chats = sortChats(chats)
+        }
 
         do {
-            try await repository.setChatPinned(chatId: chatId, pinned: pinned)
+            try await repository.setChatPinned(chatId: chatId, pinned: pinned, list: targetList)
             await refreshChats()
         } catch {
             status = error.localizedDescription
@@ -922,14 +990,15 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func movePinnedChats(from source: IndexSet, to destination: Int) async {
+    func movePinnedChats(from source: IndexSet, to destination: Int, list: TgChatListKind? = nil) async {
         guard let repository else { return }
-        var pinned = chats.filter(\.isPinned)
+        let targetList = list ?? mainListKind
+        var pinned = (targetList == .archive ? archivedChats : chats).filter(\.isPinned)
         moveItems(in: &pinned, from: source, to: destination)
         let pinnedIds = pinned.map(\.id)
 
         do {
-            try await repository.reorderPinnedChats(chatIds: pinnedIds)
+            try await repository.reorderPinnedChats(chatIds: pinnedIds, list: targetList)
             await refreshChats()
         } catch {
             status = error.localizedDescription
@@ -1615,8 +1684,12 @@ final class AppViewModel: ObservableObject {
     }
 
     private func updateLocalChat(_ chatId: Int64, mutate: (inout TgChat) -> Void) {
-        guard let index = chats.firstIndex(where: { $0.id == chatId }) else { return }
-        mutate(&chats[index])
+        if let index = chats.firstIndex(where: { $0.id == chatId }) {
+            mutate(&chats[index])
+        }
+        if let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
+            mutate(&archivedChats[index])
+        }
     }
 
     func searchLocalChats(query: String) -> [TgChat] {
@@ -1885,6 +1958,18 @@ final class AppViewModel: ObservableObject {
             }
             return (lhs.lastMessageDate ?? .distantPast) > (rhs.lastMessageDate ?? .distantPast)
         }
+    }
+
+    private static func makeArchiveSummary(from chats: [TgChat]) -> ArchiveChatSummary? {
+        guard !chats.isEmpty else { return nil }
+        let unreadCount = chats.reduce(0) { $0 + $1.unreadCount }
+        let top = chats.first
+        return ArchiveChatSummary(
+            count: chats.count,
+            unreadCount: unreadCount,
+            preview: top?.lastMessagePreview,
+            topChatTitle: top?.title
+        )
     }
 
     private func muteUntilDate(for duration: ChatMuteDuration) -> Date? {

@@ -393,6 +393,9 @@ struct ChatProfileView: View {
                 Task { await vm.loadUserProfileGifts(userId: userId) }
             }
         }
+        .onDisappear {
+            TGSFileLoader.clearAnimationCache()
+        }
     }
 
     @ViewBuilder

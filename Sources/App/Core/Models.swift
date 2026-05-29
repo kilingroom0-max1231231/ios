@@ -283,6 +283,45 @@ enum ChatKind: String, Equatable, Codable {
     case unknown
 }
 
+enum TgChatListKind: Equatable {
+    case main
+    case archive
+    case folder(Int32)
+
+    var tdlibDictionary: [String: Any] {
+        switch self {
+        case .main:
+            return ["@type": "chatListMain"]
+        case .archive:
+            return ["@type": "chatListArchive"]
+        case .folder(let id):
+            return ["@type": "chatListFolder", "chat_folder_id": id]
+        }
+    }
+
+    var listTypeName: String {
+        switch self {
+        case .main: return "chatListMain"
+        case .archive: return "chatListArchive"
+        case .folder: return "chatListFolder"
+        }
+    }
+}
+
+struct TgChatFolder: Identifiable, Equatable {
+    let id: Int32
+    let title: String
+    let iconEmoji: String?
+    let colorId: Int
+}
+
+struct ArchiveChatSummary: Equatable {
+    let count: Int
+    let unreadCount: Int
+    let preview: String?
+    let topChatTitle: String?
+}
+
 enum ChatMuteDuration: Equatable {
     case off
     case oneHour

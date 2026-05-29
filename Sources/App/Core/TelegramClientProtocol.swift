@@ -8,7 +8,10 @@ protocol TelegramClientProtocol {
     func submitCode(_ code: String) async throws
     func submitPassword(_ password: String) async throws
 
-    func fetchChats(limit: Int) async throws -> [TgChat]
+    func fetchChats(list: TgChatListKind, limit: Int) async throws -> [TgChat]
+    func fetchChatFolders() async throws -> [TgChatFolder]
+    func addChatToList(chatId: Int64, list: TgChatListKind) async throws
+    func removeChatFromList(chatId: Int64, list: TgChatListKind) async throws
     func fetchMessages(chatId: Int64, limit: Int) async throws -> [TgMessage]
     func fetchOlderMessages(chatId: Int64, fromMessageId: Int64, limit: Int) async throws -> [TgMessage]
     func fetchMessagesByIds(chatId: Int64, messageIds: [Int64]) async throws -> [TgMessage]
@@ -25,8 +28,8 @@ protocol TelegramClientProtocol {
     func closeChat(chatId: Int64) async throws
     func markChatRead(chatId: Int64, messageIds: [Int64]) async throws
     func markChatUnread(chatId: Int64, unread: Bool) async throws
-    func setChatPinned(chatId: Int64, pinned: Bool) async throws
-    func reorderPinnedChats(chatIds: [Int64]) async throws
+    func setChatPinned(chatId: Int64, pinned: Bool, list: TgChatListKind) async throws
+    func reorderPinnedChats(chatIds: [Int64], list: TgChatListKind) async throws
     func setChatMute(chatId: Int64, duration: ChatMuteDuration) async throws
     func clearChatHistory(chatId: Int64) async throws
     func deleteChat(chatId: Int64) async throws
