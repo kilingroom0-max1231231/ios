@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Security
+import SwiftUI
 import UIKit
 
 @MainActor
@@ -346,21 +347,116 @@ final class AppViewModel: ObservableObject {
 
         do {
             let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
-            chats = sortChats(try await repository.loadChats()).map { chat in
-                var updated = chat
-                if (updated.avatarPath?.isEmpty ?? true),
-                   let previousPath = previousById[chat.id]?.avatarPath,
-                   !previousPath.isEmpty {
-                    updated.avatarPath = previousPath
-                }
-                updated.typingText = typingByChat[chat.id] ?? previousById[chat.id]?.typingText
-                return updated
-            }
+            chats = mergeChatsPreservingState(
+                sortChats(try await repository.loadChats()),
+                previousById: previousById,
+                typingByChat: typingByChat
+            )
             status = ""
+            scheduleChatAvatarRefresh()
         } catch {
             if chats.isEmpty {
                 status = error.localizedDescription
             }
+        }
+    }
+
+    func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            Task { await configurePushAndBackground() }
+        case .background:
+            guard AppSettingsStore.shared.enableBackgroundSync else { return }
+            Task { await performBackgroundSync() }
+        default:
+            break
+        }
+    }
+
+    func handlePushNotification() async {
+        guard AppSettingsStore.shared.enableBackgroundSync else { return }
+        await repository?.processPushNotification()
+        await refreshChats()
+    }
+
+    func configurePushAndBackground() async {
+        guard authState == .ready else { return }
+        await PushNotificationService.shared.refreshAuthorizationStatus()
+        guard AppSettingsStore.shared.enablePushNotifications else { return }
+
+        if PushNotificationService.shared.authorizationStatus == .notDetermined {
+            _ = await PushNotificationService.shared.requestAuthorization()
+        } else {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        await registerPushTokenIfNeeded()
+    }
+
+    func registerPushTokenIfNeeded() async {
+        await PushNotificationService.shared.registerDeviceIfNeeded(repository: repository)
+    }
+
+    private func performBackgroundSync() async {
+        guard repository != nil, authState == .ready else { return }
+
+        var taskID: UIBackgroundTaskIdentifier = .invalid
+        taskID = UIApplication.shared.beginBackgroundTask {
+            if taskID != .invalid {
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
+        }
+        defer {
+            if taskID != .invalid {
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
+        }
+
+        await repository?.processPushNotification()
+        await refreshChats()
+        if AppSettingsStore.shared.enableBackgroundMediaPrefetch,
+           let chatId = selectedChatId ?? chats.first?.id {
+            await refreshMessages(force: false)
+            _ = chatId
+        }
+    }
+
+    private var chatAvatarRefreshTask: Task<Void, Never>?
+
+    private func scheduleChatAvatarRefresh() {
+        chatAvatarRefreshTask?.cancel()
+        chatAvatarRefreshTask = Task { @MainActor [weak self] in
+            guard let self, let repository = self.repository else { return }
+            let snapshot = self.chats
+            let needsRefresh = snapshot.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
+            guard needsRefresh else { return }
+            guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return }
+            guard !Task.isCancelled else { return }
+            let typingByChat = Dictionary(uniqueKeysWithValues: self.chats.compactMap { chat in
+                chat.typingText.map { (chat.id, $0) }
+            })
+            let previousById = Dictionary(uniqueKeysWithValues: self.chats.map { ($0.id, $0) })
+            self.chats = self.mergeChatsPreservingState(
+                self.sortChats(enriched),
+                previousById: previousById,
+                typingByChat: typingByChat
+            )
+        }
+    }
+
+    private func mergeChatsPreservingState(
+        _ loaded: [TgChat],
+        previousById: [Int64: TgChat],
+        typingByChat: [Int64: String]
+    ) -> [TgChat] {
+        loaded.map { chat in
+            var updated = chat
+            if (updated.avatarPath?.isEmpty ?? true),
+               let previousPath = previousById[chat.id]?.avatarPath,
+               !previousPath.isEmpty {
+                updated.avatarPath = previousPath
+            }
+            updated.typingText = typingByChat[chat.id] ?? previousById[chat.id]?.typingText
+            return updated
         }
     }
 
@@ -1152,6 +1248,7 @@ final class AppViewModel: ObservableObject {
             if phase == .main {
                 await refreshChats()
                 incomingNotificationsAllowed = true
+                await configurePushAndBackground()
                 await prepareContactsOnLaunch()
             }
         } catch {

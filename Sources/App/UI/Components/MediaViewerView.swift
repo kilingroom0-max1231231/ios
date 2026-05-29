@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -946,7 +947,7 @@ final class LocalImageCache {
             return cached
         }
 
-        guard var image = UIImage(contentsOfFile: path) else {
+        guard var image = UIImage(contentsOfFile: path) ?? Self.decodeImageIO(path: path) else {
             return nil
         }
 
@@ -957,6 +958,15 @@ final class LocalImageCache {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
         cache.setObject(image, forKey: key, cost: cost)
         return image
+    }
+
+    private static func decodeImageIO(path: String) -> UIImage? {
+        let url = URL(fileURLWithPath: path) as CFURL
+        guard let source = CGImageSourceCreateWithURL(url, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 
     private func downscaled(_ image: UIImage, maxPixelSize: CGFloat) -> UIImage? {

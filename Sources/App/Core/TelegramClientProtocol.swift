@@ -51,4 +51,7 @@ protocol TelegramClientProtocol {
     func fetchReceivedGifts(userId: Int64, limit: Int) async throws -> [TgGiftItem]
     func fetchContacts() async throws -> [TgContact]
     func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
+    func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat]
+    func registerPushDevice(token: Data, sandbox: Bool) async throws
+    func processPushNotification() async
 }

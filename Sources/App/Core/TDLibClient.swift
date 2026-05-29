@@ -140,6 +140,68 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return chats.sorted(by: chatSort)
     }
 
+    func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat] {
+        let targets = chats.filter {
+            $0.kind != .savedMessages && ($0.avatarPath?.isEmpty ?? true)
+        }
+        guard !targets.isEmpty else { return chats }
+
+        var pathsByChatId: [Int64: String] = [:]
+        pathsByChatId.reserveCapacity(targets.count)
+
+        let batchSize = 6
+        var index = targets.startIndex
+        while index < targets.endIndex {
+            let end = targets.index(index, offsetBy: batchSize, limitedBy: targets.endIndex) ?? targets.endIndex
+            let batch = Array(targets[index..<end])
+            await withTaskGroup(of: (Int64, String?).self) { group in
+                for chat in batch {
+                    group.addTask { [weak self] in
+                        guard let self else { return (chat.id, nil) }
+                        guard let chatResp = try? await self.sendRequest([
+                            "@type": "getChat",
+                            "chat_id": chat.id
+                        ]) else {
+                            return (chat.id, nil)
+                        }
+                        let path = try? await self.resolveChatAvatarPath(chatResp, downloadIfMissing: true)
+                        return (chat.id, path)
+                    }
+                }
+                for await (chatId, path) in group {
+                    if let path, !path.isEmpty {
+                        pathsByChatId[chatId] = path
+                    }
+                }
+            }
+            index = end
+        }
+
+        return chats.map { chat in
+            guard let path = pathsByChatId[chat.id] else { return chat }
+            var updated = chat
+            updated.avatarPath = path
+            return updated
+        }
+    }
+
+    func registerPushDevice(token: Data, sandbox: Bool) async throws {
+        let tokenString = token.map { String(format: "%02x", $0) }.joined()
+        _ = try await sendRequest([
+            "@type": "registerDevice",
+            "token": tokenString,
+            "other_user_ids": [],
+            "are_push_notifications_enabled": true
+        ])
+        _ = sandbox
+    }
+
+    func processPushNotification() async {
+        _ = try? await sendRequest([
+            "@type": "processPushNotification"
+        ])
+    }
+
     func fetchMessages(chatId: Int64, limit: Int = 500) async throws -> [TgMessage] {
         let response = try await sendRequest([
             "@type": "getChatHistory",
@@ -1155,8 +1217,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 displayPath = displayPath ?? mainPath
             case "stickerFormatTgs":
                 animationPath = mainPath
+                if displayPath == nil {
+                    displayPath = mainPath
+                }
             case "stickerFormatWebp":
                 displayPath = mainPath ?? displayPath
+                animationPath = nil
             default:
                 displayPath = mainPath ?? displayPath
             }
@@ -2357,11 +2423,61 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return ("был(а) недавно", false)
         }
 
-        if typeName == "chatTypeBasicGroup" || typeName == "chatTypeSupergroup" {
-            return ("группа", false)
+        if typeName == "chatTypeBasicGroup" {
+            if let groupId = int64Value(type["basic_group_id"]) {
+                let group = try await sendRequest([
+                    "@type": "getBasicGroup",
+                    "basic_group_id": groupId
+                ])
+                let count = memberCount(from: group)
+                return (memberCountLabel(count, isChannel: false), false)
+            }
+            return (AppText.tr("группа", "group"), false)
+        }
+
+        if typeName == "chatTypeSupergroup" {
+            guard let supergroupId = int64Value(type["supergroup_id"]) else {
+                return (AppText.tr("группа", "group"), false)
+            }
+            let supergroup = try await sendRequest([
+                "@type": "getSupergroup",
+                "supergroup_id": supergroupId
+            ])
+            let isChannel = (supergroup["is_channel"] as? Bool) ?? false
+            let count = memberCount(from: supergroup)
+            return (memberCountLabel(count, isChannel: isChannel), false)
         }
 
         return (nil, nil)
+    }
+
+    private func memberCount(from object: [String: Any]) -> Int {
+        if let value = object["member_count"] as? Int {
+            return value
+        }
+        return Int(int64Value(object["member_count"]) ?? 0)
+    }
+
+    private func memberCountLabel(_ count: Int, isChannel: Bool) -> String {
+        let formatted = Self.compactCount(count)
+        if isChannel {
+            return AppText.tr("\(formatted) подписчиков", "\(formatted) subscribers")
+        }
+        return AppText.tr("\(formatted) участников", "\(formatted) members")
+    }
+
+    private static func compactCount(_ value: Int) -> String {
+        let count = max(0, value)
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000.0)
+        }
+        if count >= 10_000 {
+            return String(format: "%.0fK", Double(count) / 1_000.0)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000.0)
+        }
+        return "\(count)"
     }
 
     private func resolveChatKind(_ chat: [String: Any]) async throws -> ChatKind {

@@ -18,12 +18,22 @@ struct StickerMediaView: View {
         isAnimated && animationURL != nil
     }
 
+    private var rasterDisplayPath: String? {
+        if let displayPath, !displayPath.isEmpty, Self.isRasterImagePath(displayPath) {
+            return displayPath
+        }
+        if let animationPath, !animationPath.isEmpty, Self.isRasterImagePath(animationPath) {
+            return animationPath
+        }
+        return nil
+    }
+
     var body: some View {
         Group {
             if shouldPlayVideo, let animationURL {
-                LoopingVideoStickerView(url: animationURL, fallbackPath: displayPath)
+                LoopingVideoStickerView(url: animationURL, fallbackPath: rasterDisplayPath)
             } else {
-                CachedLocalImage(path: displayPath ?? animationPath, contentMode: .fit) {
+                CachedLocalImage(path: rasterDisplayPath, contentMode: .fit) {
                     loadingPlaceholder
                 }
             }
@@ -33,6 +43,11 @@ struct StickerMediaView: View {
     static func isPlayableVideoPath(_ path: String) -> Bool {
         let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
         return ext == "webm" || ext == "mp4" || ext == "mov"
+    }
+
+    static func isRasterImagePath(_ path: String) -> Bool {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        return ["webp", "png", "jpg", "jpeg", "gif", "heic"].contains(ext)
     }
 
     private var loadingPlaceholder: some View {

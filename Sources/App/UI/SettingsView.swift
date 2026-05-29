@@ -132,7 +132,7 @@ struct SettingsView: View {
                     settingsLinkLabel(
                         icon: "bell.badge",
                         title: AppText.tr("Уведомления", "Notifications"),
-                        subtitle: AppText.tr("Баннеры и звуки", "Banners & sounds")
+                        subtitle: AppText.tr("Push, фон, баннеры", "Push, background, banners")
                     )
                 }
 

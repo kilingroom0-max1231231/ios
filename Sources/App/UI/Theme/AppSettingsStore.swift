@@ -41,6 +41,18 @@ final class AppSettingsStore: ObservableObject {
         didSet { persist() }
     }
 
+    @Published var enablePushNotifications: Bool {
+        didSet { persist() }
+    }
+
+    @Published var enableBackgroundSync: Bool {
+        didSet { persist() }
+    }
+
+    @Published var enableBackgroundMediaPrefetch: Bool {
+        didSet { persist() }
+    }
+
     private enum Key {
         static let showProfileChatKind = "app.settings.showProfileChatKind"
         static let showProfileChatId = "app.settings.showProfileChatId"
@@ -51,6 +63,9 @@ final class AppSettingsStore: ObservableObject {
         static let enableInAppSounds = "app.settings.enableInAppSounds"
         static let enableIncomingBanners = "app.settings.enableIncomingBanners"
         static let showMessageTimestamps = "app.settings.showMessageTimestamps"
+        static let enablePushNotifications = "app.settings.enablePushNotifications"
+        static let enableBackgroundSync = "app.settings.enableBackgroundSync"
+        static let enableBackgroundMediaPrefetch = "app.settings.enableBackgroundMediaPrefetch"
     }
 
     private init() {
@@ -82,6 +97,15 @@ final class AppSettingsStore: ObservableObject {
         showMessageTimestamps = defaults.object(forKey: Key.showMessageTimestamps) == nil
             ? true
             : defaults.bool(forKey: Key.showMessageTimestamps)
+        enablePushNotifications = defaults.object(forKey: Key.enablePushNotifications) == nil
+            ? true
+            : defaults.bool(forKey: Key.enablePushNotifications)
+        enableBackgroundSync = defaults.object(forKey: Key.enableBackgroundSync) == nil
+            ? true
+            : defaults.bool(forKey: Key.enableBackgroundSync)
+        enableBackgroundMediaPrefetch = defaults.object(forKey: Key.enableBackgroundMediaPrefetch) == nil
+            ? false
+            : defaults.bool(forKey: Key.enableBackgroundMediaPrefetch)
     }
 
     private func persist() {
@@ -95,6 +119,9 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(enableInAppSounds, forKey: Key.enableInAppSounds)
         defaults.set(enableIncomingBanners, forKey: Key.enableIncomingBanners)
         defaults.set(showMessageTimestamps, forKey: Key.showMessageTimestamps)
+        defaults.set(enablePushNotifications, forKey: Key.enablePushNotifications)
+        defaults.set(enableBackgroundSync, forKey: Key.enableBackgroundSync)
+        defaults.set(enableBackgroundMediaPrefetch, forKey: Key.enableBackgroundMediaPrefetch)
     }
 
     nonisolated static var keepDeletedMessagesValue: Bool {

@@ -6,6 +6,7 @@ struct AppShellView: View {
     @StateObject private var language = AppLanguageStore.shared
     @StateObject private var swipeSettings = MessageSwipeSettingsStore.shared
     @StateObject private var appSettings = AppSettingsStore.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -83,7 +84,16 @@ struct AppShellView: View {
         .environmentObject(swipeSettings)
         .environmentObject(appSettings)
         .task {
+            AppDelegateHolder.viewModel = vm
             await vm.start()
+        }
+        .onChange(of: scenePhase) { phase in
+            vm.handleScenePhase(phase)
+        }
+        .onChange(of: appSettings.enablePushNotifications) { enabled in
+            if enabled {
+                Task { await vm.configurePushAndBackground() }
+            }
         }
     }
 }

@@ -104,8 +104,23 @@ final class TelegramRepository {
 
     func loadChats() async throws -> [TgChat] {
         let remote = try await client.fetchChats(limit: 80)
-        try? chatStore.write(chats: remote)
-        return remote
+        let withAvatars = try await client.enrichChatsWithAvatarPaths(remote)
+        try? chatStore.write(chats: withAvatars)
+        return withAvatars
+    }
+
+    func enrichChatAvatars(_ chats: [TgChat]) async throws -> [TgChat] {
+        let enriched = try await client.enrichChatsWithAvatarPaths(chats)
+        try? chatStore.write(chats: enriched)
+        return enriched
+    }
+
+    func registerPushDevice(token: Data, sandbox: Bool) async throws {
+        try await client.registerPushDevice(token: token, sandbox: sandbox)
+    }
+
+    func processPushNotification() async {
+        await client.processPushNotification()
     }
 
     static let initialMessagePageSize = 100

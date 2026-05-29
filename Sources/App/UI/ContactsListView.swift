@@ -28,25 +28,11 @@ struct ContactsListView: View {
         List {
             if vm.deviceContactsAuthorization == .notDetermined {
                 Section {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(AppText.tr(
-                            "Разрешите доступ к контактам, чтобы находить друзей в Telegram и синхронизировать телефонную книгу.",
-                            "Allow access to contacts to find friends on Telegram and sync your phone book."
-                        ))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                        Button {
-                            Task { await vm.requestDeviceContactsAccess() }
-                        } label: {
-                            Text(AppText.tr("Разрешить доступ", "Allow access"))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.accent)
-                    }
-                    .padding(.vertical, 6)
+                    permissionCard
                 }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
             }
 
             if vm.isSyncingContacts {
@@ -56,7 +42,14 @@ struct ContactsListView: View {
                         Text(AppText.tr("Синхронизация контактов…", "Syncing contacts…"))
                             .foregroundStyle(.secondary)
                     }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
             }
 
             if vm.filteredContacts.isEmpty && !vm.isContactsLoading {
@@ -69,18 +62,31 @@ struct ContactsListView: View {
                             "Sync your phone book or add contacts in Telegram."
                         )
                     )
+                    .padding(14)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
             } else {
                 Section {
                     ForEach(vm.filteredContacts) { contact in
                         contactRow(contact)
                     }
                 }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            contactsHeader
+        }
         .overlay {
             if vm.isContactsLoading && vm.contacts.isEmpty {
                 ProgressView()
@@ -109,6 +115,48 @@ struct ContactsListView: View {
             }
         }
         .mainTabNavigationBar(title: AppText.tr("Контакты", "Contacts"))
+    }
+
+    private var contactsHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(AppText.tr("Контакты Telegram", "Telegram contacts"))
+                    .font(.subheadline.weight(.semibold))
+                Text(AppText.tr(
+                    "\(vm.filteredContacts.count) из \(vm.contacts.count)",
+                    "\(vm.filteredContacts.count) of \(vm.contacts.count)"
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+    }
+
+    private var permissionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(AppText.tr(
+                "Разрешите доступ к контактам, чтобы находить друзей в Telegram и синхронизировать телефонную книгу.",
+                "Allow access to contacts to find friends on Telegram and sync your phone book."
+            ))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+
+            Button {
+                Task { await vm.requestDeviceContactsAccess() }
+            } label: {
+                Text(AppText.tr("Разрешить доступ", "Allow access"))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppColors.accent)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var accessDeniedView: some View {
@@ -165,43 +213,76 @@ struct ContactsListView: View {
         Button {
             navigationPath.append(contact.privateChatId)
         } label: {
-            HStack(spacing: 12) {
-                AvatarView(
-                    title: contact.displayName,
-                    identifier: contact.userId,
-                    imagePath: contact.avatarPath,
-                    size: 48
+            ContactCardView(
+                contact: contact,
+                onPremiumBadgeTap: contact.isPremium
+                    ? { vm.presentPremiumUpsell(for: contact.displayName, badgePath: contact.premiumBadgePath) }
+                    : nil
+            )
+        }
+        .buttonStyle(ContactRowPressStyle())
+    }
+}
+
+private struct ContactCardView: View {
+    let contact: TgContact
+    var onPremiumBadgeTap: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            AvatarView(
+                title: contact.displayName,
+                identifier: contact.userId,
+                imagePath: contact.avatarPath,
+                size: 52
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                DisplayNameWithPremium(
+                    name: contact.displayName,
+                    isPremium: contact.isPremium,
+                    badgeImagePath: contact.premiumBadgePath,
+                    font: .headline,
+                    lineLimit: 1,
+                    onPremiumBadgeTap: onPremiumBadgeTap
                 )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    DisplayNameWithPremium(
-                        name: contact.displayName,
-                        isPremium: contact.isPremium,
-                        badgeImagePath: contact.premiumBadgePath,
-                        font: .headline,
-                        lineLimit: 1,
-                        onPremiumBadgeTap: contact.isPremium
-                            ? { vm.presentPremiumUpsell(for: contact.displayName, badgePath: contact.premiumBadgePath) }
-                            : nil
+                if let phone = contact.phoneNumber, !phone.isEmpty {
+                    Text(phone)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if let username = contact.username, !username.isEmpty {
+                    UsernameLine(
+                        username: username,
+                        font: .subheadline,
+                        color: .secondary
                     )
-
-                    if let phone = contact.phoneNumber, !phone.isEmpty {
-                        Text(phone)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else if let username = contact.username, !username.isEmpty {
-                        Text("@\(username)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+                } else {
+                    Text(AppText.tr("Контакт Telegram", "Telegram contact"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-
-                Spacer(minLength: 0)
             }
-            .padding(.vertical, 4)
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct ContactRowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.spring(response: 0.26, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }

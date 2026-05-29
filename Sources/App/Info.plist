@@ -33,5 +33,12 @@
     <string>Выбор изображения для обоев чата.</string>
     <key>NSContactsUsageDescription</key>
     <string>Синхронизация контактов телефона с Telegram, чтобы находить друзей в приложении.</string>
+    <key>NSUserNotificationsUsageDescription</key>
+    <string>Уведомления о новых сообщениях, когда приложение в фоне.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+        <string>fetch</string>
+    </array>
 </dict>
 </plist>
