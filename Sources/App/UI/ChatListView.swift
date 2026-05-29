@@ -109,7 +109,12 @@ struct ChatListView: View {
 
     private func chatRow(_ chat: TgChat) -> some View {
         NavigationLink(value: chat.id) {
-            ChatCardView(chat: chat)
+            ChatCardView(
+                chat: chat,
+                onPremiumBadgeTap: chat.kind == .private && chat.peerIsPremium
+                    ? { vm.presentPremiumUpsell(for: chat.title, badgePath: chat.peerPremiumBadgePath) }
+                    : nil
+            )
         }
         .buttonStyle(ChatRowPressStyle())
         .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
@@ -331,6 +336,7 @@ struct ChatListView: View {
 
 private struct ChatCardView: View {
     let chat: TgChat
+    var onPremiumBadgeTap: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -359,9 +365,7 @@ private struct ChatCardView: View {
                         badgeImagePath: chat.peerPremiumBadgePath,
                         font: .headline,
                         lineLimit: 1,
-                        onPremiumBadgeTap: chat.kind == .private && chat.peerIsPremium
-                            ? { vm.presentPremiumUpsell(for: chat.title, badgePath: chat.peerPremiumBadgePath) }
-                            : nil
+                        onPremiumBadgeTap: onPremiumBadgeTap
                     )
 
                     if chat.isPinned {
