@@ -82,6 +82,24 @@ final class AppViewModel: ObservableObject {
     private var isLoadingPeekOlder = false
     private var toastDismissTask: Task<Void, Never>?
     private var toastDismissGeneration = 0
+    private var incomingNotificationsAllowed = false
+    private var lastIncomingSoundPlayedAt: Date?
+    @Published var premiumUpsellContext: PremiumUpsellContext?
+    @Published var contacts: [TgContact] = []
+    @Published var contactsSearch = ""
+    @Published var isContactsLoading = false
+    @Published var isSyncingContacts = false
+    @Published var deviceContactsAuthorization: DeviceContactsAuthorization = .notDetermined
+
+    var filteredContacts: [TgContact] {
+        let query = contactsSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return contacts }
+        return contacts.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query)
+                || ($0.username?.localizedCaseInsensitiveContains(query) ?? false)
+                || ($0.phoneNumber?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
 
     var filteredChats: [TgChat] {
         let query = chatSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -267,6 +285,7 @@ final class AppViewModel: ObservableObject {
         isTdlibConfigured = false
         bootstrapError = nil
         phase = .setup
+        incomingNotificationsAllowed = false
         status = "Войдите снова — укажите API данные"
         Task { await start() }
     }
@@ -882,8 +901,18 @@ final class AppViewModel: ObservableObject {
         scheduleMediaDownloadIfNeeded(chatId: message.chatId, messages: messages)
     }
 
+    func presentPremiumUpsell(for displayName: String, badgePath: String? = nil) {
+        premiumUpsellContext = .premiumUser(displayName: displayName, badgePath: badgePath)
+    }
+
     private func handleIncomingMessage(_ message: TgMessage) {
         guard !message.outgoing, phase == .main else { return }
+        guard AppSettingsStore.shared.enableIncomingBanners else { return }
+        guard incomingNotificationsAllowed else { return }
+
+        let messageAge = Date().timeIntervalSince(message.createdAt)
+        guard messageAge >= -30, messageAge <= 120 else { return }
+
         guard let chat = chats.first(where: { $0.id == message.chatId }) else { return }
         guard visibleChatId != message.chatId else { return }
         guard !chat.isMuted else { return }
@@ -909,7 +938,13 @@ final class AppViewModel: ObservableObject {
             incomingToast = nil
         }
 
-        NotificationSoundPlayer.playMessageReceived()
+        if AppSettingsStore.shared.enableInAppSounds {
+            let now = Date()
+            if lastIncomingSoundPlayedAt == nil || now.timeIntervalSince(lastIncomingSoundPlayedAt!) >= 2 {
+                lastIncomingSoundPlayedAt = now
+                NotificationSoundPlayer.playMessageReceived()
+            }
+        }
     }
 
     func dismissIncomingToast() {
@@ -1081,6 +1116,15 @@ final class AppViewModel: ObservableObject {
         case .ready:
             phase = .main
             status = ""
+            incomingNotificationsAllowed = false
+            lastIncomingSoundPlayedAt = nil
+            incomingToast = nil
+            toastDismissTask?.cancel()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                guard let self, !self.incomingNotificationsAllowed else { return }
+                self.incomingNotificationsAllowed = true
+            }
             if let repository {
                 let cached = repository.cachedChats()
                 if !cached.isEmpty {
@@ -1108,10 +1152,86 @@ final class AppViewModel: ObservableObject {
             }
             if phase == .main {
                 await refreshChats()
+                incomingNotificationsAllowed = true
+                await prepareContactsOnLaunch()
             }
         } catch {
             // Non-critical for core UX; keep Settings usable even if this fails.
             me = nil
+        }
+    }
+
+    func refreshContactsIfNeeded() async {
+        deviceContactsAuthorization = DeviceContactsService.authorizationStatus()
+        guard contacts.isEmpty else { return }
+        await refreshContacts(force: false)
+    }
+
+    func refreshContacts(force: Bool) async {
+        guard let repository, authState == .ready else { return }
+        if isContactsLoading && !force { return }
+        isContactsLoading = true
+        defer { isContactsLoading = false }
+        do {
+            contacts = try await repository.loadContacts()
+            status = ""
+        } catch {
+            if force || contacts.isEmpty {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    func requestDeviceContactsAccess() async {
+        let granted = await DeviceContactsService.requestAccess()
+        deviceContactsAuthorization = DeviceContactsService.authorizationStatus()
+        AppSettingsStore.shared.didPromptContactsPermission = true
+        if granted, AppSettingsStore.shared.syncContactsOnLaunch {
+            await syncDeviceContactsWithTelegram()
+        }
+        await refreshContacts(force: true)
+    }
+
+    func syncDeviceContactsWithTelegram() async {
+        guard let repository, authState == .ready else { return }
+        deviceContactsAuthorization = DeviceContactsService.authorizationStatus()
+        guard deviceContactsAuthorization == .authorized else {
+            status = AppText.tr("Нет доступа к контактам телефона", "No access to phone contacts")
+            return
+        }
+
+        isSyncingContacts = true
+        defer { isSyncingContacts = false }
+        do {
+            let entries = try await DeviceContactsService.fetchEntries()
+            guard !entries.isEmpty else {
+                status = AppText.tr("В телефонной книге нет номеров", "No phone numbers in contacts")
+                return
+            }
+            let payload = entries.map { (phone: $0.phone, firstName: $0.firstName, lastName: $0.lastName) }
+            let imported = try await repository.importDeviceContacts(payload)
+            status = AppText.tr("Синхронизировано: \(imported)", "Synced: \(imported)")
+            await refreshContacts(force: true)
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func prepareContactsOnLaunch() async {
+        deviceContactsAuthorization = DeviceContactsService.authorizationStatus()
+        let settings = AppSettingsStore.shared
+
+        if !settings.didPromptContactsPermission,
+           deviceContactsAuthorization == .notDetermined {
+            settings.didPromptContactsPermission = true
+            _ = await DeviceContactsService.requestAccess()
+            deviceContactsAuthorization = DeviceContactsService.authorizationStatus()
+        }
+
+        if settings.syncContactsOnLaunch, deviceContactsAuthorization == .authorized {
+            await syncDeviceContactsWithTelegram()
+        } else {
+            await refreshContacts(force: false)
         }
     }
 

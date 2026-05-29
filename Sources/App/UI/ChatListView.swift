@@ -358,7 +358,10 @@ private struct ChatCardView: View {
                         isPremium: chat.kind == .private && chat.peerIsPremium,
                         badgeImagePath: chat.peerPremiumBadgePath,
                         font: .headline,
-                        lineLimit: 1
+                        lineLimit: 1,
+                        onPremiumBadgeTap: chat.kind == .private && chat.peerIsPremium
+                            ? { vm.presentPremiumUpsell(for: chat.title, badgePath: chat.peerPremiumBadgePath) }
+                            : nil
                     )
 
                     if chat.isPinned {

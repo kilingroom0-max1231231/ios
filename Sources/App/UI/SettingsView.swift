@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var vm: AppViewModel
+    @ObservedObject private var appSettings = AppSettingsStore.shared
     @EnvironmentObject private var languageStore: AppLanguageStore
 
     var body: some View {
@@ -26,7 +27,10 @@ struct SettingsView: View {
                             name: vm.me?.displayName ?? AppText.tr("Telegram User Client", "Telegram User Client"),
                             isPremium: vm.me?.isPremium ?? false,
                             badgeImagePath: vm.me?.premiumBadgePath,
-                            font: .headline
+                            font: .headline,
+                            onPremiumBadgeTap: vm.me?.isPremium == true
+                                ? { vm.presentPremiumUpsell(for: vm.me?.displayName ?? "", badgePath: vm.me?.premiumBadgePath) }
+                                : nil
                         )
 
                         if let username = vm.me?.username, !username.isEmpty {
@@ -101,31 +105,69 @@ struct SettingsView: View {
                 }
             }
 
+            Section(AppText.tr("Контакты", "Contacts")) {
+                Toggle(isOn: $appSettings.syncContactsOnLaunch) {
+                    settingsLinkLabel(
+                        icon: "arrow.triangle.2.circlepath",
+                        title: AppText.tr("Синхронизация при запуске", "Sync on launch"),
+                        subtitle: AppText.tr("Телефонная книга → Telegram", "Phone book → Telegram")
+                    )
+                }
+
+                Button {
+                    vm.mainTabIndex = 1
+                } label: {
+                    settingsLinkLabel(
+                        icon: "person.2.fill",
+                        title: AppText.tr("Список контактов", "Contacts list"),
+                        subtitle: AppText.tr("\(vm.contacts.count) в Telegram", "\(vm.contacts.count) on Telegram")
+                    )
+                }
+            }
+
             Section(AppText.tr("Приложение", "Application")) {
+                NavigationLink {
+                    NotificationsSettingsView(appSettings: appSettings)
+                } label: {
+                    settingsLinkLabel(
+                        icon: "bell.badge",
+                        title: AppText.tr("Уведомления", "Notifications"),
+                        subtitle: AppText.tr("Баннеры и звуки", "Banners & sounds")
+                    )
+                }
+
+                NavigationLink {
+                    DataStorageSettingsView(vm: vm, appSettings: appSettings)
+                } label: {
+                    settingsLinkLabel(
+                        icon: "externaldrive",
+                        title: AppText.tr("Данные и память", "Data & storage"),
+                        subtitle: AppText.tr("Кэш, контакты, удалённые", "Cache, contacts, deleted")
+                    )
+                }
+
                 NavigationLink {
                     AppSettingsView(
                         vm: vm,
-                        appSettings: AppSettingsStore.shared,
+                        appSettings: appSettings,
                         swipeSettings: MessageSwipeSettingsStore.shared
                     )
                 } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "slider.horizontal.3")
-                            .foregroundStyle(AppColors.accent)
-                            .frame(width: 28)
-                        Text(AppText.tr("Настройки приложения", "App settings"))
-                    }
+                    settingsLinkLabel(
+                        icon: "slider.horizontal.3",
+                        title: AppText.tr("Поведение", "Behavior"),
+                        subtitle: AppText.tr("Профиль, свайпы, сообщения", "Profile, swipes, messages")
+                    )
                 }
 
                 NavigationLink {
                     AppearanceSettingsView(appearance: AppAppearanceStore.shared)
                 } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "paintpalette.fill")
-                            .foregroundStyle(AppColors.accent)
-                            .frame(width: 28)
-                        Text(AppText.tr("Оформление", "Appearance"))
-                    }
+                    settingsLinkLabel(
+                        icon: "paintpalette.fill",
+                        title: AppText.tr("Оформление", "Appearance"),
+                        subtitle: AppText.tr("Тема, фоны, пузыри", "Theme, backgrounds, bubbles")
+                    )
                 }
 
                 Picker(selection: $languageStore.preferredLanguage) {
@@ -143,12 +185,15 @@ struct SettingsView: View {
             }
 
             Section(AppText.tr("О приложении", "About")) {
-                settingsRow(icon: "app.badge", title: AppText.tr("Клиент", "Client"), value: "Telegram User Client")
-                settingsRow(icon: "hammer.fill", title: AppText.tr("Разработка системы", "System development"), value: "masezev")
-                settingsRow(icon: "paintbrush.fill", title: AppText.tr("Разработка интерфейса", "Interface development"), value: "masezev")
-                settingsRow(icon: "desktopcomputer", title: AppText.tr("Архитектура", "Architecture"), value: "masezev")
-                settingsRow(icon: "lock.shield", title: AppText.tr("Хранилище", "Storage"), value: AppText.tr("Локальная база TDLib", "Local TDLib database"))
-                settingsRow(icon: "photo.on.rectangle", title: AppText.tr("Медиа", "Media"), value: AppText.tr("Встроенный просмотр", "Inline previews"))
+                NavigationLink {
+                    AboutView()
+                } label: {
+                    settingsLinkLabel(
+                        icon: "info.circle.fill",
+                        title: AppText.tr("О приложении", "About"),
+                        subtitle: "Telegram User Client"
+                    )
+                }
             }
 
             Section {
@@ -175,15 +220,18 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsRow(icon: String, title: String, value: String) -> some View {
+    private func settingsLinkLabel(icon: String, title: String, subtitle: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(AppColors.accent)
                 .frame(width: 28)
-            Text(title)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding(.vertical, 2)
     }
 }

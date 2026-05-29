@@ -173,7 +173,10 @@ struct ChatProfileView: View {
                 isPremium: profile.isPremium,
                 badgeImagePath: profile.premiumBadgePath,
                 font: .title2.weight(.bold),
-                lineLimit: 2
+                lineLimit: 2,
+                onPremiumBadgeTap: profile.isPremium
+                    ? { vm.presentPremiumUpsell(for: profile.title, badgePath: profile.premiumBadgePath) }
+                    : nil
             )
             .multilineTextAlignment(.center)
 
@@ -231,6 +234,20 @@ struct ChatProfileView: View {
         Section(AppText.tr("Информация", "Info")) {
             if let username = profile.username, !username.isEmpty {
                 profileRow(icon: "at", title: "Username", value: "@\(username)")
+            }
+
+            if let phone = profile.phoneNumber, !phone.isEmpty {
+                profileRow(
+                    icon: "phone.fill",
+                    title: AppText.tr("Телефон", "Phone"),
+                    value: phone
+                )
+            }
+
+            if let channel = profile.personalChannel {
+                ProfileLinkedChannelRow(channel: channel) {
+                    Task { await vm.openChat(chatId: channel.chatId) }
+                }
             }
 
             if appSettings.showProfileChatKind {
@@ -302,7 +319,10 @@ struct ChatProfileView: View {
                     name: member.title,
                     isPremium: member.isPremium,
                     badgeImagePath: member.premiumBadgePath,
-                    font: .subheadline.weight(.semibold)
+                    font: .subheadline.weight(.semibold),
+                    onPremiumBadgeTap: member.isPremium
+                        ? { vm.presentPremiumUpsell(for: member.title, badgePath: member.premiumBadgePath) }
+                        : nil
                 )
                 if let username = member.username, !username.isEmpty {
                     UsernameLine(

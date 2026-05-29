@@ -65,16 +65,20 @@ struct PrivacySettingsView: View {
                 .disabled(isSavingProfile)
             }
 
-            Section {
-                ForEach(vm.privacySettings) { item in
-                    Picker(item.kind.title, selection: binding(for: item.kind)) {
-                        ForEach(PrivacyVisibility.allCases) { level in
-                            Text(level.title).tag(level)
-                        }
-                    }
-                }
-            } header: {
-                Text(AppText.tr("Приватность", "Privacy"))
+            Section(AppText.tr("Профиль", "Profile")) {
+                privacyPicker(for: .profilePhoto)
+                privacyPicker(for: .bio)
+                privacyPicker(for: .phoneNumber)
+                privacyPicker(for: .status)
+            }
+
+            Section(AppText.tr("Поиск и ссылки", "Discovery")) {
+                privacyPicker(for: .findByPhone)
+                privacyPicker(for: .showLink)
+            }
+
+            Section(AppText.tr("Сообщения", "Messages")) {
+                privacyPicker(for: .forwards)
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(AppText.tr(
@@ -121,6 +125,15 @@ struct PrivacySettingsView: View {
                    let image = UIImage(data: data) {
                     await vm.uploadMyProfilePhoto(from: image)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func privacyPicker(for kind: UserPrivacySettingKind) -> some View {
+        Picker(kind.title, selection: binding(for: kind)) {
+            ForEach(PrivacyVisibility.allCases) { level in
+                Text(level.title).tag(level)
             }
         }
     }

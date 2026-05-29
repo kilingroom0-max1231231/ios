@@ -261,6 +261,14 @@ final class TelegramRepository {
         try await client.fetchReceivedGifts(userId: userId, limit: limit)
     }
 
+    func loadContacts() async throws -> [TgContact] {
+        try await client.fetchContacts()
+    }
+
+    func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int {
+        try await client.importDeviceContacts(entries)
+    }
+
     func fetchUserDisplayName(userId: Int64) async throws -> String {
         try await client.fetchUserDisplayName(userId: userId)
     }

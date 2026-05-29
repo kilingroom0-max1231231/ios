@@ -11,6 +11,14 @@ struct AppearanceSettingsView: View {
         List {
             livePreviewSection
 
+            Section(AppText.tr("Тема", "Theme")) {
+                Picker(AppText.tr("Режим", "Mode"), selection: $appearance.colorSchemePreference) {
+                    ForEach(AppColorSchemePreference.allCases) { mode in
+                        Text(AppText.tr(mode.titleRu, mode.titleEn)).tag(mode)
+                    }
+                }
+            }
+
             Section(AppText.tr("Фоны", "Backgrounds")) {
                 Picker(AppText.tr("Список чатов", "Chat list"), selection: $appearance.chatListStyle) {
                     ForEach(ChatListBackgroundStyle.allCases) { style in

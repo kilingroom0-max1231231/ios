@@ -3,20 +3,34 @@ import SwiftUI
 struct PremiumBadgeView: View {
     var imagePath: String?
     var size: CGFloat = 14
+    var onTap: (() -> Void)?
 
     var body: some View {
         Group {
-            if let imagePath,
-               let image = LocalImageCache.shared.image(path: imagePath) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
+            if let onTap {
+                Button(action: onTap) {
+                    badgeContent
+                }
+                .buttonStyle(.plain)
             } else {
-                defaultStar
+                badgeContent
             }
         }
         .accessibilityLabel(AppText.tr("Telegram Premium", "Telegram Premium"))
+        .accessibilityAddTraits(onTap != nil ? .isButton : [])
+    }
+
+    @ViewBuilder
+    private var badgeContent: some View {
+        if let imagePath,
+           let image = LocalImageCache.shared.image(path: imagePath) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+        } else {
+            defaultStar
+        }
     }
 
     private var defaultStar: some View {
@@ -58,6 +72,7 @@ struct DisplayNameWithPremium: View {
     var lineLimit: Int = 1
     /// Premium emoji/status is shown next to the display name (Telegram-style).
     var showBadgeOnName: Bool = true
+    var onPremiumBadgeTap: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -65,7 +80,11 @@ struct DisplayNameWithPremium: View {
                 .font(font)
                 .lineLimit(lineLimit)
             if isPremium && showBadgeOnName {
-                PremiumBadgeView(imagePath: badgeImagePath, size: fontSize)
+                PremiumBadgeView(
+                    imagePath: badgeImagePath,
+                    size: fontSize,
+                    onTap: onPremiumBadgeTap
+                )
             }
         }
     }

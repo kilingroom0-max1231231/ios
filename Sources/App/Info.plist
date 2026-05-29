@@ -31,5 +31,7 @@
     </array>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Выбор изображения для обоев чата.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Синхронизация контактов телефона с Telegram, чтобы находить друзей в приложении.</string>
 </dict>
 </plist>

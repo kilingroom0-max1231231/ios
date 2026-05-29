@@ -248,10 +248,43 @@ enum MessageFontScale: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppColorSchemePreference: String, CaseIterable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var titleRu: String {
+        switch self {
+        case .system: return "Как в системе"
+        case .light: return "Светлая"
+        case .dark: return "Тёмная"
+        }
+    }
+
+    var titleEn: String {
+        switch self {
+        case .system: return "Match system"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 @MainActor
 final class AppAppearanceStore: ObservableObject {
     static let shared = AppAppearanceStore()
 
+    @Published var colorSchemePreference: AppColorSchemePreference { didSet { persist() } }
     @Published var chatListStyle: ChatListBackgroundStyle { didSet { persist() } }
     @Published var chatStyle: ChatBackgroundStyle { didSet { persist() } }
     @Published var accentStyle: AccentColorStyle { didSet { persist() } }
@@ -262,6 +295,7 @@ final class AppAppearanceStore: ObservableObject {
     @Published var compactBubbles: Bool { didSet { UserDefaults.standard.set(compactBubbles, forKey: Keys.compactBubbles) } }
 
     private enum Keys {
+        static let colorSchemePreference = "appearance.colorSchemePreference"
         static let chatListStyle = "appearance.chatListStyle"
         static let chatStyle = "appearance.chatStyle"
         static let accentStyle = "appearance.accentStyle"
@@ -274,6 +308,7 @@ final class AppAppearanceStore: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
+        colorSchemePreference = AppColorSchemePreference(rawValue: defaults.string(forKey: Keys.colorSchemePreference) ?? "") ?? .system
         chatListStyle = ChatListBackgroundStyle(rawValue: defaults.string(forKey: Keys.chatListStyle) ?? "") ?? .system
         chatStyle = ChatBackgroundStyle(rawValue: defaults.string(forKey: Keys.chatStyle) ?? "") ?? .default
         accentStyle = AccentColorStyle(rawValue: defaults.string(forKey: Keys.accentStyle) ?? "") ?? .telegramBlue
@@ -287,6 +322,7 @@ final class AppAppearanceStore: ObservableObject {
 
     private func persist() {
         let defaults = UserDefaults.standard
+        defaults.set(colorSchemePreference.rawValue, forKey: Keys.colorSchemePreference)
         defaults.set(chatListStyle.rawValue, forKey: Keys.chatListStyle)
         defaults.set(chatStyle.rawValue, forKey: Keys.chatStyle)
         defaults.set(accentStyle.rawValue, forKey: Keys.accentStyle)
@@ -294,7 +330,12 @@ final class AppAppearanceStore: ObservableObject {
         defaults.set(messageFontScale.rawValue, forKey: Keys.messageFontScale)
     }
 
+    var resolvedColorScheme: ColorScheme? {
+        colorSchemePreference.colorScheme
+    }
+
     func resetToDefaults() {
+        colorSchemePreference = .system
         chatListStyle = .system
         chatStyle = .default
         accentStyle = .telegramBlue

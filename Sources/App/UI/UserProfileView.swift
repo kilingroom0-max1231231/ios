@@ -107,7 +107,10 @@ struct UserProfileView: View {
                 isPremium: profile.isPremium,
                 badgeImagePath: profile.premiumBadgePath,
                 font: .title2.weight(.bold),
-                lineLimit: 2
+                lineLimit: 2,
+                onPremiumBadgeTap: profile.isPremium
+                    ? { vm.presentPremiumUpsell(for: profile.displayName, badgePath: profile.premiumBadgePath) }
+                    : nil
             )
             .multilineTextAlignment(.center)
 
@@ -117,6 +120,13 @@ struct UserProfileView: View {
                     font: .subheadline,
                     color: AppColors.accent
                 )
+            }
+
+            if let phone = profile.phoneNumber, !phone.isEmpty {
+                Text(phone)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
 
             if profile.isBlockedByMe || profile.isBlockedByPeer {
@@ -167,6 +177,20 @@ struct UserProfileView: View {
         }
 
         Section(AppText.tr("Информация", "Info")) {
+            if let phone = profile.phoneNumber, !phone.isEmpty {
+                profileRow(
+                    icon: "phone.fill",
+                    title: AppText.tr("Телефон", "Phone"),
+                    value: phone
+                )
+            }
+
+            if let channel = profile.personalChannel {
+                ProfileLinkedChannelRow(channel: channel) {
+                    Task { await vm.openChat(chatId: channel.chatId) }
+                }
+            }
+
             if appSettings.showProfileChatKind {
                 profileRow(
                     icon: "person.fill",

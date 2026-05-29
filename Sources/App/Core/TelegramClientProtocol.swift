@@ -49,4 +49,6 @@ protocol TelegramClientProtocol {
     func fetchUserProfileDetail(userId: Int64) async throws -> UserProfileDetail
     func fetchActiveStories(chatId: Int64) async throws -> [TgStoryItem]
     func fetchReceivedGifts(userId: Int64, limit: Int) async throws -> [TgGiftItem]
+    func fetchContacts() async throws -> [TgContact]
+    func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
 }

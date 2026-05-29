@@ -25,6 +25,22 @@ struct PremiumUpsellContext: Identifiable, Equatable {
         )
     }
 
+    static func premiumUser(displayName: String, badgePath: String?) -> PremiumUpsellContext {
+        PremiumUpsellContext(
+            previewPath: badgePath,
+            previewAnimationPath: nil,
+            headlineText: nil,
+            title: AppText.tr(
+                "\(displayName) — подписчик Telegram Premium",
+                "\(displayName) is a Telegram Premium subscriber"
+            ),
+            explanation: AppText.tr(
+                "Значок Premium показывает, что у пользователя активна подписка. Преимущества Telegram Premium:",
+                "The Premium badge means this user has an active subscription. Telegram Premium benefits:"
+            )
+        )
+    }
+
     static func emojiStatus(headline: String, userName: String, setName: String) -> PremiumUpsellContext {
         PremiumUpsellContext(
             previewPath: nil,
@@ -100,7 +116,7 @@ struct PremiumUpsellSheet: View {
             StickerMediaView(
                 displayPath: context.previewPath,
                 animationPath: context.previewAnimationPath,
-                isAnimated: context.previewAnimationPath != nil
+                isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false
             )
             .frame(width: 160, height: 160)
             .frame(maxWidth: .infinity)

@@ -36,6 +36,14 @@ struct AppSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $appSettings.showMessageTimestamps) {
+                    settingsLabel(
+                        icon: "clock",
+                        title: AppText.tr("Время сообщений", "Message time"),
+                        subtitle: AppText.tr("Время в пузырях чата", "Time in chat bubbles")
+                    )
+                }
+
                 Toggle(isOn: $appSettings.keepDeletedMessages) {
                     settingsLabel(
                         icon: "trash.slash",

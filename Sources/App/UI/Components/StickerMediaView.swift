@@ -9,20 +9,30 @@ struct StickerMediaView: View {
 
     private var animationURL: URL? {
         guard let animationPath, !animationPath.isEmpty,
+              Self.isPlayableVideoPath(animationPath),
               FileManager.default.fileExists(atPath: animationPath) else { return nil }
         return URL(fileURLWithPath: animationPath)
     }
 
+    private var shouldPlayVideo: Bool {
+        isAnimated && animationURL != nil
+    }
+
     var body: some View {
         Group {
-            if isAnimated, let animationURL {
-                LoopingVideoStickerView(url: animationURL)
+            if shouldPlayVideo, let animationURL {
+                LoopingVideoStickerView(url: animationURL, fallbackPath: displayPath)
             } else {
-                CachedLocalImage(path: displayPath, contentMode: .fit) {
+                CachedLocalImage(path: displayPath ?? animationPath, contentMode: .fit) {
                     loadingPlaceholder
                 }
             }
         }
+    }
+
+    static func isPlayableVideoPath(_ path: String) -> Bool {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        return ext == "webm" || ext == "mp4" || ext == "mov"
     }
 
     private var loadingPlaceholder: some View {
@@ -41,12 +51,20 @@ struct StickerMediaView: View {
 
 struct LoopingVideoStickerView: View {
     let url: URL?
+    var fallbackPath: String?
     @State private var player: AVQueuePlayer?
     @State private var looper: AVPlayerLooper?
+    @State private var playbackFailed = false
 
     var body: some View {
-        ZStack {
-            if let player {
+        Group {
+            if playbackFailed {
+                CachedLocalImage(path: fallbackPath ?? url?.path, contentMode: .fit) {
+                    Image(systemName: "gift.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let player {
                 VideoPlayer(player: player)
                     .disabled(true)
             } else {
@@ -57,19 +75,29 @@ struct LoopingVideoStickerView: View {
         .onAppear { startLoop() }
         .onDisappear { stopLoop() }
         .onChange(of: url?.path) { _ in
+            playbackFailed = false
             stopLoop()
             startLoop()
         }
     }
 
     private func startLoop() {
-        guard let url else { return }
+        guard let url, !playbackFailed else { return }
         let item = AVPlayerItem(url: url)
         let queue = AVQueuePlayer(playerItem: item)
         queue.isMuted = true
         looper = AVPlayerLooper(player: queue, templateItem: item)
         player = queue
         queue.play()
+        Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await MainActor.run {
+                if queue.currentItem?.status == .failed {
+                    playbackFailed = true
+                    stopLoop()
+                }
+            }
+        }
     }
 
     private func stopLoop() {

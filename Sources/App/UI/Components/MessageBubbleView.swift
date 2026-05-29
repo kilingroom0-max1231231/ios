@@ -3,6 +3,7 @@ import UIKit
 
 struct MessageBubbleView: View {
     @EnvironmentObject private var appearance: AppAppearanceStore
+    @EnvironmentObject private var appSettings: AppSettingsStore
     @Environment(\.colorScheme) private var colorScheme
 
     let message: TgMessage
@@ -319,10 +320,12 @@ struct MessageBubbleView: View {
                 .font(.caption2)
                 .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.75) : .secondary)
             }
-            Text(message.createdAt, style: .time)
+            if appSettings.showMessageTimestamps {
+                Text(message.createdAt, style: .time)
                     .font(.caption2)
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme).opacity(0.8) : .secondary)
-                if message.outgoing {
+            }
+            if message.outgoing {
                     outgoingReadReceipt
                 }
         }

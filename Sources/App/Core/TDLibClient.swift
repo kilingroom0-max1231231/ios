@@ -309,6 +309,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     membersCount: nil,
                     statusText: blockState.statusText ?? statusInfo.text,
                     userId: userId,
+                    phoneNumber: meta.phoneNumber,
+                    personalChannel: meta.personalChannel,
                     isPremium: meta.isPremium,
                     premiumBadgePath: meta.premiumBadgePath,
                     hasActiveStories: meta.hasActiveStories,
@@ -893,8 +895,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             privateChatId: privateChatId,
             displayName: displayName.isEmpty ? (meta.username.map { "@\($0)" } ?? "User") : displayName,
             username: meta.username,
+            phoneNumber: meta.phoneNumber,
             bio: meta.bio,
             avatarPath: try await resolveUserAvatarPath(user),
+            personalChannel: meta.personalChannel,
             statusText: blockState.statusText ?? status?.text,
             isOnline: status?.isOnline ?? false,
             isPremium: meta.isPremium,
@@ -904,6 +908,95 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             isBlockedByMe: blockState.blockedByMe,
             isBlockedByPeer: blockState.blockedByPeer,
             isSelf: userId == cachedMyUserId
+        )
+    }
+
+    func fetchContacts() async throws -> [TgContact] {
+        let response = try await sendRequest([
+            "@type": "getContacts"
+        ])
+        let userIds = (response["user_ids"] as? [Any])?.compactMap(int64Value) ?? []
+        guard !userIds.isEmpty else { return [] }
+
+        return await withTaskGroup(of: TgContact?.self) { group in
+            for userId in userIds {
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    return try? await self.buildContact(userId: userId)
+                }
+            }
+            var contacts: [TgContact] = []
+            contacts.reserveCapacity(userIds.count)
+            for await contact in group {
+                if let contact {
+                    contacts.append(contact)
+                }
+            }
+            return contacts.sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        }
+    }
+
+    func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int {
+        guard !entries.isEmpty else { return 0 }
+        var importedTotal = 0
+        let chunkSize = 200
+        var index = entries.startIndex
+        while index < entries.endIndex {
+            let end = entries.index(index, offsetBy: chunkSize, limitedBy: entries.endIndex) ?? entries.endIndex
+            let chunk = Array(entries[index..<end])
+            let contactsPayload: [[String: Any]] = chunk.map { entry in
+                [
+                    "@type": "contact",
+                    "phone_number": entry.phone,
+                    "first_name": entry.firstName,
+                    "last_name": entry.lastName
+                ]
+            }
+            let response = try await sendRequest([
+                "@type": "importContacts",
+                "contacts": contactsPayload
+            ])
+            importedTotal += (response["importer_count"] as? Int) ?? Int(int64Value(response["importer_count"]) ?? 0)
+            index = end
+        }
+        return importedTotal
+    }
+
+    private func buildContact(userId: Int64) async throws -> TgContact {
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        let firstName = user["first_name"] as? String ?? ""
+        let lastName = user["last_name"] as? String ?? ""
+        let displayName = [firstName, lastName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let username = activeUsername(from: user)
+        let phone = (user["phone_number"] as? String).flatMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let isPremium = (user["is_premium"] as? Bool) ?? false
+        let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+        let privateChat = try await sendRequest([
+            "@type": "createPrivateChat",
+            "user_id": userId,
+            "force": false
+        ])
+        let privateChatId = int64Value(privateChat["id"]) ?? userId
+        return TgContact(
+            userId: userId,
+            displayName: displayName.isEmpty ? (username.map { "@\($0)" } ?? "User") : displayName,
+            phoneNumber: phone,
+            username: username,
+            avatarPath: try await resolveUserAvatarPath(user),
+            isPremium: isPremium,
+            premiumBadgePath: premiumBadgePath,
+            privateChatId: privateChatId
         )
     }
 
@@ -1045,9 +1138,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         downloadIfMissing: Bool
     ) async -> (displayPath: String?, animationPath: String?, isAnimated: Bool) {
         let format = stickerFormatType(stickerWrapper)
-        let isAnimated = format == "stickerFormatTgs"
-            || format == "stickerFormatWebm"
-            || format == "stickerFormatWebp"
+        let isAnimated = format == "stickerFormatWebm"
 
         var displayPath: String?
         var animationPath: String?
@@ -1746,6 +1837,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
     private struct UserMeta {
         let username: String?
+        let phoneNumber: String?
+        let personalChannel: ProfileLinkedChannel?
         let isPremium: Bool
         let premiumBadgePath: String?
         let hasActiveStories: Bool
@@ -1765,13 +1858,51 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let giftCount = (full?["gift_count"] as? Int) ?? Int(int64Value(full?["gift_count"]) ?? 0)
         let isPremium = (user["is_premium"] as? Bool) ?? false
         let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+        let phone = (user["phone_number"] as? String).flatMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        var personalChannel: ProfileLinkedChannel?
+        if let channelId = int64Value(full?["personal_channel_id"]), channelId != 0 {
+            personalChannel = try? await resolveLinkedChannel(chatId: channelId)
+        }
         return UserMeta(
             username: activeUsername(from: user),
+            phoneNumber: phone,
+            personalChannel: personalChannel,
             isPremium: isPremium,
             premiumBadgePath: premiumBadgePath,
             hasActiveStories: (user["has_active_stories"] as? Bool) ?? false,
             giftCount: max(0, giftCount),
             bio: formattedText(from: full?["bio"] as? [String: Any])
+        )
+    }
+
+    private func resolveLinkedChannel(chatId: Int64) async throws -> ProfileLinkedChannel? {
+        let chat = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        let title = (chat["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !title.isEmpty else { return nil }
+
+        var username: String?
+        if let type = chat["type"] as? [String: Any],
+           (type["@type"] as? String) == "chatTypeSupergroup",
+           let supergroupId = int64Value(type["supergroup_id"]) {
+            let supergroup = try? await sendRequest([
+                "@type": "getSupergroup",
+                "supergroup_id": supergroupId
+            ])
+            username = supergroup?["username"] as? String
+        }
+
+        let avatarPath = try? await resolveChatAvatarPath(chat, preferBig: false)
+        return ProfileLinkedChannel(
+            chatId: chatId,
+            title: title,
+            username: username?.isEmpty == false ? username : nil,
+            avatarPath: avatarPath
         )
     }
 

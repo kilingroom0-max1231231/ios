@@ -299,6 +299,28 @@ enum ChatMuteDuration: Equatable {
     }
 }
 
+struct ProfileLinkedChannel: Equatable, Identifiable {
+    let chatId: Int64
+    let title: String
+    let username: String?
+    let avatarPath: String?
+
+    var id: Int64 { chatId }
+}
+
+struct TgContact: Identifiable, Equatable {
+    let userId: Int64
+    let displayName: String
+    let phoneNumber: String?
+    let username: String?
+    let avatarPath: String?
+    let isPremium: Bool
+    let premiumBadgePath: String?
+    let privateChatId: Int64
+
+    var id: Int64 { userId }
+}
+
 struct ChatProfile: Equatable {
     let chatId: Int64
     let title: String
@@ -309,6 +331,8 @@ struct ChatProfile: Equatable {
     let membersCount: Int?
     let statusText: String?
     let userId: Int64?
+    let phoneNumber: String?
+    let personalChannel: ProfileLinkedChannel?
     let isPremium: Bool
     let premiumBadgePath: String?
     let hasActiveStories: Bool
@@ -326,6 +350,8 @@ struct ChatProfile: Equatable {
         membersCount: Int?,
         statusText: String?,
         userId: Int64? = nil,
+        phoneNumber: String? = nil,
+        personalChannel: ProfileLinkedChannel? = nil,
         isPremium: Bool = false,
         premiumBadgePath: String? = nil,
         hasActiveStories: Bool = false,
@@ -342,6 +368,8 @@ struct ChatProfile: Equatable {
         self.membersCount = membersCount
         self.statusText = statusText
         self.userId = userId
+        self.phoneNumber = phoneNumber
+        self.personalChannel = personalChannel
         self.isPremium = isPremium
         self.premiumBadgePath = premiumBadgePath
         self.hasActiveStories = hasActiveStories
@@ -357,8 +385,10 @@ struct UserProfileDetail: Equatable, Identifiable {
     let privateChatId: Int64
     let displayName: String
     let username: String?
+    let phoneNumber: String?
     let bio: String?
     let avatarPath: String?
+    let personalChannel: ProfileLinkedChannel?
     let statusText: String?
     let isOnline: Bool
     let isPremium: Bool

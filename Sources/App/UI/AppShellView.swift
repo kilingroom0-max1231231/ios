@@ -29,16 +29,22 @@ struct AppShellView: View {
                                 Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
                             }
 
+                        ContactsListView(vm: vm)
+                            .tag(1)
+                            .tabItem {
+                                Label(AppText.tr("Контакты", "Contacts"), systemImage: "person.2.fill")
+                            }
+
                         GlobalSearchView(vm: vm)
-                        .tag(1)
-                        .tabItem {
-                            Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")
-                        }
+                            .tag(2)
+                            .tabItem {
+                                Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")
+                            }
 
                         NavigationStack {
                             SettingsView(vm: vm)
                         }
-                        .tag(2)
+                        .tag(3)
                         .tabItem {
                             Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                         }
@@ -63,6 +69,9 @@ struct AppShellView: View {
                     }
                 }
                 .animation(.spring(response: 0.32, dampingFraction: 0.86), value: vm.incomingToast)
+                .sheet(item: $vm.premiumUpsellContext) { context in
+                    PremiumUpsellSheet(context: context)
+                }
                 .onAppear {
                     ChromeAppearance.configureTabBar()
                     ChromeAppearance.configureNavigationBar()

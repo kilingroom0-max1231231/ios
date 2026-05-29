@@ -100,11 +100,17 @@ struct ChatDetailView: View {
                         .frame(width: 30, height: 30)
 
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.85)
+                            DisplayNameWithPremium(
+                                name: title,
+                                isPremium: selectedChat?.kind == .private && (selectedChat?.peerIsPremium ?? false),
+                                badgeImagePath: selectedChat?.peerPremiumBadgePath,
+                                font: .subheadline.weight(.semibold),
+                                lineLimit: 1,
+                                onPremiumBadgeTap: selectedChat?.kind == .private && (selectedChat?.peerIsPremium ?? false)
+                                    ? { vm.presentPremiumUpsell(for: title, badgePath: selectedChat?.peerPremiumBadgePath) }
+                                    : nil
+                            )
+                            .minimumScaleFactor(0.85)
                             Text(subtitle)
                                 .font(.caption2)
                                 .foregroundStyle(subtitleColor)
