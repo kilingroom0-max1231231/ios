@@ -921,6 +921,19 @@ final class AppViewModel: ObservableObject {
         if chosenCount >= 1, reactionPickerMaxCount <= 1 {
             if let existing = message.reactions.first(where: \.isChosen), existing.key != reaction.key {
                 try? await repository.removeReaction(chatId: chatId, messageId: message.id, reaction: existing)
+                patchMessageReactions(chatId: chatId, messageId: message.id) { reactions in
+                    reactions.compactMap { item in
+                        guard item.key == existing.key else { return item }
+                        let newCount = max(0, item.count - 1)
+                        if newCount == 0 { return nil }
+                        return TgMessageReaction(
+                            key: item.key,
+                            emoji: item.emoji,
+                            count: newCount,
+                            isChosen: false
+                        )
+                    }
+                }
             }
         }
 
@@ -933,26 +946,51 @@ final class AppViewModel: ObservableObject {
                 try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: reaction.emoji)
             }
             patchMessageReactions(chatId: chatId, messageId: message.id) { reactions in
-                var updated = reactions
-                if let index = updated.firstIndex(where: { $0.key == reaction.key }) {
-                    let item = updated[index]
-                    updated[index] = TgMessageReaction(
-                        key: item.key,
-                        emoji: item.emoji,
-                        count: item.count + 1,
-                        isChosen: true
-                    )
-                } else {
-                    updated.append(
-                        TgMessageReaction(key: reaction.key, emoji: reaction.emoji, count: 1, isChosen: true)
-                    )
-                }
-                return updated
+                optimisticReactionsAfterAdd(current: reactions, reaction: reaction)
             }
         } catch {
             status = error.localizedDescription
             await refreshMessages(force: true)
         }
+    }
+
+    private func optimisticReactionsAfterAdd(
+        current: [TgMessageReaction],
+        reaction: TgMessageReaction
+    ) -> [TgMessageReaction] {
+        var updated = current
+        if let index = updated.firstIndex(where: { $0.key == reaction.key }) {
+            let item = updated[index]
+            if item.isChosen { return dedupeMessageReactions(updated) }
+            updated[index] = TgMessageReaction(
+                key: item.key,
+                emoji: item.emoji,
+                count: max(item.count, 1),
+                isChosen: true
+            )
+        } else {
+            updated.append(
+                TgMessageReaction(key: reaction.key, emoji: reaction.emoji, count: 1, isChosen: true)
+            )
+        }
+        return dedupeMessageReactions(updated)
+    }
+
+    private func dedupeMessageReactions(_ reactions: [TgMessageReaction]) -> [TgMessageReaction] {
+        var merged: [String: TgMessageReaction] = [:]
+        for reaction in reactions {
+            if let existing = merged[reaction.key] {
+                merged[reaction.key] = TgMessageReaction(
+                    key: reaction.key,
+                    emoji: reaction.emoji,
+                    count: max(existing.count, reaction.count),
+                    isChosen: existing.isChosen || reaction.isChosen
+                )
+            } else {
+                merged[reaction.key] = reaction
+            }
+        }
+        return merged.values.sorted { $0.key < $1.key }
     }
 
     private func patchMessageReactions(
@@ -963,7 +1001,7 @@ final class AppViewModel: ObservableObject {
         guard selectedChatId == chatId,
               let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
         let current = messages[index]
-        let reactions = transform(current.reactions)
+        let reactions = dedupeMessageReactions(transform(current.reactions))
         messages[index] = TgMessage(
             id: current.id,
             chatId: current.chatId,
@@ -1641,7 +1679,7 @@ final class AppViewModel: ObservableObject {
             senderAvatarPath: current.senderAvatarPath,
             authorSignature: current.authorSignature,
             viewCount: viewCount ?? current.viewCount,
-            reactions: reactions
+            reactions: dedupeMessageReactions(reactions)
         )
         repository?.upsertMessages([messages[index]])
     }

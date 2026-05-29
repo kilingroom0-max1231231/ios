@@ -2430,26 +2430,38 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return []
         }
 
-        var result: [TgMessageReaction] = []
+        var merged: [String: TgMessageReaction] = [:]
         for item in items {
             guard let type = item["type"] as? [String: Any],
                   let typeName = type["@type"] as? String else { continue }
             let count = max(1, Int(int32Value(item["total_count"]) ?? 1))
             let isChosen = (item["is_chosen"] as? Bool) ?? false
 
+            let parsed: TgMessageReaction?
             switch typeName {
             case "reactionTypeEmoji":
                 guard let emoji = type["emoji"] as? String, !emoji.isEmpty else { continue }
-                result.append(TgMessageReaction(key: emoji, emoji: emoji, count: count, isChosen: isChosen))
+                parsed = TgMessageReaction(key: emoji, emoji: emoji, count: count, isChosen: isChosen)
             case "reactionTypeCustomEmoji":
                 guard let customId = int64Value(type["custom_emoji_id"]) else { continue }
                 let key = "custom:\(customId)"
-                result.append(TgMessageReaction(key: key, emoji: "⭐", count: count, isChosen: isChosen))
+                parsed = TgMessageReaction(key: key, emoji: "⭐", count: count, isChosen: isChosen)
             default:
-                continue
+                parsed = nil
+            }
+            guard let parsed else { continue }
+            if let existing = merged[parsed.key] {
+                merged[parsed.key] = TgMessageReaction(
+                    key: parsed.key,
+                    emoji: parsed.emoji,
+                    count: max(existing.count, parsed.count),
+                    isChosen: existing.isChosen || parsed.isChosen
+                )
+            } else {
+                merged[parsed.key] = parsed
             }
         }
-        return result
+        return merged.values.sorted { $0.key < $1.key }
     }
 
     private func enrichMessagesWithSenderInfo(_ messages: [TgMessage]) async throws -> [TgMessage] {
