@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContactsListView: View {
     @ObservedObject var vm: AppViewModel
@@ -60,13 +61,13 @@ struct ContactsListView: View {
 
             if vm.filteredContacts.isEmpty && !vm.isContactsLoading {
                 Section {
-                    ContentUnavailableView(
-                        AppText.tr("Нет контактов", "No contacts"),
-                        systemImage: "person.2.slash",
-                        description: Text(AppText.tr(
+                    emptyStateView(
+                        icon: "person.2.slash",
+                        title: AppText.tr("Нет контактов", "No contacts"),
+                        message: AppText.tr(
                             "Синхронизируйте телефонную книгу или добавьте контакты в Telegram.",
                             "Sync your phone book or add contacts in Telegram."
-                        ))
+                        )
                     )
                 }
             } else {
@@ -111,14 +112,19 @@ struct ContactsListView: View {
     }
 
     private var accessDeniedView: some View {
-        ContentUnavailableView {
-            Label(AppText.tr("Нет доступа к контактам", "No contacts access"), systemImage: "person.crop.circle.badge.xmark")
-        } description: {
-            Text(AppText.tr(
-                "Откройте Настройки iOS → Конфиденциальность → Контакты и разрешите доступ для этого приложения.",
-                "Open iOS Settings → Privacy → Contacts and allow access for this app."
-            ))
-        } actions: {
+        VStack(spacing: 20) {
+            Spacer()
+
+            emptyStateView(
+                icon: "person.crop.circle.badge.xmark",
+                title: AppText.tr("Нет доступа к контактам", "No contacts access"),
+                message: AppText.tr(
+                    "Откройте Настройки iOS → Конфиденциальность → Контакты и разрешите доступ для этого приложения.",
+                    "Open iOS Settings → Privacy → Contacts and allow access for this app."
+                )
+            )
+            .padding(.horizontal, 24)
+
             Button(AppText.tr("Открыть настройки", "Open Settings")) {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
@@ -130,8 +136,29 @@ struct ContactsListView: View {
             Button(AppText.tr("Показать контакты Telegram", "Show Telegram contacts")) {
                 Task { await vm.refreshContacts(force: true) }
             }
+            .buttonStyle(.bordered)
+
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ChatListScreenBackground())
         .mainTabNavigationBar(title: AppText.tr("Контакты", "Contacts"))
+    }
+
+    private func emptyStateView(icon: String, title: String, message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
     }
 
     private func contactRow(_ contact: TgContact) -> some View {

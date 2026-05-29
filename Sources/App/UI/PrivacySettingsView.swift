@@ -77,8 +77,10 @@ struct PrivacySettingsView: View {
                 privacyPicker(for: .showLink)
             }
 
-            Section(AppText.tr("Сообщения", "Messages")) {
+            Section {
                 privacyPicker(for: .forwards)
+            } header: {
+                Text(AppText.tr("Сообщения", "Messages"))
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(AppText.tr(

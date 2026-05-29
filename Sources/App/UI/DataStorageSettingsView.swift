@@ -50,7 +50,7 @@ struct DataStorageSettingsView: View {
                 .disabled(vm.isSyncingContacts)
             }
 
-            Section(AppText.tr("Сообщения", "Messages")) {
+            Section {
                 Toggle(isOn: $appSettings.keepDeletedMessages) {
                     settingsLabel(
                         icon: "trash.slash",
@@ -58,6 +58,8 @@ struct DataStorageSettingsView: View {
                         subtitle: AppText.tr("Оставлять удалённые в локальной базе", "Keep deleted in local DB")
                     )
                 }
+            } header: {
+                Text(AppText.tr("Сообщения", "Messages"))
             } footer: {
                 Text(AppText.tr(
                     "Очистка кэша TDLib выполняется через официальный клиент или переустановку данных приложения.",
