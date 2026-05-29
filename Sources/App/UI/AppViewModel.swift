@@ -387,7 +387,7 @@ final class AppViewModel: ObservableObject {
         if PushNotificationService.shared.authorizationStatus == .notDetermined {
             _ = await PushNotificationService.shared.requestAuthorization()
         } else {
-            UIApplication.shared.registerForRemoteNotifications()
+            PushNotificationService.shared.registerForRemoteNotificationsIfAllowed()
         }
         await registerPushTokenIfNeeded()
     }

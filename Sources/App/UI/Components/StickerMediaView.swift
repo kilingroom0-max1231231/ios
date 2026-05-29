@@ -14,6 +14,12 @@ struct StickerMediaView: View {
         return URL(fileURLWithPath: animationPath)
     }
 
+    private var tgsPath: String? {
+        if TGSFileLoader.isTGSPath(animationPath) { return animationPath }
+        if TGSFileLoader.isTGSPath(displayPath) { return displayPath }
+        return nil
+    }
+
     private var shouldPlayVideo: Bool {
         isAnimated && animationURL != nil
     }
@@ -30,7 +36,9 @@ struct StickerMediaView: View {
 
     var body: some View {
         Group {
-            if shouldPlayVideo, let animationURL {
+            if let tgsPath {
+                LottieStickerView(tgsPath: tgsPath)
+            } else if shouldPlayVideo, let animationURL {
                 LoopingVideoStickerView(url: animationURL, fallbackPath: rasterDisplayPath)
             } else {
                 CachedLocalImage(path: rasterDisplayPath, contentMode: .fit) {

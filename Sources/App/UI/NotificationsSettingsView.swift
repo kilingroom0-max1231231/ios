@@ -17,7 +17,15 @@ struct NotificationsSettingsView: View {
                 }
                 .onChange(of: appSettings.enablePushNotifications) { enabled in
                     if enabled {
-                        Task { await PushNotificationService.shared.requestAuthorization() }
+                        Task {
+                            await pushService.refreshAuthorizationStatus()
+                            if pushService.authorizationStatus == .notDetermined {
+                                _ = await pushService.requestAuthorization()
+                            } else {
+                                pushService.registerForRemoteNotificationsIfAllowed()
+                                await AppDelegateHolder.viewModel?.registerPushTokenIfNeeded()
+                            }
+                        }
                     }
                 }
 
@@ -39,10 +47,19 @@ struct NotificationsSettingsView: View {
                     )
                 }
             } footer: {
-                Text(AppText.tr(
-                    "Для push нужен доступ к уведомлениям в iOS. TDLib регистрирует токен устройства в Telegram.",
-                    "Push requires iOS notification permission. TDLib registers the device token with Telegram."
-                ))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AppText.tr(
+                        "Бесплатный Apple ID не поддерживает удалённые push от Telegram. Баннеры и звук работают, пока приложение открыто.",
+                        "A free Apple ID does not support remote Telegram push. Banners and sounds work while the app is open."
+                    ))
+                    if pushService.isRemotePushBlocked {
+                        Text(AppText.tr(
+                            "Статус: удалённый push отключён для этой сборки.",
+                            "Status: remote push is disabled for this build."
+                        ))
+                        .foregroundStyle(.orange)
+                    }
+                }
             }
 
             Section(AppText.tr("В приложении", "In-app")) {

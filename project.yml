@@ -2,6 +2,10 @@ name: TelegramUserClient
 options:
   deploymentTarget:
     iOS: "16.0"
+packages:
+  Lottie:
+    url: https://github.com/airbnb/lottie-ios
+    from: "4.4.3"
 settings:
   base:
     SWIFT_VERSION: 5.9
@@ -12,6 +16,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources/App
+    dependencies:
+      - package: Lottie
     settings:
       base:
         PRODUCT_NAME: TelegramUserClient
@@ -62,3 +68,11 @@ targets:
           - "-lcrypto"
           - "-lc++"
           - "-lz"
+      # Push entitlements (aps-environment) require a PAID Apple Developer Program account.
+      # Free Personal Team builds must NOT set CODE_SIGN_ENTITLEMENTS with push — signing will fail.
+      # When you have a paid account, uncomment and enable Push in developer.apple.com:
+      # configs:
+      #   Debug:
+      #     CODE_SIGN_ENTITLEMENTS: Sources/App/Entitlements/TelegramUserClient-Push-Debug.entitlements
+      #   Release:
+      #     CODE_SIGN_ENTITLEMENTS: Sources/App/Entitlements/TelegramUserClient-Push-Release.entitlements
