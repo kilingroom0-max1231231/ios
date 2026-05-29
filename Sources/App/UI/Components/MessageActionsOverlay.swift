@@ -132,13 +132,12 @@ struct MessageActionsOverlay: View {
         }
     }
 
-    @ViewBuilder
     private func positionedContent(
         messageFrame: CGRect,
         containerSize: CGSize,
         safeTop: CGFloat,
         safeBottom: CGFloat
-    ) {
+    ) -> some View {
         let layout = overlayLayout(
             messageFrame: messageFrame,
             containerSize: containerSize,
@@ -146,7 +145,7 @@ struct MessageActionsOverlay: View {
             safeBottom: safeBottom
         )
 
-        ZStack {
+        return ZStack {
             reactionsPanel(width: layout.panelWidth)
                 .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
 
