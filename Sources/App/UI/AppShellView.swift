@@ -45,6 +45,7 @@ struct AppShellView: View {
                     }
                     .id(language.preferredLanguage)
                     .tint(appearance.accentColor)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.88), value: vm.mainTabIndex)
 
                     if let toast = vm.incomingToast {
                         IncomingMessageToastView(

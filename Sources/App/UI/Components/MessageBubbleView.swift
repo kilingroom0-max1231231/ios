@@ -11,6 +11,7 @@ struct MessageBubbleView: View {
     var peerTitle: String?
     var replyPreviewText: String?
     var onOpenAttachment: ((TgAttachment) -> Void)?
+    var onPremiumSticker: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
@@ -260,7 +261,8 @@ struct MessageBubbleView: View {
                     ForEach(standaloneMedia) { attachment in
                         MessageAttachmentPreview(
                             attachment: attachment,
-                            isOutgoing: message.outgoing
+                            isOutgoing: message.outgoing,
+                            onPremiumSticker: onPremiumSticker
                         ) {
                             onOpenAttachment?(attachment)
                         }

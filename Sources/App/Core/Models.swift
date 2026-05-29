@@ -19,6 +19,36 @@ struct TgAttachment: Identifiable, Equatable {
     let mimeType: String?
     let size: Int64?
     let localPath: String?
+    let animationPath: String?
+    let isPremiumSticker: Bool
+
+    init(
+        id: String,
+        kind: TgAttachmentKind,
+        fileId: Int64?,
+        fileName: String?,
+        mimeType: String?,
+        size: Int64?,
+        localPath: String?,
+        animationPath: String? = nil,
+        isPremiumSticker: Bool = false
+    ) {
+        self.id = id
+        self.kind = kind
+        self.fileId = fileId
+        self.fileName = fileName
+        self.mimeType = mimeType
+        self.size = size
+        self.localPath = localPath
+        self.animationPath = animationPath
+        self.isPremiumSticker = isPremiumSticker
+    }
+
+    var isAnimatedSticker: Bool {
+        guard let animationPath, !animationPath.isEmpty else { return false }
+        let ext = URL(fileURLWithPath: animationPath).pathExtension.lowercased()
+        return ext == "webm" || ext == "mp4" || ext == "mov"
+    }
 }
 
 struct TgChat: Identifiable, Equatable, Codable {
@@ -356,6 +386,8 @@ struct TgGiftItem: Identifiable, Equatable {
     let title: String
     let subtitle: String?
     let stickerPath: String?
+    let animationPath: String?
+    let isAnimated: Bool
     let senderUserId: Int64?
     let senderName: String?
     let senderAvatarPath: String?
@@ -367,6 +399,8 @@ struct TgGiftItem: Identifiable, Equatable {
         title: String,
         subtitle: String? = nil,
         stickerPath: String? = nil,
+        animationPath: String? = nil,
+        isAnimated: Bool = false,
         senderUserId: Int64? = nil,
         senderName: String? = nil,
         senderAvatarPath: String? = nil,
@@ -377,6 +411,8 @@ struct TgGiftItem: Identifiable, Equatable {
         self.title = title
         self.subtitle = subtitle
         self.stickerPath = stickerPath
+        self.animationPath = animationPath
+        self.isAnimated = isAnimated
         self.senderUserId = senderUserId
         self.senderName = senderName
         self.senderAvatarPath = senderAvatarPath

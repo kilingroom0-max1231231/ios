@@ -62,6 +62,7 @@ final class AppViewModel: ObservableObject {
 
     private var repository: TelegramRepository?
     private var messagesReloadTasks: [Int64: Task<Void, Never>] = [:]
+    private var mediaPathsApplyTask: Task<Void, Never>?
     private var loadedStoriesForUserId: Int64?
     private var loadedGiftsForUserId: Int64?
     private var mediaDownloadsInProgress: Set<Int64> = []
@@ -580,8 +581,7 @@ final class AppViewModel: ObservableObject {
             let downloadedMessages = try await repository.downloadMedia(chatId: chatId)
             await MainActor.run {
                 guard let owner, owner.selectedChatId == chatId else { return }
-                owner.replaceMessagesPreservingDisplay(downloadedMessages, chatId: chatId)
-                owner.chatMediaGeneration += 1
+                owner.applyMediaPaths(from: downloadedMessages, chatId: chatId)
             }
         } catch {
             await MainActor.run {
@@ -1175,28 +1175,34 @@ final class AppViewModel: ObservableObject {
             loadedGiftsForUserId = nil
             userProfileStories = []
             userProfileGifts = []
-            await loadUserProfileStories(userId: userId)
+            await loadUserProfileStories(userId: userId, force: true)
         } catch {
             status = error.localizedDescription
         }
     }
 
-    func loadUserProfileStories(userId: Int64) async {
+    func loadUserProfileStories(userId: Int64, force: Bool = false) async {
         guard let profile = userProfileDetail, profile.userId == userId else { return }
-        await loadActiveStories(chatId: profile.privateChatId)
+        await loadActiveStories(chatId: profile.privateChatId, force: force)
     }
 
-    func loadActiveStories(chatId: Int64) async {
-        guard let repository, loadedStoriesForUserId != chatId else { return }
+    func loadActiveStories(chatId: Int64, force: Bool = false) async {
+        guard let repository else { return }
+        if !force, loadedStoriesForUserId == chatId, !userProfileStories.isEmpty { return }
 
         isUserProfileExtrasLoading = true
         defer { isUserProfileExtrasLoading = false }
 
         do {
-            userProfileStories = try await repository.loadUserStories(chatId: chatId)
-            loadedStoriesForUserId = chatId
+            let stories = try await repository.loadUserStories(chatId: chatId)
+            userProfileStories = stories
+            if !stories.isEmpty || force {
+                loadedStoriesForUserId = chatId
+            }
         } catch {
-            userProfileStories = []
+            if force {
+                userProfileStories = []
+            }
         }
     }
 
@@ -1246,7 +1252,7 @@ final class AppViewModel: ObservableObject {
                 let profile = try await repository.loadChatProfile(chatId: chatId)
                 guard !Task.isCancelled else { return }
                 await MainActor.run { self.chatProfile = profile }
-                await loadActiveStories(chatId: profile.chatId)
+                await loadActiveStories(chatId: profile.chatId, force: profile.hasActiveStories)
 
                 async let members: [ChatMember] = repository.loadChatMembers(chatId: chatId)
                 async let media: [TgMessage] = repository.loadChatMedia(chatId: chatId)
@@ -1523,6 +1529,73 @@ final class AppViewModel: ObservableObject {
 
     func openChatFromSearch(_ chatId: Int64) async {
         await openChat(chatId: chatId)
+    }
+
+    private func applyMediaPaths(from downloaded: [TgMessage], chatId: Int64) {
+        guard selectedChatId == chatId else { return }
+        mediaPathsApplyTask?.cancel()
+        mediaPathsApplyTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.mergeMediaPaths(from: downloaded, chatId: chatId)
+        }
+    }
+
+    private func mergeMediaPaths(from downloaded: [TgMessage], chatId: Int64) {
+        guard selectedChatId == chatId else { return }
+        let downloadedById = Dictionary(uniqueKeysWithValues: downloaded.map { ($0.id, $0) })
+        var didChange = false
+
+        let updated = messages.map { message -> TgMessage in
+            guard let source = downloadedById[message.id] else { return message }
+            let mergedAttachments = message.attachments.map { attachment -> TgAttachment in
+                guard let fileId = attachment.fileId,
+                      let refreshed = source.attachments.first(where: { $0.fileId == fileId }) else {
+                    return attachment
+                }
+                let newPath = refreshed.localPath.flatMap { $0.isEmpty ? nil : $0 }
+                let newAnim = refreshed.animationPath.flatMap { $0.isEmpty ? nil : $0 }
+                let pathChanged = newPath != nil && newPath != attachment.localPath
+                let animChanged = newAnim != nil && newAnim != attachment.animationPath
+                guard pathChanged || animChanged else { return attachment }
+                didChange = true
+                return TgAttachment(
+                    id: attachment.id,
+                    kind: attachment.kind,
+                    fileId: attachment.fileId,
+                    fileName: attachment.fileName,
+                    mimeType: attachment.mimeType,
+                    size: attachment.size,
+                    localPath: newPath ?? attachment.localPath,
+                    animationPath: newAnim ?? attachment.animationPath,
+                    isPremiumSticker: refreshed.isPremiumSticker || attachment.isPremiumSticker
+                )
+            }
+            guard mergedAttachments != message.attachments else { return message }
+            return TgMessage(
+                id: message.id,
+                chatId: message.chatId,
+                text: message.text,
+                outgoing: message.outgoing,
+                createdAt: message.createdAt,
+                isEdited: message.isEdited,
+                replyToMessageId: message.replyToMessageId,
+                isDeleted: message.isDeleted,
+                isReadByPeer: message.isReadByPeer,
+                attachments: mergedAttachments,
+                mediaAlbumId: message.mediaAlbumId,
+                forwardedFrom: message.forwardedFrom,
+                senderUserId: message.senderUserId,
+                senderName: message.senderName,
+                senderAvatarPath: message.senderAvatarPath,
+                authorSignature: message.authorSignature,
+                viewCount: message.viewCount
+            )
+        }
+
+        guard didChange else { return }
+        messages = applyReadState(updated, chatId: chatId)
+        chatMediaGeneration += 1
     }
 
     private func replaceMessagesPreservingDisplay(_ incoming: [TgMessage], chatId: Int64) {

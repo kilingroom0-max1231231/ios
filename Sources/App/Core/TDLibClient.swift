@@ -908,74 +908,170 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     func fetchActiveStories(chatId: Int64) async throws -> [TgStoryItem] {
+        _ = try? await sendRequest([
+            "@type": "openChat",
+            "chat_id": chatId
+        ])
+
         let response = try await sendRequest([
             "@type": "getChatActiveStories",
             "chat_id": chatId
         ])
         let maxReadStoryId = int64Value(response["max_read_story_id"]) ?? 0
         let stories = response["stories"] as? [[String: Any]] ?? []
-        var items: [TgStoryItem] = []
-        for story in stories {
-            guard let storyId = int64Value(story["id"]) else { continue }
-            let dateUnix = (story["date"] as? Double) ?? Date().timeIntervalSince1970
-            let isViewed = maxReadStoryId > 0 && storyId <= maxReadStoryId
-            var previewPath: String?
-            var mediaPath: String?
-            var isVideo = false
-            var caption = ""
 
-            if let full = try? await sendRequest([
-                "@type": "getStory",
-                "story_id": storyId,
-                "only_active": true
-            ]) {
-                caption = formattedText(from: full["caption"] as? [String: Any])
-                if let content = full["content"] as? [String: Any],
-                   let contentType = content["@type"] as? String {
-                    switch contentType {
-                    case "storyContentPhoto":
-                        if let photo = content["photo"] as? [String: Any],
-                           let fileId = extractFileId(from: photo) {
-                            previewPath = try? await downloadFile(fileId: fileId)
-                            mediaPath = previewPath
-                        }
-                    case "storyContentVideo":
-                        isVideo = true
-                        if let video = content["video"] as? [String: Any] {
-                            if let videoFile = video["video"] as? [String: Any],
-                               let fileId = int64Value(videoFile["id"]) {
-                                mediaPath = try? await downloadFile(fileId: fileId)
-                            } else if let fileId = int64Value(video["id"]) {
-                                mediaPath = try? await downloadFile(fileId: fileId)
-                            }
-                            if let thumbnail = video["thumbnail"] as? [String: Any],
-                               let fileId = extractFileId(from: thumbnail) {
-                                previewPath = try? await downloadFile(fileId: fileId)
-                            } else if let preview = video["preview"] as? [String: Any],
-                                      let fileId = extractFileId(from: preview) {
-                                previewPath = try? await downloadFile(fileId: fileId)
-                            }
-                        }
-                    default:
-                        break
-                    }
+        return await withTaskGroup(of: TgStoryItem?.self) { group in
+            for story in stories {
+                group.addTask { [weak self] in
+                    guard let self else { return nil }
+                    return await self.buildStoryItem(
+                        summary: story,
+                        chatId: chatId,
+                        maxReadStoryId: maxReadStoryId
+                    )
                 }
             }
 
-            items.append(
-                TgStoryItem(
-                    id: storyId,
-                    chatId: chatId,
-                    date: Date(timeIntervalSince1970: dateUnix),
-                    caption: caption,
-                    previewPath: previewPath,
-                    mediaPath: mediaPath,
-                    isVideo: isVideo,
-                    isViewed: isViewed
-                )
+            var items: [TgStoryItem] = []
+            for await item in group {
+                if let item {
+                    items.append(item)
+                }
+            }
+            return items.sorted { $0.date < $1.date }
+        }
+    }
+
+    private func buildStoryItem(
+        summary: [String: Any],
+        chatId: Int64,
+        maxReadStoryId: Int64
+    ) async -> TgStoryItem? {
+        guard let storyId = int64Value(summary["story_id"]) ?? int64Value(summary["id"]) else { return nil }
+        let dateUnix = (summary["send_date"] as? Double)
+            ?? (summary["date"] as? Double)
+            ?? Date().timeIntervalSince1970
+        let isViewed = maxReadStoryId > 0 && storyId <= maxReadStoryId
+        var previewPath: String?
+        var mediaPath: String?
+        var isVideo = false
+        var caption = ""
+
+        guard let full = try? await sendRequest([
+            "@type": "getStory",
+            "story_list": [
+                "@type": "storyListChat",
+                "chat_id": chatId
+            ],
+            "story_id": storyId,
+            "only_active": true
+        ]) else {
+            return TgStoryItem(
+                id: storyId,
+                chatId: chatId,
+                date: Date(timeIntervalSince1970: dateUnix),
+                caption: "",
+                previewPath: nil,
+                mediaPath: nil,
+                isVideo: false,
+                isViewed: isViewed
             )
         }
-        return items.sorted { $0.date < $1.date }
+
+        caption = formattedText(from: full["caption"] as? [String: Any])
+        if let content = full["content"] as? [String: Any],
+           let contentType = content["@type"] as? String {
+            switch contentType {
+            case "storyContentPhoto":
+                if let photo = content["photo"] as? [String: Any] {
+                    previewPath = await resolveFilePath(from: photo, downloadIfMissing: true)
+                    mediaPath = previewPath
+                }
+            case "storyContentVideo":
+                isVideo = true
+                if let video = content["video"] as? [String: Any] {
+                    if let videoFile = video["video"] as? [String: Any] {
+                        mediaPath = await resolveFilePath(from: videoFile, downloadIfMissing: true)
+                    } else {
+                        mediaPath = await resolveFilePath(from: video, downloadIfMissing: true)
+                    }
+                    if let thumbnail = video["thumbnail"] as? [String: Any] {
+                        previewPath = await resolveFilePath(from: thumbnail, downloadIfMissing: true)
+                    } else if let preview = video["preview"] as? [String: Any] {
+                        previewPath = await resolveFilePath(from: preview, downloadIfMissing: true)
+                    }
+                }
+            default:
+                break
+            }
+        }
+
+        return TgStoryItem(
+            id: storyId,
+            chatId: chatId,
+            date: Date(timeIntervalSince1970: dateUnix),
+            caption: caption,
+            previewPath: previewPath,
+            mediaPath: mediaPath,
+            isVideo: isVideo,
+            isViewed: isViewed
+        )
+    }
+
+    private func resolveFilePath(from file: [String: Any], downloadIfMissing: Bool) async -> String? {
+        if let path = localCompletedFilePath(from: file) {
+            return path
+        }
+        guard downloadIfMissing, let fileId = int64Value(file["id"]) else {
+            return nil
+        }
+        return try? await downloadFile(fileId: fileId)
+    }
+
+    private func stickerFormatType(_ sticker: [String: Any]) -> String {
+        (sticker["format"] as? [String: Any])?["@type"] as? String ?? ""
+    }
+
+    private func isPremiumStickerObject(_ sticker: [String: Any]) -> Bool {
+        guard let fullType = sticker["full_type"] as? [String: Any],
+              let type = fullType["@type"] as? String else {
+            return false
+        }
+        return type == "stickerFullTypePremium" || type.contains("Premium")
+    }
+
+    private func resolveStickerMediaPaths(
+        from stickerWrapper: [String: Any],
+        downloadIfMissing: Bool
+    ) async -> (displayPath: String?, animationPath: String?, isAnimated: Bool) {
+        let format = stickerFormatType(stickerWrapper)
+        let isAnimated = format == "stickerFormatTgs"
+            || format == "stickerFormatWebm"
+            || format == "stickerFormatWebp"
+
+        var displayPath: String?
+        var animationPath: String?
+
+        if let thumbnail = stickerWrapper["thumbnail"] as? [String: Any] {
+            displayPath = await resolveFilePath(from: thumbnail, downloadIfMissing: downloadIfMissing)
+        }
+
+        if let stickerFile = stickerWrapper["sticker"] as? [String: Any] {
+            let mainPath = await resolveFilePath(from: stickerFile, downloadIfMissing: downloadIfMissing)
+            switch format {
+            case "stickerFormatWebm":
+                animationPath = mainPath
+                displayPath = displayPath ?? mainPath
+            case "stickerFormatTgs":
+                animationPath = mainPath
+            case "stickerFormatWebp":
+                displayPath = mainPath ?? displayPath
+            default:
+                displayPath = mainPath ?? displayPath
+            }
+        }
+
+        return (displayPath, animationPath, isAnimated)
     }
 
     func fetchReceivedGifts(userId: Int64, limit: Int = 100) async throws -> [TgGiftItem] {
@@ -1058,6 +1154,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                         title: presentation.title,
                         subtitle: senderName,
                         stickerPath: presentation.stickerPath,
+                        animationPath: presentation.animationPath,
+                        isAnimated: presentation.isAnimated,
                         senderUserId: senderUserId,
                         senderName: senderName,
                         senderAvatarPath: senderAvatarPath,
@@ -1078,7 +1176,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return items
     }
 
-    private func resolveSentGiftPresentation(_ sentGift: [String: Any]) async -> (title: String, stickerPath: String?) {
+    private func resolveSentGiftPresentation(_ sentGift: [String: Any]) async -> (
+        title: String,
+        stickerPath: String?,
+        animationPath: String?,
+        isAnimated: Bool
+    ) {
         let type = sentGift["@type"] as? String ?? ""
         var title = AppText.tr("Подарок", "Gift")
         var stickerObject: [String: Any]?
@@ -1105,12 +1208,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             }
         }
 
-        var stickerPath: String?
-        if let stickerObject,
-           let fileId = extractFileId(from: stickerObject["sticker"] ?? stickerObject) {
-            stickerPath = try? await downloadFile(fileId: fileId)
+        guard let stickerObject else {
+            return (title, nil, nil, false)
         }
-        return (title, stickerPath)
+        let media = await resolveStickerMediaPaths(from: stickerObject, downloadIfMissing: true)
+        return (title, media.displayPath, media.animationPath, media.isAnimated)
     }
 
     private func startReceiveLoopIfNeeded() {
@@ -1519,6 +1621,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         case "messageSticker":
             guard let sticker = content["sticker"] as? [String: Any] else { return [] }
             let fileInfo = extractFileInfo(from: sticker["sticker"])
+            let format = stickerFormatType(sticker)
+            let animPath = format == "stickerFormatWebm" ? fileInfo.localPath : nil
             return [TgAttachment(
                 id: UUID().uuidString,
                 kind: .sticker,
@@ -1526,12 +1630,16 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 fileName: nil,
                 mimeType: sticker["mime_type"] as? String,
                 size: fileInfo.size ?? int64Value(sticker["size"]),
-                localPath: fileInfo.localPath
+                localPath: format == "stickerFormatWebm" ? nil : fileInfo.localPath,
+                animationPath: animPath,
+                isPremiumSticker: isPremiumStickerObject(sticker)
             )]
         case "messageGift":
             guard let gift = content["gift"] as? [String: Any],
                   let sticker = gift["sticker"] as? [String: Any] else { return [] }
             let fileInfo = extractFileInfo(from: sticker["sticker"])
+            let format = stickerFormatType(sticker)
+            let animPath = format == "stickerFormatWebm" ? fileInfo.localPath : nil
             return [TgAttachment(
                 id: UUID().uuidString,
                 kind: .gift,
@@ -1539,7 +1647,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 fileName: gift["title"] as? String,
                 mimeType: sticker["mime_type"] as? String,
                 size: fileInfo.size ?? int64Value(sticker["size"]),
-                localPath: fileInfo.localPath
+                localPath: format == "stickerFormatWebm" ? nil : fileInfo.localPath,
+                animationPath: animPath
             )]
         case "messageDocument":
             guard let doc = content["document"] as? [String: Any] else { return [] }

@@ -10,6 +10,8 @@ struct ChatDetailView: View {
     @State private var mediaSelection: MediaViewerSelection?
     @State private var forwardingMessage: TgMessage?
     @State private var didInitialScrollToBottom = false
+    @State private var isPinnedToBottom = true
+    @State private var premiumUpsellContext: PremiumUpsellContext?
 
     private enum ChatScrollAnchor {
         static let bottom = "chat-scroll-bottom"
@@ -73,12 +75,14 @@ struct ChatDetailView: View {
         .transparentNavigationBar()
         .task(id: chatId) {
             didInitialScrollToBottom = false
+            isPinnedToBottom = true
             vm.setChatVisible(chatId)
             await vm.selectChat(chatId)
         }
         .onDisappear {
             vm.setChatVisible(nil)
             didInitialScrollToBottom = false
+            isPinnedToBottom = true
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -136,6 +140,9 @@ struct ChatDetailView: View {
         }
         .fullScreenCover(item: $mediaSelection) { selection in
             MediaViewerView(attachments: selection.attachments, startIndex: selection.startIndex)
+        }
+        .sheet(item: $premiumUpsellContext) { context in
+            PremiumUpsellSheet(context: context)
         }
         .sheet(item: $forwardingMessage) { message in
             NavigationStack {
@@ -215,10 +222,17 @@ struct ChatDetailView: View {
                         switch row {
                         case .date(let date):
                             dateSeparator(date)
+                                .transition(.opacity)
                         case .message(let message):
                             let replyPreview = message.replyToMessageId.flatMap { replyPreviews[$0] }
                             messageRow(for: message, replyPreview: replyPreview)
                                 .id(message.id)
+                                .transition(
+                                    .asymmetric(
+                                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .opacity
+                                    )
+                                )
                                 .onAppear {
                                     if message.id == grouped.first?.id {
                                         Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
@@ -230,39 +244,61 @@ struct ChatDetailView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(ChatScrollAnchor.bottom)
+                        .onAppear { isPinnedToBottom = true }
+                        .onDisappear {
+                            if didInitialScrollToBottom {
+                                isPinnedToBottom = false
+                            }
+                        }
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 2)
+                .animation(.spring(response: 0.32, dampingFraction: 0.9), value: grouped.last?.id)
             }
             .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(
-                DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                DragGesture(minimumDistance: 8, coordinateSpace: .local)
                     .onChanged { value in
+                        if value.translation.height > 14 {
+                            isPinnedToBottom = false
+                        }
                         if value.translation.height > 18 {
                             isComposerFocused = false
                         }
                     }
             )
-            .onChange(of: vm.visibleMessages.count) { _ in
-                requestScrollToBottom(proxy: proxy, animated: !didInitialScrollToBottom)
-            }
             .onChange(of: grouped.last?.id) { _ in
-                requestScrollToBottom(proxy: proxy, animated: !didInitialScrollToBottom)
+                let force = grouped.last?.outgoing == true
+                requestScrollToBottom(proxy: proxy, animated: true, force: force)
             }
             .onChange(of: vm.chatMediaGeneration) { _ in
                 requestScrollToBottom(proxy: proxy, animated: false)
             }
             .onChange(of: isComposerFocused) { focused in
                 if focused {
-                    requestScrollToBottom(proxy: proxy, animated: true)
+                    isPinnedToBottom = true
+                    requestScrollToBottom(proxy: proxy, animated: true, force: true)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                requestScrollToBottom(proxy: proxy, animated: true)
+                guard isPinnedToBottom else { return }
+                requestScrollToBottom(proxy: proxy, animated: true, force: true)
             }
             .onAppear {
-                requestScrollToBottom(proxy: proxy, animated: false)
+                requestScrollToBottom(proxy: proxy, animated: false, force: true)
             }
+            .overlay(alignment: .bottomTrailing) {
+                if !isPinnedToBottom, !grouped.isEmpty {
+                    scrollToBottomButton {
+                        isPinnedToBottom = true
+                        requestScrollToBottom(proxy: proxy, animated: true, force: true)
+                    }
+                    .padding(.trailing, 14)
+                    .padding(.bottom, 10)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.86), value: isPinnedToBottom)
         }
     }
 
@@ -336,6 +372,9 @@ struct ChatDetailView: View {
                         } else {
                             mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
                         }
+                    },
+                    onPremiumSticker: { attachment in
+                        premiumUpsellContext = .premiumSticker(attachment: attachment)
                     },
                     onReply: canSend ? {
                         vm.startReply(message)
@@ -419,31 +458,46 @@ struct ChatDetailView: View {
         }
     }
 
-    private func requestScrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+    private func requestScrollToBottom(proxy: ScrollViewProxy, animated: Bool, force: Bool = false) {
         guard !groupedMessages.isEmpty else { return }
+        guard force || isPinnedToBottom || !didInitialScrollToBottom else { return }
 
         let scroll = {
             proxy.scrollTo(ChatScrollAnchor.bottom, anchor: .bottom)
-            if let lastId = groupedMessages.last?.id {
-                proxy.scrollTo(lastId, anchor: .bottom)
-            }
         }
 
         DispatchQueue.main.async {
-            scroll()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                scroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                scroll()
-                didInitialScrollToBottom = true
-            }
             if animated {
-                withAnimation(.easeOut(duration: 0.22)) {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
                     scroll()
+                }
+            } else {
+                scroll()
+            }
+
+            if !didInitialScrollToBottom {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    scroll()
+                    didInitialScrollToBottom = true
                 }
             }
         }
+    }
+
+    private func scrollToBottomButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle().stroke(Color.white.opacity(0.2), lineWidth: 1)
+                }
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(AppText.tr("Вниз", "Scroll down"))
     }
 
     private var bottomBar: some View {

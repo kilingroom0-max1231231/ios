@@ -10,6 +10,7 @@ struct MessageAttachmentPreview: View {
     let attachment: TgAttachment
     var isOutgoing: Bool = false
     var onOpen: (() -> Void)?
+    var onPremiumSticker: ((TgAttachment) -> Void)?
     @State private var inlinePlayer: AVPlayer?
     @State private var isInlinePlaying = false
 
@@ -181,22 +182,38 @@ struct MessageAttachmentPreview: View {
 
     private var stickerLikePreview: some View {
         Button {
-            onOpen?()
+            if attachment.isPremiumSticker {
+                onPremiumSticker?(attachment)
+            } else {
+                onOpen?()
+            }
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(stickerLikeBackdrop)
 
-                if let image = attachment.localImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(8)
-                } else {
+                StickerMediaView(
+                    displayPath: attachment.localPath,
+                    animationPath: attachment.animationPath,
+                    isAnimated: attachment.isAnimatedSticker
+                )
+                .padding(8)
+
+                if attachment.isPremiumSticker {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            PremiumBadgeView(size: 18)
+                                .padding(8)
+                        }
+                        Spacer()
+                    }
+                }
+
+                if attachment.localPath == nil && attachment.animationPath == nil {
                     VStack(spacing: 8) {
-                        Image(systemName: attachment.kind == .gift ? "gift.fill" : "face.smiling")
-                            .font(.title2)
-                            .foregroundStyle(AppColors.accent)
+                        ProgressView()
+                            .tint(.secondary)
                         Text(attachment.kind == .gift
                              ? AppText.tr("Подарок загружается", "Gift loading")
                              : AppText.tr("Стикер загружается", "Sticker loading"))
@@ -208,7 +225,6 @@ struct MessageAttachmentPreview: View {
             .frame(width: attachment.kind == .gift ? 168 : 150, height: attachment.kind == .gift ? 168 : 150)
         }
         .buttonStyle(.plain)
-        .disabled(attachment.localURL == nil && attachment.localImage == nil)
     }
 
     private func loadingPlaceholder(systemImage: String, title: String) -> some View {
@@ -905,9 +921,10 @@ struct CachedLocalImage<Placeholder: View>: View {
                 image = nil
                 return
             }
-            let loaded = await Task.detached(priority: .userInitiated) {
-                LocalImageCache.shared.image(path: path, maxPixelSize: 720)
+            let loaded = await Task.detached(priority: .utility) {
+                LocalImageCache.shared.image(path: path, maxPixelSize: 640)
             }.value
+            guard !Task.isCancelled else { return }
             image = loaded
         }
     }
@@ -918,8 +935,8 @@ final class LocalImageCache {
     private let cache = NSCache<NSString, UIImage>()
 
     private init() {
-        cache.countLimit = 160
-        cache.totalCostLimit = 80 * 1024 * 1024
+        cache.countLimit = 72
+        cache.totalCostLimit = 48 * 1024 * 1024
     }
 
     func image(path: String, maxPixelSize: CGFloat? = nil) -> UIImage? {

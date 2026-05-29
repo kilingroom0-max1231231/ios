@@ -297,8 +297,8 @@ final class TelegramRepository {
         try await client.setName(firstName: firstName, lastName: lastName)
     }
 
-    static let mediaDownloadRecentMessageLimit = 48
-    static let mediaDownloadConcurrency = 4
+    static let mediaDownloadRecentMessageLimit = 36
+    static let mediaDownloadConcurrency = 3
 
     func downloadMedia(
         chatId: Int64,

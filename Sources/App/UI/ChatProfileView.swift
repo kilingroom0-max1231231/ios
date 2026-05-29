@@ -346,7 +346,7 @@ struct ChatProfileView: View {
             }
         }
         .onAppear {
-            Task { await vm.loadActiveStories(chatId: profile.chatId) }
+            Task { await vm.loadActiveStories(chatId: profile.chatId, force: true) }
         }
     }
 

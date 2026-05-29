@@ -121,9 +121,11 @@ struct MessageMediaThumbnail: View {
         case .video, .animation:
             VideoThumbnailView(url: attachment.localURL)
         case .sticker, .gift:
-            CachedLocalImage(path: attachment.localPath, contentMode: .fit) {
-                placeholder(attachment.kind == .gift ? "gift.fill" : "face.smiling")
-            }
+            StickerMediaView(
+                displayPath: attachment.localPath,
+                animationPath: attachment.animationPath,
+                isAnimated: attachment.isAnimatedSticker
+            )
             .padding(6)
         default:
             placeholder("photo")

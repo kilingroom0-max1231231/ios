@@ -111,7 +111,8 @@ struct ChatListView: View {
         NavigationLink(value: chat.id) {
             ChatCardView(chat: chat)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ChatRowPressStyle())
+        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
@@ -457,5 +458,13 @@ private struct ChatCardView: View {
             return AppText.tr("Ограничил(а) вас", "Restricted you")
         }
         return ""
+    }
+}
+
+private struct ChatRowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.spring(response: 0.26, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }

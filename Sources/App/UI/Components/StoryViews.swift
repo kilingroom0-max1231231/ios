@@ -7,17 +7,17 @@ struct StoryThumbView: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             Group {
-                if let path = story.previewPath ?? story.mediaPath,
-                   let image = LocalImageCache.shared.image(path: path) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
+                CachedLocalImage(path: story.previewPath ?? story.mediaPath, contentMode: .fill) {
                     Rectangle()
                         .fill(Color.secondary.opacity(0.25))
                         .overlay {
-                            Image(systemName: story.isVideo ? "play.fill" : "photo")
-                                .foregroundStyle(.secondary)
+                            if story.isVideo {
+                                Image(systemName: "play.fill")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ProgressView()
+                                    .tint(.secondary)
+                            }
                         }
                 }
             }
@@ -108,12 +108,12 @@ private struct StoryMediaPage: View {
                     ProgressView()
                         .tint(.white)
                 }
-            } else if let path = story.mediaPath ?? story.previewPath,
-                      let image = LocalImageCache.shared.image(path: path) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if story.mediaPath != nil || story.previewPath != nil {
+                CachedLocalImage(path: story.mediaPath ?? story.previewPath, contentMode: .fit) {
+                    ProgressView()
+                        .tint(.white)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView()
                     .tint(.white)

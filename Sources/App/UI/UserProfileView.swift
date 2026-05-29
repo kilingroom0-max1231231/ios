@@ -231,7 +231,7 @@ struct UserProfileView: View {
             }
         }
         .onAppear {
-            Task { await vm.loadUserProfileStories(userId: userId) }
+            Task { await vm.loadUserProfileStories(userId: userId, force: true) }
         }
     }
 

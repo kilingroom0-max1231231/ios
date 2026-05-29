@@ -64,25 +64,13 @@ private struct GiftGridCell: View {
         gift.senderUserId != nil || gift.senderAvatarPath != nil || !(gift.senderName?.isEmpty ?? true)
     }
 
-    @ViewBuilder
     private var stickerView: some View {
-        if let path = gift.stickerPath, let image = LocalImageCache.shared.image(path: path) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(6)
-        } else {
-            Image(systemName: "gift.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [AppColors.accent, AppColors.accent.opacity(0.65), .pink.opacity(0.85)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        StickerMediaView(
+            displayPath: gift.stickerPath,
+            animationPath: gift.animationPath,
+            isAnimated: gift.isAnimated
+        )
+        .padding(6)
     }
 
     private var senderOverlay: some View {
