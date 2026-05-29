@@ -58,24 +58,25 @@ struct MessageActionsOverlay: View {
 
     @ObservedObject private var appSettings = AppSettingsStore.shared
     @State private var reactionsExpanded = false
-    @State private var appeared = false
+    @State private var backdropOpacity: Double = 0
+    @State private var bubbleScale: CGFloat = 0.9
+    @State private var panelsOpacity: Double = 0
+    @State private var panelsOffset: CGFloat = 16
 
-    private let compactReactionLimit = 8
-    private let reactionGridColumns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 6)
+    private var reactionGridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 6), count: reactionsExpanded ? 8 : 6)
+    }
 
     private var message: TgMessage {
         vm.messages.first(where: { $0.id == target.message.id }) ?? target.message
     }
 
-    private var displayedEmojis: [String] {
-        if reactionsExpanded || vm.reactionPickerEmojis.count <= compactReactionLimit {
-            return vm.reactionPickerEmojis
-        }
-        return Array(vm.reactionPickerEmojis.prefix(compactReactionLimit))
+    private var pickerItems: [TgReactionPickerItem] {
+        vm.reactionPickerItems
     }
 
     private var canExpandReactions: Bool {
-        vm.reactionPickerEmojis.count > compactReactionLimit
+        pickerItems.count > 10
     }
 
     var body: some View {
@@ -95,6 +96,7 @@ struct MessageActionsOverlay: View {
 
             ZStack {
                 backdrop
+                    .opacity(backdropOpacity)
                     .onTapGesture { dismiss() }
 
                 if let frame = localMessageFrame, frame.width > 1, frame.height > 1 {
@@ -111,16 +113,25 @@ struct MessageActionsOverlay: View {
             .frame(width: size.width, height: size.height)
         }
         .ignoresSafeArea()
-        .opacity(appeared ? 1 : 0)
         .onAppear {
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
-                appeared = true
+            appSettings.reactionHaptic(.medium)
+            withAnimation(.easeOut(duration: 0.22)) {
+                backdropOpacity = 1
+            }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                bubbleScale = 1.03
+            }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.82).delay(0.04)) {
+                panelsOpacity = 1
+                panelsOffset = 0
             }
         }
         .task {
             await vm.loadReactionPicker(for: message)
-            if appSettings.expandReactionPickerByDefault {
-                reactionsExpanded = true
+            if appSettings.expandReactionPickerByDefault || pickerItems.count > 14 {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    reactionsExpanded = true
+                }
             }
         }
     }
@@ -128,7 +139,7 @@ struct MessageActionsOverlay: View {
     private var backdrop: some View {
         ZStack {
             VisualEffectBlur(style: .systemChromeMaterialDark)
-            Color.black.opacity(0.42)
+            Color.black.opacity(0.45)
         }
     }
 
@@ -147,13 +158,18 @@ struct MessageActionsOverlay: View {
 
         return ZStack {
             reactionsPanel(width: layout.panelWidth)
+                .opacity(panelsOpacity)
+                .offset(y: panelsOffset)
                 .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
 
             highlightedBubble
+                .scaleEffect(bubbleScale)
                 .frame(width: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
                 .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
             actionsMenu(width: layout.panelWidth)
+                .opacity(panelsOpacity)
+                .offset(y: -panelsOffset)
                 .position(x: layout.panelCenterX, y: layout.actionsCenterY)
         }
         .allowsHitTesting(true)
@@ -162,10 +178,15 @@ struct MessageActionsOverlay: View {
     private func centeredFallback(size: CGSize, safeTop: CGFloat, safeBottom: CGFloat) -> some View {
         let midY = (safeTop + size.height - safeBottom) / 2
         return VStack(spacing: 12) {
-            reactionsPanel(width: min(size.width - 32, 340))
+            reactionsPanel(width: min(size.width - 32, 360))
+                .opacity(panelsOpacity)
+                .offset(y: panelsOffset)
             highlightedBubble
+                .scaleEffect(bubbleScale)
                 .padding(.horizontal, 12)
             actionsMenu(width: min(size.width - 48, 280))
+                .opacity(panelsOpacity)
+                .offset(y: -panelsOffset)
         }
         .frame(maxWidth: .infinity)
         .position(x: size.width / 2, y: midY)
@@ -230,10 +251,12 @@ struct MessageActionsOverlay: View {
 
     private var reactionsPanelHeight: CGFloat {
         if reactionsExpanded {
-            let rows = ceil(Double(displayedEmojis.count) / 6.0)
-            return 52 + rows * 48 + (canExpandReactions ? 36 : 0)
+            let columns = 8.0
+            let rows = ceil(Double(pickerItems.count) / columns)
+            let scrollHeight = min(260, 44 + rows * 44)
+            return scrollHeight + (canExpandReactions ? 32 : 8)
         }
-        return 56
+        return 60
     }
 
     private var actionsMenuHeight: CGFloat {
@@ -249,41 +272,40 @@ struct MessageActionsOverlay: View {
             replyPreviewText: replyPreviewText,
             interactionsEnabled: false
         )
-        .scaleEffect(appeared ? 1.02 : 1)
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
-        .shadow(color: AppColors.accent.opacity(0.15), radius: 12, y: 4)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.28), lineWidth: 2)
-                .padding(-2)
-        }
+        .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
     }
 
     private func reactionsPanel(width: CGFloat) -> some View {
         VStack(spacing: 6) {
             if reactionsExpanded {
-                LazyVGrid(columns: reactionGridColumns, spacing: 6) {
-                    ForEach(displayedEmojis, id: \.self) { emoji in
-                        reactionButton(emoji: emoji, compact: true)
+                ScrollView {
+                    LazyVGrid(columns: reactionGridColumns, spacing: 6) {
+                        ForEach(pickerItems) { item in
+                            reactionButton(item: item, compact: true)
+                        }
                     }
+                    .padding(.horizontal, 2)
                 }
+                .frame(maxHeight: 260)
+
                 if canExpandReactions {
                     collapseReactionsButton
                 }
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(displayedEmojis, id: \.self) { emoji in
-                            reactionButton(emoji: emoji, compact: false)
+                    HStack(spacing: 6) {
+                        ForEach(pickerItems) { item in
+                            reactionButton(item: item, compact: false)
                         }
                         if canExpandReactions {
-                            expandReactionsChip
+                            expandReactionsButton(compact: true)
                         }
                     }
                     .padding(.horizontal, 4)
                 }
+
                 if canExpandReactions {
-                    expandAllReactionsButton
+                    expandReactionsButton(compact: false)
                 }
             }
         }
@@ -297,42 +319,40 @@ struct MessageActionsOverlay: View {
         }
     }
 
-    private var expandReactionsChip: some View {
+    private func expandReactionsButton(compact: Bool) -> some View {
         Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            appSettings.reactionHaptic(.light)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
                 reactionsExpanded = true
             }
         } label: {
-            VStack(spacing: 2) {
-                Image(systemName: "ellipsis")
-                    .font(.body.weight(.semibold))
-                Text(AppText.tr("ещё", "more"))
-                    .font(.caption2)
-            }
-            .foregroundStyle(.secondary)
-            .frame(width: 44, height: 44)
-            .background(Color.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var expandAllReactionsButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                reactionsExpanded = true
-            }
-        } label: {
-            Text(AppText.tr("Все реакции", "All reactions"))
+            if compact {
+                VStack(spacing: 2) {
+                    Image(systemName: "chevron.down")
+                        .font(.body.weight(.semibold))
+                    Text(AppText.tr("ещё", "more"))
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                Label(
+                    AppText.tr("Все реакции (\(pickerItems.count))", "All reactions (\(pickerItems.count))"),
+                    systemImage: "chevron.down"
+                )
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+            }
         }
         .buttonStyle(.plain)
     }
 
     private var collapseReactionsButton: some View {
         Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            appSettings.reactionHaptic(.light)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
                 reactionsExpanded = false
             }
         } label: {
@@ -343,15 +363,14 @@ struct MessageActionsOverlay: View {
         .buttonStyle(.plain)
     }
 
-    private func reactionButton(emoji: String, compact: Bool) -> some View {
-        let isChosen = message.reactions.contains { $0.emoji == emoji && $0.isChosen }
+    private func reactionButton(item: TgReactionPickerItem, compact: Bool) -> some View {
+        let isChosen = message.reactions.contains { $0.key == item.key && $0.isChosen }
         return Button {
             guard canSend else { return }
             appSettings.reactionHaptic(.light)
-            Task { await vm.toggleReaction(on: message, emoji: emoji) }
+            Task { await vm.toggleReaction(on: message, item: item) }
         } label: {
-            Text(emoji)
-                .font(.system(size: compact ? 26 : 30))
+            ReactionPickerItemView(item: item, compact: compact)
                 .frame(width: compact ? nil : 44, height: compact ? 40 : 44)
                 .frame(maxWidth: compact ? .infinity : nil)
                 .background(
@@ -479,8 +498,12 @@ struct MessageActionsOverlay: View {
     }
 
     private func dismiss() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-            appeared = false
+        appSettings.reactionHaptic(.light)
+        withAnimation(.easeIn(duration: 0.18)) {
+            backdropOpacity = 0
+            panelsOpacity = 0
+            panelsOffset = 10
+            bubbleScale = 0.94
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             onDismiss()

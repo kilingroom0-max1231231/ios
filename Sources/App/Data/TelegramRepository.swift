@@ -302,6 +302,10 @@ final class TelegramRepository {
         try await client.addMessageReaction(chatId: chatId, messageId: messageId, emoji: emoji)
     }
 
+    func addReaction(chatId: Int64, messageId: Int64, item: TgReactionPickerItem) async throws {
+        try await client.addMessageReaction(chatId: chatId, messageId: messageId, item: item)
+    }
+
     func removeReaction(chatId: Int64, messageId: Int64, reaction: TgMessageReaction) async throws {
         try await client.removeMessageReaction(chatId: chatId, messageId: messageId, reaction: reaction)
     }

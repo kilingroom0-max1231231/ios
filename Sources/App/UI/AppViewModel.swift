@@ -849,20 +849,34 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    @Published var reactionPickerEmojis: [String] = []
+    @Published var reactionPickerItems: [TgReactionPickerItem] = []
     @Published var reactionPickerMaxCount: Int = 1
+
+    var reactionPickerEmojis: [String] {
+        reactionPickerItems.filter { !$0.isCustomEmoji }.map(\.emoji)
+    }
 
     var currentUserIsPremium: Bool {
         me?.isPremium == true
     }
 
     func toggleReaction(on message: TgMessage, emoji: String) async {
-        let reaction = message.reactions.first(where: { $0.emoji == emoji })
+        if let item = reactionPickerItems.first(where: { $0.key == emoji || $0.emoji == emoji }) {
+            await toggleReaction(on: message, item: item)
+            return
+        }
+        let reaction = message.reactions.first(where: { $0.emoji == emoji || $0.key == emoji })
             ?? TgMessageReaction(key: emoji, emoji: emoji, count: 1, isChosen: false)
         await toggleReaction(on: message, reaction: reaction)
     }
 
-    func toggleReaction(on message: TgMessage, reaction: TgMessageReaction) async {
+    func toggleReaction(on message: TgMessage, item: TgReactionPickerItem) async {
+        let reaction = message.reactions.first(where: { $0.key == item.key })
+            ?? TgMessageReaction(key: item.key, emoji: item.emoji, count: 1, isChosen: false)
+        await toggleReaction(on: message, reaction: reaction, pickerItem: item)
+    }
+
+    func toggleReaction(on message: TgMessage, reaction: TgMessageReaction, pickerItem: TgReactionPickerItem? = nil) async {
         guard let repository, let chatId = selectedChatId else { return }
 
         if reaction.isChosen {
@@ -888,7 +902,7 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        if !reactionPickerEmojis.isEmpty, !reactionPickerEmojis.contains(reaction.emoji) {
+        if !reactionPickerItems.isEmpty, !reactionPickerItems.contains(where: { $0.key == reaction.key }) {
             status = AppText.tr(
                 "Эта реакция недоступна в этом чате",
                 "This reaction is not available in this chat"
@@ -911,7 +925,13 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
-            try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: reaction.emoji)
+            if let pickerItem {
+                try await repository.addReaction(chatId: chatId, messageId: message.id, item: pickerItem)
+            } else if let pickerItem = reactionPickerItems.first(where: { $0.key == reaction.key }) {
+                try await repository.addReaction(chatId: chatId, messageId: message.id, item: pickerItem)
+            } else {
+                try await repository.addReaction(chatId: chatId, messageId: message.id, emoji: reaction.emoji)
+            }
             patchMessageReactions(chatId: chatId, messageId: message.id) { reactions in
                 var updated = reactions
                 if let index = updated.firstIndex(where: { $0.key == reaction.key }) {
@@ -969,26 +989,27 @@ final class AppViewModel: ObservableObject {
 
     func loadReactionPicker(for message: TgMessage) async {
         guard let repository, let chatId = selectedChatId else {
-            reactionPickerEmojis = defaultReactionEmojis
+            reactionPickerItems = defaultReactionPickerItems
             reactionPickerMaxCount = currentUserIsPremium ? 3 : 1
             return
         }
         do {
             let available = try await repository.fetchAvailableReactions(chatId: chatId, messageId: message.id)
-            reactionPickerEmojis = available.emojis
+            reactionPickerItems = available.items
             var maxCount = available.maxReactionCount
             if currentUserIsPremium {
                 maxCount = max(maxCount, 3)
             }
             reactionPickerMaxCount = max(1, maxCount)
         } catch {
-            reactionPickerEmojis = defaultReactionEmojis
+            reactionPickerItems = defaultReactionPickerItems
             reactionPickerMaxCount = currentUserIsPremium ? 3 : 1
         }
     }
 
-    private var defaultReactionEmojis: [String] {
-        ["👍", "❤️", "🔥", "🤣", "😍", "😱", "😢", "🎉", "🙏", "👏", "💯", "🤝"]
+    private var defaultReactionPickerItems: [TgReactionPickerItem] {
+        ["👍", "❤️", "🔥", "🤣", "😍", "😮", "😢", "🎉", "🙏", "👏", "💯", "🤝", "⚡️", "🥰", "😡", "🤔", "👎", "🖤", "💔", "🤩"]
+            .map { TgReactionPickerItem(key: $0, emoji: $0, customEmojiId: nil, imagePath: nil) }
     }
 
     func loadDefaultStickers() async {

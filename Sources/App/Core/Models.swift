@@ -152,10 +152,27 @@ struct TgMessageReaction: Identifiable, Equatable, Codable {
     var id: String { key }
 }
 
+struct TgReactionPickerItem: Identifiable, Equatable, Hashable {
+    /// Emoji character or `custom:<id>`.
+    let key: String
+    /// Unicode fallback for standard emoji.
+    let emoji: String
+    let customEmojiId: Int64?
+    let imagePath: String?
+
+    var id: String { key }
+
+    var isCustomEmoji: Bool { customEmojiId != nil }
+}
+
 struct TgAvailableReactions: Equatable {
-    let emojis: [String]
+    let items: [TgReactionPickerItem]
     /// How many reactions the current user may set on one message (1 without Premium, more with Premium).
     let maxReactionCount: Int
+
+    var emojis: [String] {
+        items.filter { !$0.isCustomEmoji }.map(\.emoji)
+    }
 }
 
 struct TgMessage: Identifiable, Equatable {

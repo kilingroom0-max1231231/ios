@@ -645,20 +645,41 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             "@type": "getMessageAvailableReactions",
             "chat_id": chatId,
             "message_id": messageId,
-            "row_size": 11
+            "row_size": 25
         ])
-        return parseAvailableReactionsInfo(response)
+        var parsed = parseAvailableReactionsInfo(response)
+        if parsed.items.count < 16 {
+            if let global = try? await sendRequest(["@type": "getAvailableReactions"]) {
+                let merged = mergeReactionPickerItems(
+                    parsed.items,
+                    parseAvailableReactionItems(global)
+                )
+                parsed = TgAvailableReactions(items: merged, maxReactionCount: parsed.maxReactionCount)
+            }
+        }
+        let enriched = await enrichReactionPickerItems(parsed.items)
+        return TgAvailableReactions(items: enriched, maxReactionCount: parsed.maxReactionCount)
     }
 
     func addMessageReaction(chatId: Int64, messageId: Int64, emoji: String) async throws {
+        try await addMessageReaction(
+            chatId: chatId,
+            messageId: messageId,
+            item: TgReactionPickerItem(key: emoji, emoji: emoji, customEmojiId: nil, imagePath: nil)
+        )
+    }
+
+    func addMessageReaction(chatId: Int64, messageId: Int64, item: TgReactionPickerItem) async throws {
         _ = try await sendRequest([
             "@type": "addMessageReaction",
             "chat_id": chatId,
             "message_id": messageId,
-            "reaction_type": [
-                "@type": "reactionTypeEmoji",
-                "emoji": emoji
-            ],
+            "reaction_type": reactionTypeDict(for: TgMessageReaction(
+                key: item.key,
+                emoji: item.emoji,
+                count: 1,
+                isChosen: false
+            )),
             "is_big": false,
             "update_recent_reactions": true
         ])
@@ -695,7 +716,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             payload = response
         }
 
-        let emojis = parseAvailableReactionEmojis(payload)
+        let items = parseAvailableReactionItems(payload)
         let type = payload["@type"] as? String
         var maxCount = 1
         if type == "availableReactionsSome" {
@@ -705,10 +726,71 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         } else {
             maxCount = max(1, Int(int32Value(payload["max_reaction_count"]) ?? 1))
         }
+        let fallbackItems = defaultReactionPickerItems()
         return TgAvailableReactions(
-            emojis: emojis.isEmpty ? ["👍", "❤️", "🔥", "😂", "😮", "😢", "🙏", "👏"] : emojis,
+            items: items.isEmpty ? fallbackItems : items,
             maxReactionCount: maxCount
         )
+    }
+
+    private func defaultReactionPickerItems() -> [TgReactionPickerItem] {
+        ["👍", "❤️", "🔥", "🤣", "😍", "😮", "😢", "🎉", "🙏", "👏", "💯", "🤝", "⚡️", "🥰", "😡", "🤔", "👎", "🖤", "💔", "🤩"]
+            .map { TgReactionPickerItem(key: $0, emoji: $0, customEmojiId: nil, imagePath: nil) }
+    }
+
+    private func mergeReactionPickerItems(
+        _ primary: [TgReactionPickerItem],
+        _ extra: [TgReactionPickerItem]
+    ) -> [TgReactionPickerItem] {
+        var seen = Set(primary.map(\.key))
+        var merged = primary
+        for item in extra where seen.insert(item.key).inserted {
+            merged.append(item)
+        }
+        return merged
+    }
+
+    private func enrichReactionPickerItems(_ items: [TgReactionPickerItem]) async -> [TgReactionPickerItem] {
+        let customIds = items.compactMap(\.customEmojiId)
+        guard !customIds.isEmpty else { return items }
+        let paths = await fetchCustomEmojiPathsMap(customEmojiIds: customIds)
+        return items.map { item in
+            guard let id = item.customEmojiId, let path = paths[id] else { return item }
+            return TgReactionPickerItem(
+                key: item.key,
+                emoji: item.emoji,
+                customEmojiId: id,
+                imagePath: path
+            )
+        }
+    }
+
+    private func fetchCustomEmojiPathsMap(customEmojiIds: [Int64]) async -> [Int64: String] {
+        var result: [Int64: String] = [:]
+        let chunkSize = 40
+        var index = 0
+        while index < customEmojiIds.count {
+            let chunk = Array(customEmojiIds[index..<min(index + chunkSize, customEmojiIds.count)])
+            index += chunkSize
+            guard let response = try? await sendRequest([
+                "@type": "getCustomEmojiStickers",
+                "custom_emoji_ids": chunk.map { NSNumber(value: $0) }
+            ]) else { continue }
+            let stickers = response["stickers"] as? [[String: Any]] ?? []
+            for (index, sticker) in stickers.enumerated() {
+                let id = index < chunk.count
+                    ? chunk[index]
+                    : int64Value(sticker["custom_emoji_id"])
+                guard let id else { continue }
+                let media = await resolveStickerMediaPaths(from: sticker, downloadIfMissing: true)
+                if let animationPath = media.animationPath, !animationPath.isEmpty {
+                    result[id] = animationPath
+                } else if let displayPath = media.displayPath, !displayPath.isEmpty {
+                    result[id] = displayPath
+                }
+            }
+        }
+        return result
     }
 
     func createNewSupergroupChat(title: String, isChannel: Bool, description: String?) async throws -> Int64 {
@@ -890,20 +972,29 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return await enrichChatFoldersWithDetails(result)
     }
 
-    private func parseAvailableReactionEmojis(_ response: [String: Any]) -> [String] {
-        var emojis: [String] = []
+    private func parseAvailableReactionItems(_ response: [String: Any]) -> [TgReactionPickerItem] {
+        var items: [TgReactionPickerItem] = []
         var seen = Set<String>()
 
-        func emoji(from entry: [String: Any]) -> String? {
+        func item(from entry: [String: Any]) -> TgReactionPickerItem? {
             let type = (entry["type"] as? [String: Any]) ?? (entry["reaction"] as? [String: Any])
-            if let type,
-               (type["@type"] as? String) == "reactionTypeEmoji",
-               let emoji = type["emoji"] as? String,
-               !emoji.isEmpty {
-                return emoji
+            if let type, let typeName = type["@type"] as? String {
+                switch typeName {
+                case "reactionTypeEmoji":
+                    if let emoji = type["emoji"] as? String, !emoji.isEmpty {
+                        return TgReactionPickerItem(key: emoji, emoji: emoji, customEmojiId: nil, imagePath: nil)
+                    }
+                case "reactionTypeCustomEmoji":
+                    if let customId = int64Value(type["custom_emoji_id"]) {
+                        let key = "custom:\(customId)"
+                        return TgReactionPickerItem(key: key, emoji: "✨", customEmojiId: customId, imagePath: nil)
+                    }
+                default:
+                    break
+                }
             }
             if let emoji = entry["emoji"] as? String, !emoji.isEmpty {
-                return emoji
+                return TgReactionPickerItem(key: emoji, emoji: emoji, customEmojiId: nil, imagePath: nil)
             }
             return nil
         }
@@ -911,9 +1002,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         func collect(from list: [[String: Any]]?) {
             guard let list else { return }
             for entry in list {
-                guard let emoji = emoji(from: entry),
-                      seen.insert(emoji).inserted else { continue }
-                emojis.append(emoji)
+                guard let parsed = item(from: entry),
+                      seen.insert(parsed.key).inserted else { continue }
+                items.append(parsed)
             }
         }
 
@@ -922,14 +1013,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         collect(from: response["recent_reactions"] as? [[String: Any]])
         collect(from: response["popular_reactions"] as? [[String: Any]])
 
-        if emojis.isEmpty, let available = response["available_reactions"] as? [String: Any] {
+        if items.isEmpty, let available = response["available_reactions"] as? [String: Any] {
             collect(from: available["reactions"] as? [[String: Any]])
             collect(from: available["top_reactions"] as? [[String: Any]])
             collect(from: available["recent_reactions"] as? [[String: Any]])
             collect(from: available["popular_reactions"] as? [[String: Any]])
         }
 
-        return emojis
+        return items
     }
 
     func editMessage(chatId: Int64, messageId: Int64, text: String) async throws {
