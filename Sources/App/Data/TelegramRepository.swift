@@ -99,7 +99,7 @@ final class TelegramRepository {
 
     func loadChats() async throws -> [TgChat] {
         let remote = try await client.fetchChats(limit: 200)
-        try? chatStore.write(remote)
+        try? chatStore.write(chats: remote)
         return remote
     }
 

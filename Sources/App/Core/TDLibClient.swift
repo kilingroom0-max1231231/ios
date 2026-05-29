@@ -916,7 +916,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     switch contentType {
                     case "storyContentPhoto":
                         if let photo = content["photo"] as? [String: Any],
-                           let fileId = fileIdFromPhotoSource(photo) {
+                           let fileId = extractFileId(photo) {
                             previewPath = try? await downloadFile(fileId: fileId)
                             mediaPath = previewPath
                         }
@@ -930,10 +930,10 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                                 mediaPath = try? await downloadFile(fileId: fileId)
                             }
                             if let thumbnail = video["thumbnail"] as? [String: Any],
-                               let fileId = fileIdFromPhotoSource(thumbnail) {
+                               let fileId = extractFileId(thumbnail) {
                                 previewPath = try? await downloadFile(fileId: fileId)
                             } else if let preview = video["preview"] as? [String: Any],
-                                      let fileId = fileIdFromPhotoSource(preview) {
+                                      let fileId = extractFileId(preview) {
                                 previewPath = try? await downloadFile(fileId: fileId)
                             }
                         }
@@ -1551,7 +1551,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return try await downloadFile(fileId: fileId)
         }
         if let thumbnail = sticker["thumbnail"] as? [String: Any],
-           let fileId = fileIdFromPhotoSource(thumbnail) {
+           let fileId = extractFileId(thumbnail) {
             return try await downloadFile(fileId: fileId)
         }
         return nil
