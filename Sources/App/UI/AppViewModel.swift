@@ -73,6 +73,7 @@ final class AppViewModel: ObservableObject {
     private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
     private let credentials = ApiCredentialsStore()
+    private let accountSessions = AccountSessionStore.shared
     private var isLoadingOlderMessages = false
     private var isLoadingPeekOlder = false
     private var toastDismissTask: Task<Void, Never>?
@@ -90,6 +91,18 @@ final class AppViewModel: ObservableObject {
     var selectedChat: TgChat? {
         guard let selectedChatId else { return nil }
         return chats.first(where: { $0.id == selectedChatId })
+    }
+
+    var accountList: [AccountSession] {
+        accountSessions.sessions
+    }
+
+    var activeAccountId: String {
+        accountSessions.activeAccountId
+    }
+
+    var canAddMoreAccounts: Bool {
+        accountSessions.canAddAccount()
     }
 
     var visibleMessages: [TgMessage] {
@@ -115,7 +128,7 @@ final class AppViewModel: ObservableObject {
         bootstrapError = nil
 
         do {
-            let repo = try TelegramRepository.bootstrap()
+            let repo = try TelegramRepository.bootstrap(accountId: accountSessions.activeAccountId)
             repository = repo
             wireRepository(repo)
 
@@ -252,6 +265,35 @@ final class AppViewModel: ObservableObject {
         phase = .setup
         status = "Войдите снова — укажите API данные"
         Task { await start() }
+    }
+
+    func addAccountAndSwitch() async {
+        guard let created = accountSessions.addAccount() else {
+            status = AppText.tr("Можно добавить максимум 5 аккаунтов", "You can add up to 5 accounts")
+            return
+        }
+        await switchAccount(to: created.id)
+    }
+
+    func switchAccount(to accountId: String) async {
+        guard accountId != accountSessions.activeAccountId else { return }
+        accountSessions.setActiveAccount(id: accountId)
+
+        // Reset volatile state before new repository bootstrap.
+        chats = []
+        messages = []
+        selectedChatId = nil
+        visibleChatId = nil
+        chatProfile = nil
+        chatMembers = []
+        chatMediaMessages = []
+        peekChatId = nil
+        peekMessages = []
+        me = nil
+        isTdlibConfigured = false
+
+        await recreateRepository()
+        await connect(saveCredentials: false)
     }
 
     func refreshChats() async {
@@ -415,9 +457,14 @@ final class AppViewModel: ObservableObject {
         do {
             let older = try await repository.loadOlderMessages(chatId: chatId, beforeMessageId: oldest)
             guard !older.isEmpty else { return }
-            let existingIds = Set(messages.map(\.id))
-            let newOnes = older.filter { !existingIds.contains($0.id) }
-            messages = applyReadState(deduplicatedMessages(newOnes + messages), chatId: chatId)
+            var byId = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+            for message in older {
+                byId[message.id] = message.mergingPreservingDisplayFields(from: byId[message.id])
+            }
+            messages = applyReadState(
+                deduplicatedMessages(byId.values.sorted { $0.createdAt < $1.createdAt }),
+                chatId: chatId
+            )
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
         } catch {
             status = error.localizedDescription
@@ -1017,6 +1064,14 @@ final class AppViewModel: ObservableObject {
         guard let repository, authState == .ready else { return }
         do {
             me = try await repository.loadMe()
+            if let me {
+                accountSessions.updateActiveAccount(
+                    title: me.displayName,
+                    phone: me.phoneNumber,
+                    userId: me.id,
+                    avatarPath: me.avatarPath
+                )
+            }
             if phase == .main {
                 await refreshChats()
             }
@@ -1053,7 +1108,7 @@ final class AppViewModel: ObservableObject {
 
     private func recreateRepository() async {
         do {
-            let repo = try TelegramRepository.bootstrap()
+            let repo = try TelegramRepository.bootstrap(accountId: accountSessions.activeAccountId)
             repository = repo
             wireRepository(repo)
             isTdlibConfigured = false
@@ -1088,23 +1143,26 @@ final class AppViewModel: ObservableObject {
             loadedGiftsForUserId = nil
             userProfileStories = []
             userProfileGifts = []
+            await loadUserProfileStories(userId: userId)
         } catch {
             status = error.localizedDescription
         }
     }
 
     func loadUserProfileStories(userId: Int64) async {
-        guard let repository,
-              let profile = userProfileDetail,
-              profile.userId == userId,
-              loadedStoriesForUserId != userId else { return }
+        guard let profile = userProfileDetail, profile.userId == userId else { return }
+        await loadActiveStories(chatId: profile.privateChatId)
+    }
+
+    func loadActiveStories(chatId: Int64) async {
+        guard let repository, loadedStoriesForUserId != chatId else { return }
 
         isUserProfileExtrasLoading = true
         defer { isUserProfileExtrasLoading = false }
 
         do {
-            userProfileStories = try await repository.loadUserStories(chatId: profile.privateChatId)
-            loadedStoriesForUserId = userId
+            userProfileStories = try await repository.loadUserStories(chatId: chatId)
+            loadedStoriesForUserId = chatId
         } catch {
             userProfileStories = []
         }
@@ -1156,6 +1214,7 @@ final class AppViewModel: ObservableObject {
                 let profile = try await repository.loadChatProfile(chatId: chatId)
                 guard !Task.isCancelled else { return }
                 await MainActor.run { self.chatProfile = profile }
+                await loadActiveStories(chatId: profile.chatId)
 
                 async let members: [ChatMember] = repository.loadChatMembers(chatId: chatId)
                 async let media: [TgMessage] = repository.loadChatMedia(chatId: chatId)

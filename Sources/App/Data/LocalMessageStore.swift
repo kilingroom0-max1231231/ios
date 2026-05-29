@@ -128,10 +128,16 @@ final class LocalMessageStore {
             SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                    forwarded_from, reply_to_message_id, sender_user_id, sender_name,
                    sender_avatar_path, author_signature, view_count
-            FROM messages
-            WHERE chat_id = ?
-            ORDER BY created_at ASC
-            LIMIT ?;
+            FROM (
+                SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
+                       forwarded_from, reply_to_message_id, sender_user_id, sender_name,
+                       sender_avatar_path, author_signature, view_count
+                FROM messages
+                WHERE chat_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            )
+            ORDER BY created_at ASC;
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {

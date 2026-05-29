@@ -1,99 +1,75 @@
 import SwiftUI
+import UIKit
 
-struct MessageSwipeActionButton: Identifiable {
-    let id: String
-    let title: String
-    let systemImage: String
-    let color: Color
-    let handler: () -> Void
-}
-
+/// Swipe left on a message row to run a single action; action icon slides in from the right edge.
 struct SwipeableMessageRow<Content: View>: View {
-    let actions: [MessageSwipeActionButton]
+    let actionIcon: String
+    let actionColor: Color
+    let onSwipe: () -> Void
     @ViewBuilder var content: () -> Content
 
     @State private var offset: CGFloat = 0
 
-    private let actionWidth: CGFloat = 76
+    private let triggerThreshold: CGFloat = 72
+    private let maxDrag: CGFloat = 96
+    private let hintSize: CGFloat = 42
+    /// How far the hint sits beyond the message when the drag starts (off-screen / peek).
+    private let hintHiddenOffset: CGFloat = 54
 
-    private var revealWidth: CGFloat {
-        CGFloat(actions.count) * actionWidth
+    private var dragProgress: CGFloat {
+        min(1, abs(offset) / triggerThreshold)
     }
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            if !actions.isEmpty {
-                HStack(spacing: 0) {
-                    ForEach(actions) { action in
-                        Button {
-                            close(animated: true)
-                            action.handler()
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: action.systemImage)
-                                    .font(.body.weight(.semibold))
-                                Text(action.title)
-                                    .font(.caption2.weight(.medium))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                            }
-                            .foregroundStyle(.white)
-                            .frame(width: actionWidth)
-                            .frame(maxHeight: .infinity)
-                            .background(action.color)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+        content()
+            .offset(x: offset)
+            .overlay(alignment: .trailing) {
+                swipeActionHint
+                    .offset(x: hintHiddenOffset * (1 - dragProgress))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(horizontalDragGesture)
+    }
 
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.clear)
-                .offset(x: offset)
-                .gesture(horizontalDragGesture)
-        }
-        .clipped()
-        .contentShape(Rectangle())
+    private var swipeActionHint: some View {
+        Image(systemName: actionIcon)
+            .font(.body.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(width: hintSize, height: hintSize)
+            .background(
+                Circle()
+                    .fill(actionColor.gradient)
+            )
+            .shadow(color: actionColor.opacity(0.4), radius: 10, y: 3)
+            .scaleEffect(0.5 + 0.5 * dragProgress)
+            .opacity(Double(dragProgress))
+            .allowsHitTesting(false)
     }
 
     private var horizontalDragGesture: some Gesture {
-        DragGesture(minimumDistance: 18, coordinateSpace: .local)
+        DragGesture(minimumDistance: 16, coordinateSpace: .local)
             .onChanged { value in
-                guard !actions.isEmpty else { return }
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.2 else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.25 else { return }
 
                 if value.translation.width < 0 {
-                    offset = max(value.translation.width, -revealWidth)
+                    offset = max(value.translation.width, -maxDrag)
                 } else if offset < 0 {
                     offset = min(0, offset + value.translation.width)
                 }
             }
             .onEnded { value in
-                guard !actions.isEmpty else { return }
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.2 else {
-                    close(animated: true)
-                    return
+                let horizontal = abs(value.translation.width) > abs(value.translation.height) * 1.25
+                let shouldTrigger = horizontal && (value.translation.width < -triggerThreshold || offset < -triggerThreshold)
+
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    offset = 0
                 }
 
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                    if -offset > revealWidth * 0.35 {
-                        offset = -revealWidth
-                    } else {
-                        offset = 0
-                    }
+                if shouldTrigger {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    onSwipe()
                 }
             }
-    }
-
-    private func close(animated: Bool) {
-        guard offset != 0 else { return }
-        if animated {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                offset = 0
-            }
-        } else {
-            offset = 0
-        }
     }
 }

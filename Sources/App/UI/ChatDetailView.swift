@@ -183,50 +183,39 @@ struct ChatDetailView: View {
         let startIndex: Int
     }
 
+    private enum ChatRow: Identifiable {
+        case date(Date)
+        case message(TgMessage)
+
+        var id: String {
+            switch self {
+            case .date(let date):
+                return "d-\(Int(date.timeIntervalSince1970))"
+            case .message(let message):
+                return "m-\(message.id)"
+            }
+        }
+    }
+
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(groupedMessages) { message in
-                        let replyPreview = message.replyToMessageId.flatMap { replyId in
-                            replyQuoteText(for: replyId)
-                        }
-                        SwipeableMessageRow(actions: swipeActions(for: message)) {
-                            MessageBubbleView(
-                                message: message,
-                                chatKind: selectedChat?.kind ?? .unknown,
-                                peerAvatarPath: selectedChat?.avatarPath,
-                                peerTitle: selectedChat?.title,
-                                replyPreviewText: replyPreview,
-                                onOpenAttachment: { attachment in
-                                    let attachments = mediaAttachments
-                                    if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
-                                        mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
-                                    } else {
-                                        mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
-                                    }
-                                },
-                                onReply: canSend ? {
-                                    vm.startReply(message)
-                                    isComposerFocused = true
-                                } : nil,
-                                onForward: {
-                                    forwardingMessage = message
-                                },
-                                onEdit: {
-                                    vm.startEditing(message)
-                                    isComposerFocused = true
-                                },
-                                onDelete: { revoke in
-                                    Task { await vm.deleteMyMessage(message, revoke: revoke) }
-                                }
-                            )
-                        }
-                        .id(message.id)
-                        .onAppear {
-                            if message.id == groupedMessages.first?.id {
-                                Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
+                    ForEach(chatRows) { row in
+                        switch row {
+                        case .date(let date):
+                            dateSeparator(date)
+                        case .message(let message):
+                            let replyPreview = message.replyToMessageId.flatMap { replyId in
+                                replyQuoteText(for: replyId)
                             }
+                            messageRow(for: message, replyPreview: replyPreview)
+                                .id(message.id)
+                                .onAppear {
+                                    if message.id == groupedMessages.first?.id {
+                                        Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
+                                    }
+                                }
                         }
                     }
                 }
@@ -267,61 +256,143 @@ struct ChatDetailView: View {
         }
     }
 
-    private func swipeActions(for message: TgMessage) -> [MessageSwipeActionButton] {
-        swipeSettings.enabledOrderedActions.compactMap { action in
-            switch action {
-            case .reply:
-                guard canSend else { return nil }
-                return MessageSwipeActionButton(
-                    id: action.rawValue,
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    color: AppColors.accent
-                ) {
-                    vm.startReply(message)
-                    isComposerFocused = true
-                }
-            case .forward:
-                return MessageSwipeActionButton(
-                    id: action.rawValue,
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    color: .orange
-                ) {
-                    forwardingMessage = message
-                }
-            case .quote:
-                guard canSend else { return nil }
-                return MessageSwipeActionButton(
-                    id: action.rawValue,
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    color: .teal
-                ) {
-                    vm.quoteMessage(message)
-                    isComposerFocused = true
-                }
-            case .pin:
-                guard canPinMessages else { return nil }
-                return MessageSwipeActionButton(
-                    id: action.rawValue,
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    color: .indigo
-                ) {
-                    Task { await vm.pinMessage(message) }
-                }
-            case .delete:
-                guard message.outgoing else { return nil }
-                return MessageSwipeActionButton(
-                    id: action.rawValue,
-                    title: action.title,
-                    systemImage: action.systemImage,
-                    color: .red
-                ) {
-                    Task { await vm.deleteMyMessage(message, revoke: true) }
-                }
+    private var chatRows: [ChatRow] {
+        var rows: [ChatRow] = []
+        var lastDay: Date?
+        let calendar = Calendar.current
+        for message in groupedMessages {
+            let day = calendar.startOfDay(for: message.createdAt)
+            if lastDay == nil || day != lastDay {
+                rows.append(.date(day))
+                lastDay = day
             }
+            rows.append(.message(message))
+        }
+        return rows
+    }
+
+    private func dateSeparator(_ date: Date) -> some View {
+        Text(dateTitle(date))
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.ultraThinMaterial, in: Capsule())
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+    }
+
+    private func dateTitle(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return AppText.tr("Сегодня", "Today")
+        }
+        if calendar.isDateInYesterday(date) {
+            return AppText.tr("Вчера", "Yesterday")
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: AppText.isRussian ? "ru_RU" : "en_US_POSIX")
+        formatter.dateFormat = "d MMMM"
+        return formatter.string(from: date)
+    }
+
+    @ViewBuilder
+    private func messageRow(for message: TgMessage, replyPreview: String?) -> some View {
+        if isServiceMessage(message) {
+            Text(message.text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 4)
+            return
+        }
+
+        let bubble = MessageBubbleView(
+            message: message,
+            chatKind: selectedChat?.kind ?? .unknown,
+            peerAvatarPath: selectedChat?.avatarPath,
+            peerTitle: selectedChat?.title,
+            replyPreviewText: replyPreview,
+            onOpenAttachment: { attachment in
+                let attachments = mediaAttachments
+                if let idx = attachments.firstIndex(where: { $0.id == attachment.id }) {
+                    mediaSelection = MediaViewerSelection(attachments: attachments, startIndex: idx)
+                } else {
+                    mediaSelection = MediaViewerSelection(attachments: [attachment], startIndex: 0)
+                }
+            },
+            onReply: canSend ? {
+                vm.startReply(message)
+                isComposerFocused = true
+            } : nil,
+            onForward: {
+                forwardingMessage = message
+            },
+            onEdit: {
+                vm.startEditing(message)
+                isComposerFocused = true
+            },
+            onDelete: { revoke in
+                Task { await vm.deleteMyMessage(message, revoke: revoke) }
+            }
+        )
+
+        if let swipe = swipeSettings.primaryAction, swipe != .off,
+           let handler = swipeActionHandler(for: message, action: swipe) {
+            SwipeableMessageRow(
+                actionIcon: swipe.systemImage,
+                actionColor: swipe.accentColor,
+                onSwipe: handler
+            ) {
+                bubble
+            }
+        } else {
+            bubble
+        }
+    }
+
+    private func isServiceMessage(_ message: TgMessage) -> Bool {
+        message.text.hasPrefix("📌 ")
+            || message.text.hasPrefix("🔗 ")
+            || message.text.hasPrefix("✅ ")
+            || message.text.hasPrefix("👥 ")
+            || message.text.hasPrefix("👤 ")
+            || message.text.hasPrefix("🚫 ")
+            || message.text.hasPrefix("✏️ ")
+            || message.text.hasPrefix("🖼️ ")
+            || message.text.hasPrefix("🗑️ ")
+            || message.text.hasPrefix("🎨 ")
+    }
+
+    private func swipeActionHandler(for message: TgMessage, action: MessageSwipeAction) -> (() -> Void)? {
+        switch action {
+        case .off:
+            return nil
+        case .reply:
+            guard canSend else { return nil }
+            return {
+                vm.startReply(message)
+                isComposerFocused = true
+            }
+        case .forward:
+            return { forwardingMessage = message }
+        case .quote:
+            guard canSend else { return nil }
+            return {
+                vm.quoteMessage(message)
+                isComposerFocused = true
+            }
+        case .pin:
+            guard canPinMessages else { return nil }
+            return { Task { await vm.pinMessage(message) } }
+        case .delete:
+            guard message.outgoing else { return nil }
+            return { Task { await vm.deleteMyMessage(message, revoke: true) } }
         }
     }
 

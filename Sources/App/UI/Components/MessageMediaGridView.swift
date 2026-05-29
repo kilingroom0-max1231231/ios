@@ -77,30 +77,37 @@ struct MessageMediaGridView: View {
 }
 
 struct MessageMediaThumbnail: View {
+    @EnvironmentObject private var appearance: AppAppearanceStore
+    @Environment(\.colorScheme) private var colorScheme
+
     let attachment: TgAttachment
+
+    private var mediaBackdrop: Color {
+        appearance.incomingBubble(colorScheme: colorScheme).opacity(colorScheme == .dark ? 0.55 : 0.72)
+    }
 
     var body: some View {
         ZStack {
             thumbnailContent
 
             if attachment.kind == .video || attachment.kind == .animation {
-                Color.black.opacity(0.18)
-                Image(systemName: attachment.kind == .animation ? "gift.fill" : "play.fill")
+                mediaBackdrop.opacity(0.35)
+                Image(systemName: attachment.kind == .animation ? "play.rectangle.fill" : "play.fill")
                     .font(.body.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(width: 36, height: 36)
-                    .background(Color.black.opacity(0.38))
+                    .background(.ultraThinMaterial)
                     .clipShape(Circle())
             }
 
             if attachment.localURL == nil && attachment.localImage == nil {
                 ProgressView()
-                    .tint(.white)
+                    .tint(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.22))
+                    .background(mediaBackdrop.opacity(0.4))
             }
         }
-        .background(Color.black.opacity(0.12))
+        .background(mediaBackdrop.opacity(attachment.kind == .sticker ? 0.25 : 0.45))
     }
 
     @ViewBuilder
@@ -116,14 +123,14 @@ struct MessageMediaThumbnail: View {
             }
         case .video, .animation:
             VideoThumbnailView(url: attachment.localURL)
-        case .sticker:
+        case .sticker, .gift:
             if let image = attachment.localImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .padding(6)
             } else {
-                placeholder("face.smiling")
+                placeholder(attachment.kind == .gift ? "gift.fill" : "face.smiling")
             }
         default:
             placeholder("photo")
@@ -133,8 +140,8 @@ struct MessageMediaThumbnail: View {
     private func placeholder(_ systemImage: String) -> some View {
         Image(systemName: systemImage)
             .font(.title2)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.28))
+            .background(mediaBackdrop.opacity(0.5))
     }
 }

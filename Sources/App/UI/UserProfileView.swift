@@ -86,10 +86,7 @@ struct UserProfileView: View {
     }
 
     private func availableTabs(for profile: UserProfileDetail) -> [Tab] {
-        var tabs: [Tab] = [.overview]
-        if profile.hasActiveStories || !vm.userProfileStories.isEmpty {
-            tabs.append(.stories)
-        }
+        var tabs: [Tab] = [.overview, .stories]
         if profile.giftCount > 0 || !vm.userProfileGifts.isEmpty {
             tabs.append(.gifts)
         }
@@ -242,7 +239,6 @@ struct UserProfileView: View {
         Section {
             if vm.isUserProfileExtrasLoading && vm.userProfileGifts.isEmpty {
                 ProgressView()
-                    .tint(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
             } else if vm.userProfileGifts.isEmpty {
@@ -259,7 +255,10 @@ struct UserProfileView: View {
             }
         }
         .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
-        .listRowBackground(Color.black)
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        )
         .onAppear {
             Task { await vm.loadUserProfileGifts(userId: userId) }
         }

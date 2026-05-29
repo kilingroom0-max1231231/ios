@@ -4,10 +4,24 @@ import SwiftUI
 import UIKit
 
 struct MessageAttachmentPreview: View {
+    @EnvironmentObject private var appearance: AppAppearanceStore
+    @Environment(\.colorScheme) private var colorScheme
+
     let attachment: TgAttachment
+    var isOutgoing: Bool = false
     var onOpen: (() -> Void)?
     @State private var inlinePlayer: AVPlayer?
     @State private var isInlinePlaying = false
+
+    private var mediaBackdrop: Color {
+        appearance.incomingBubble(colorScheme: colorScheme).opacity(colorScheme == .dark ? 0.55 : 0.72)
+    }
+
+    private var stickerLikeBackdrop: Color {
+        isOutgoing
+            ? appearance.outgoingBubble(colorScheme: colorScheme)
+            : appearance.incomingBubble(colorScheme: colorScheme)
+    }
 
     var body: some View {
         switch attachment.kind {
@@ -19,8 +33,8 @@ struct MessageAttachmentPreview: View {
             videoPreview(isRound: true)
         case .animation:
             videoPreview(isRound: false)
-        case .sticker:
-            stickerPreview
+        case .sticker, .gift:
+            stickerLikePreview
         case .voice:
             InlineVoicePlayer(attachment: attachment, onOpen: onOpen)
         case .document:
@@ -168,23 +182,36 @@ struct MessageAttachmentPreview: View {
         .buttonStyle(.plain)
     }
 
-    private var stickerPreview: some View {
+    private var stickerLikePreview: some View {
         Button {
             onOpen?()
         } label: {
             ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(stickerLikeBackdrop)
+
                 if let image = attachment.localImage {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
+                        .padding(8)
                 } else {
-                    loadingPlaceholder(systemImage: "face.smiling", title: "Стикер загружается")
+                    VStack(spacing: 8) {
+                        Image(systemName: attachment.kind == .gift ? "gift.fill" : "face.smiling")
+                            .font(.title2)
+                            .foregroundStyle(AppColors.accent)
+                        Text(attachment.kind == .gift
+                             ? AppText.tr("Подарок загружается", "Gift loading")
+                             : AppText.tr("Стикер загружается", "Sticker loading"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
-            .frame(width: 150, height: 150)
+            .frame(width: attachment.kind == .gift ? 168 : 150, height: attachment.kind == .gift ? 168 : 150)
         }
         .buttonStyle(.plain)
-        .disabled(attachment.localURL == nil)
+        .disabled(attachment.localURL == nil && attachment.localImage == nil)
     }
 
     private func loadingPlaceholder(systemImage: String, title: String) -> some View {
@@ -194,9 +221,9 @@ struct MessageAttachmentPreview: View {
             Text(title)
                 .font(.caption)
         }
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.26))
+        .background(mediaBackdrop.opacity(0.5))
     }
 }
 
@@ -329,7 +356,7 @@ struct MediaViewerView: View {
     private func saveCurrentToLibrary() {
         guard let attachment = currentAttachment, let url = attachment.localURL else { return }
         switch attachment.kind {
-        case .photo, .sticker:
+        case .photo, .sticker, .gift:
             if let image = UIImage(contentsOfFile: url.path) {
                 UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
                 saveConfirmationShown = true
@@ -394,6 +421,12 @@ private struct MediaViewerPage: View {
                 FullscreenImageContent(imagePath: path)
             } else {
                 MissingMediaView(title: "Стикер еще загружается")
+            }
+        case .gift:
+            if let path = attachment.localPath {
+                FullscreenImageContent(imagePath: path)
+            } else {
+                MissingMediaView(title: AppText.tr("Подарок еще загружается", "Gift is still loading"))
             }
         case .document:
             DocumentFullscreenView(attachment: attachment)

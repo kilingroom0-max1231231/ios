@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 enum TelegramRepositoryError: LocalizedError {
     case bootstrapFailed(String)
@@ -15,6 +15,7 @@ final class TelegramRepository {
     private let client: TelegramClientProtocol
     private let store: LocalMessageStore
     private let chatStore: LocalChatStore
+
     var onAuthStateChanged: ((AuthState) -> Void)?
     var onMessagesChanged: ((Int64) -> Void)?
     var onChatsChanged: (() -> Void)?
@@ -22,8 +23,8 @@ final class TelegramRepository {
     var onTypingChanged: ((ChatTypingUpdate) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
     var onMessageUpserted: ((TgMessage) -> Void)?
-    var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
     var onMessagesDeleted: ((Int64, [Int64]) -> Void)?
+    var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
 
     init(client: TelegramClientProtocol, store: LocalMessageStore, chatStore: LocalChatStore) {
         self.client = client
@@ -35,18 +36,16 @@ final class TelegramRepository {
             case .authChanged(let state):
                 self.onAuthStateChanged?(state)
             case .newMessage(let message):
-                if AppSettingsStore.keepDeletedMessagesValue || !message.isDeleted {
-                    try? self.store.upsert(messages: [message])
-                }
-                self.onMessageUpserted?(message)
+                try? self.store.upsert(messages: [message])
                 self.onIncomingMessage?(message)
+                self.onMessageUpserted?(message)
                 self.onMessagesChanged?(message.chatId)
                 self.onChatChanged?(message.chatId)
             case .messageReplaced(let chatId, let oldMessageId, let newMessage):
                 try? self.store.deleteMessage(chatId: chatId, messageId: oldMessageId)
                 try? self.store.upsert(messages: [newMessage])
-                self.onMessageUpserted?(newMessage)
                 self.onMessageReplaced?(chatId, oldMessageId, newMessage)
+                self.onMessageUpserted?(newMessage)
                 self.onMessagesChanged?(chatId)
                 self.onChatChanged?(chatId)
             case .messagesDeleted(let chatId, let messageIds):
@@ -68,15 +67,19 @@ final class TelegramRepository {
         }
     }
 
-    static func bootstrap() throws -> TelegramRepository {
+    static func bootstrap(accountId: String = "default") throws -> TelegramRepository {
         do {
-            let client = try TDLibClient()
-            let store = try LocalMessageStore()
-            let chatStore = try LocalChatStore()
+            let client = try TDLibClient(accountId: accountId)
+            let store = try LocalMessageStore(filename: TDLibPaths.messagesDatabaseFilename(accountId: accountId))
+            let chatStore = try LocalChatStore(filename: TDLibPaths.chatsCacheFilename(accountId: accountId))
             return TelegramRepository(client: client, store: store, chatStore: chatStore)
         } catch {
             throw TelegramRepositoryError.bootstrapFailed(error.localizedDescription)
         }
+    }
+
+    func cachedChats() -> [TgChat] {
+        (try? chatStore.read()) ?? []
     }
 
     func setup(apiId: Int, apiHash: String) async throws {
@@ -97,10 +100,6 @@ final class TelegramRepository {
 
     func submitPassword(_ password: String) async throws {
         try await client.submitPassword(password)
-    }
-
-    func cachedChats() -> [TgChat] {
-        (try? chatStore.read()) ?? []
     }
 
     func loadChats() async throws -> [TgChat] {
@@ -131,10 +130,30 @@ final class TelegramRepository {
             stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
         }
 
+        try await backfillStoredMessageMetadata(chatId: chatId, latestRemote: remote)
+        stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
+
         return Self.mergeStoredMessages(stored, withRemoteEnrichment: remote)
     }
 
-    /// Store keeps text/attachments; TDLib fetch adds sender names, avatars, read state.
+    private func backfillStoredMessageMetadata(chatId: Int64, latestRemote: [TgMessage]) async throws {
+        let remoteIds = Set(latestRemote.map(\.id))
+        let stored = try store.read(chatId: chatId, limit: 500)
+        let staleIds = stored
+            .filter { !remoteIds.contains($0.id) && Self.needsMetadataBackfill($0) }
+            .map(\.id)
+        guard !staleIds.isEmpty else { return }
+
+        for chunkStart in stride(from: 0, to: staleIds.count, by: 100) {
+            let end = min(chunkStart + 100, staleIds.count)
+            let chunk = Array(staleIds[chunkStart..<end])
+            let refreshed = try await client.fetchMessagesByIds(chatId: chatId, messageIds: chunk)
+            if !refreshed.isEmpty {
+                try store.upsert(messages: refreshed)
+            }
+        }
+    }
+
     private static func mergeStoredMessages(_ stored: [TgMessage], withRemoteEnrichment remote: [TgMessage]) -> [TgMessage] {
         guard !remote.isEmpty else { return stored }
         let remoteById = Dictionary(uniqueKeysWithValues: remote.map { ($0.id, $0) })
@@ -145,11 +164,20 @@ final class TelegramRepository {
     }
 
     private static func needsDisplayEnrichment(_ message: TgMessage) -> Bool {
-        guard !message.outgoing else { return false }
+        guard !message.isDeleted, !message.outgoing else { return false }
         if let userId = message.senderUserId, userId != 0 {
-            if message.senderName == nil || message.senderAvatarPath == nil {
-                return true
-            }
+            if message.senderName == nil || message.senderAvatarPath == nil { return true }
+        } else if message.senderName == nil {
+            return true
+        }
+        return false
+    }
+
+    private static func needsMetadataBackfill(_ message: TgMessage) -> Bool {
+        if message.isDeleted || message.outgoing { return false }
+        if message.senderName == nil || message.senderAvatarPath == nil { return true }
+        if message.forwardedFrom == nil && message.replyToMessageId == nil && message.senderUserId == nil {
+            return true
         }
         return false
     }
@@ -171,30 +199,6 @@ final class TelegramRepository {
 
     func loadUserProfilePhotoPaths(userId: Int64) async throws -> [String] {
         try await client.fetchUserProfilePhotoPaths(userId: userId, limit: 100)
-    }
-
-    func refreshChatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
-        try await client.chatSendPermissions(chatId: chatId)
-    }
-
-    func fetchUserDisplayName(userId: Int64) async throws -> String {
-        try await client.fetchUserDisplayName(userId: userId)
-    }
-
-    func pinMessage(chatId: Int64, messageId: Int64) async throws {
-        try await client.pinChatMessage(chatId: chatId, messageId: messageId)
-    }
-
-    func loadUserProfileDetail(userId: Int64) async throws -> UserProfileDetail {
-        try await client.fetchUserProfileDetail(userId: userId)
-    }
-
-    func loadUserStories(chatId: Int64) async throws -> [TgStoryItem] {
-        try await client.fetchActiveStories(chatId: chatId)
-    }
-
-    func loadUserGifts(userId: Int64, limit: Int = 50) async throws -> [TgGiftItem] {
-        try await client.fetchReceivedGifts(userId: userId, limit: limit)
     }
 
     func forwardMessage(fromChatId: Int64, toChatId: Int64, messageId: Int64) async throws {
@@ -229,16 +233,36 @@ final class TelegramRepository {
         try store.purgeDeletedMessages(chatId: chatId)
     }
 
-    func searchChats(query: String) async throws -> [TgChat] {
-        try await client.searchChats(query: query, limit: 30)
+    func openChat(chatId: Int64) async throws {
+        try await client.openChat(chatId: chatId)
     }
 
-    func searchPublicChats(query: String) async throws -> [TgChat] {
-        try await client.searchPublicChats(query: query)
+    func closeChat(chatId: Int64) async throws {
+        try await client.closeChat(chatId: chatId)
     }
 
-    func updateProfileName(firstName: String, lastName: String) async throws {
-        try await client.setName(firstName: firstName, lastName: lastName)
+    func refreshChatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
+        try await client.chatSendPermissions(chatId: chatId)
+    }
+
+    func pinMessage(chatId: Int64, messageId: Int64) async throws {
+        try await client.pinChatMessage(chatId: chatId, messageId: messageId)
+    }
+
+    func loadUserProfileDetail(userId: Int64) async throws -> UserProfileDetail {
+        try await client.fetchUserProfileDetail(userId: userId)
+    }
+
+    func loadUserStories(chatId: Int64) async throws -> [TgStoryItem] {
+        try await client.fetchActiveStories(chatId: chatId)
+    }
+
+    func loadUserGifts(userId: Int64, limit: Int = 100) async throws -> [TgGiftItem] {
+        try await client.fetchReceivedGifts(userId: userId, limit: limit)
+    }
+
+    func fetchUserDisplayName(userId: Int64) async throws -> String {
+        try await client.fetchUserDisplayName(userId: userId)
     }
 
     func updateUsername(_ username: String) async throws {
@@ -257,8 +281,20 @@ final class TelegramRepository {
         try await client.setUserPrivacySetting(kind: kind, visibility: visibility)
     }
 
-    func searchMessagesGlobally(query: String, limit: Int = 20) async throws -> [GlobalSearchMessageHit] {
-        try await client.searchMessagesGlobally(query: query, limit: limit)
+    func searchMessagesGlobally(query: String) async throws -> [GlobalSearchMessageHit] {
+        try await client.searchMessagesGlobally(query: query, limit: 40)
+    }
+
+    func searchChats(query: String) async throws -> [TgChat] {
+        try await client.searchChats(query: query, limit: 30)
+    }
+
+    func searchPublicChats(query: String) async throws -> [TgChat] {
+        try await client.searchPublicChats(query: query)
+    }
+
+    func updateProfileName(firstName: String, lastName: String) async throws {
+        try await client.setName(firstName: firstName, lastName: lastName)
     }
 
     func downloadMedia(chatId: Int64) async throws -> [TgMessage] {
@@ -288,14 +324,6 @@ final class TelegramRepository {
         // Do not block profile UI by eagerly downloading all media files.
         // Files will download on-demand when opened (or via background message downloader).
         return try store.read(chatId: chatId).filter { !$0.attachments.isEmpty || $0.text.containsURL }
-    }
-
-    func openChat(chatId: Int64) async throws {
-        try await client.openChat(chatId: chatId)
-    }
-
-    func closeChat(chatId: Int64) async throws {
-        try await client.closeChat(chatId: chatId)
     }
 
     func markChatRead(chatId: Int64) async throws {

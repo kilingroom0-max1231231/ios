@@ -46,6 +46,30 @@ struct SettingsView: View {
             }
 
             Section(AppText.tr("Аккаунт", "Account")) {
+                Picker(AppText.tr("Аккаунт", "Account"), selection: Binding(
+                    get: { vm.activeAccountId },
+                    set: { newId in
+                        Task { await vm.switchAccount(to: newId) }
+                    }
+                )) {
+                    ForEach(vm.accountList) { account in
+                        Text(account.title).tag(account.id)
+                    }
+                }
+
+                Button {
+                    Task { await vm.addAccountAndSwitch() }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(vm.canAddMoreAccounts ? AppColors.accent : .secondary)
+                            .frame(width: 28)
+                        Text(AppText.tr("Добавить аккаунт", "Add account"))
+                            .foregroundStyle(vm.canAddMoreAccounts ? .primary : .secondary)
+                    }
+                }
+                .disabled(!vm.canAddMoreAccounts)
+
                 if let me = vm.me {
                     NavigationLink {
                         UserProfileView(vm: vm, userId: me.id)

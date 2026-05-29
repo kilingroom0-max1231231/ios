@@ -102,13 +102,11 @@ struct ChatProfileView: View {
         if shouldShowMembersTab {
             tabs.append(.members)
         }
-        if profile.userId != nil {
-            if profile.hasActiveStories || !vm.userProfileStories.isEmpty {
-                tabs.append(.stories)
-            }
-            if profile.giftCount > 0 || !vm.userProfileGifts.isEmpty {
-                tabs.append(.gifts)
-            }
+        if profile.userId != nil || profile.hasActiveStories || !vm.userProfileStories.isEmpty {
+            tabs.append(.stories)
+        }
+        if profile.userId != nil, profile.giftCount > 0 || !vm.userProfileGifts.isEmpty {
+            tabs.append(.gifts)
         }
         tabs.append(.media)
         return tabs
@@ -348,9 +346,7 @@ struct ChatProfileView: View {
             }
         }
         .onAppear {
-            if let userId = profile.userId {
-                Task { await vm.loadUserProfileStories(userId: userId) }
-            }
+            Task { await vm.loadActiveStories(chatId: profile.chatId) }
         }
     }
 
@@ -358,7 +354,6 @@ struct ChatProfileView: View {
         Section {
             if vm.isUserProfileExtrasLoading && vm.userProfileGifts.isEmpty {
                 ProgressView()
-                    .tint(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
             } else if vm.userProfileGifts.isEmpty {
@@ -369,7 +364,10 @@ struct ChatProfileView: View {
             }
         }
         .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
-        .listRowBackground(Color.black)
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(uiColor: .secondarySystemGroupedBackground))
+        )
         .onAppear {
             if let userId = profile.userId {
                 Task { await vm.loadUserProfileGifts(userId: userId) }
@@ -592,14 +590,14 @@ private struct ProfileMediaThumbnail: View {
             } else {
                 placeholder(systemImage: "photo")
             }
-        case .sticker:
+        case .sticker, .gift:
             if let image = attachment.localImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
                     .padding(8)
             } else {
-                placeholder(systemImage: "face.smiling")
+                placeholder(systemImage: attachment.kind == .gift ? "gift.fill" : "face.smiling")
             }
         case .video, .videoNote, .animation:
             VideoThumbnailView(url: attachment.localURL)

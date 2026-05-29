@@ -7,6 +7,7 @@ enum TgAttachmentKind: String, Equatable {
     case videoNote
     case animation
     case sticker
+    case gift
     case document
 }
 

@@ -28,7 +28,7 @@ struct MessageBubbleView: View {
     }
 
     private var incomingBubbleMaxWidth: CGFloat {
-        let avatarSpace: CGFloat = (showGroupSender || showPrivatePeerAvatar) ? 38 : 0
+        let avatarSpace: CGFloat = showsIncomingLeadingAvatar ? 38 : 0
         let ratio = appearance.compactBubbles ? 0.68 : 0.74
         return max(120, screenWidth * ratio - avatarSpace - 36)
     }
@@ -57,12 +57,36 @@ struct MessageBubbleView: View {
             && message.senderName != nil
     }
 
-    private var channelAuthorLine: String? {
-        guard chatKind == .channel, !message.outgoing else { return nil }
-        if let signature = message.authorSignature, !signature.isEmpty {
-            return signature
+    private var isIncomingChannel: Bool {
+        !message.outgoing && chatKind == .channel
+    }
+
+    /// Channel post with author signature or linked admin name.
+    private var channelPostSigned: Bool {
+        guard isIncomingChannel else { return false }
+        if let signature = message.authorSignature, !signature.isEmpty { return true }
+        if let name = message.senderName, !name.isEmpty { return true }
+        return message.senderUserId != nil
+    }
+
+    private var showsIncomingLeadingAvatar: Bool {
+        showGroupSender || showPrivatePeerAvatar || isIncomingChannel
+    }
+
+    private var channelDisplayName: String? {
+        guard isIncomingChannel else { return nil }
+        if channelPostSigned {
+            return message.senderName ?? message.authorSignature
         }
-        return message.senderName
+        return peerTitle
+    }
+
+    private var channelAvatarPath: String? {
+        channelPostSigned ? message.senderAvatarPath : peerAvatarPath
+    }
+
+    private var channelAvatarIdentifier: Int64 {
+        channelPostSigned ? (message.senderUserId ?? message.id) : message.chatId
     }
 
     private var captionText: String? {
@@ -84,7 +108,7 @@ struct MessageBubbleView: View {
     private var standaloneMedia: [TgAttachment] {
         message.attachments.filter { attachment in
             switch attachment.kind {
-            case .videoNote, .sticker, .voice, .document:
+            case .videoNote, .sticker, .gift, .voice, .document:
                 return true
             default:
                 return false
@@ -93,9 +117,14 @@ struct MessageBubbleView: View {
     }
 
     private var hasGridMedia: Bool { !gridMedia.isEmpty }
+
+    private var isStickerLikeOnly: Bool {
+        guard captionText == nil, !message.isDeleted else { return false }
+        return !message.attachments.isEmpty
+            && message.attachments.allSatisfy { $0.kind == .sticker || $0.kind == .gift }
+    }
     private var hasHeaderContent: Bool {
         message.forwardedFrom != nil
-            || channelAuthorLine != nil
             || message.replyToMessageId != nil
     }
 
@@ -119,6 +148,14 @@ struct MessageBubbleView: View {
                     size: 28
                 )
                 .frame(width: 28, height: 28)
+            } else if isIncomingChannel {
+                AvatarView(
+                    title: channelDisplayName ?? "?",
+                    identifier: channelAvatarIdentifier,
+                    imagePath: channelAvatarPath,
+                    size: 30
+                )
+                .frame(width: 30, height: 30)
             }
 
             VStack(alignment: message.outgoing ? .trailing : .leading, spacing: 4) {
@@ -126,6 +163,16 @@ struct MessageBubbleView: View {
                     Text(name)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(senderNameColor(message.senderUserId ?? message.id))
+                        .lineLimit(1)
+                        .padding(.leading, 4)
+                } else if isIncomingChannel, let name = channelDisplayName {
+                    Text(name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(
+                            channelPostSigned
+                                ? senderNameColor(message.senderUserId ?? message.id)
+                                : .secondary
+                        )
                         .lineLimit(1)
                         .padding(.leading, 4)
                 }
@@ -180,12 +227,6 @@ struct MessageBubbleView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if let channelAuthorLine {
-                        Text(channelAuthorLine)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(senderNameColor(message.senderUserId ?? message.id))
-                    }
-
                     if let replyId = message.replyToMessageId {
                         replyPreview(replyId: replyId)
                     }
@@ -217,7 +258,10 @@ struct MessageBubbleView: View {
             if !standaloneMedia.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(standaloneMedia) { attachment in
-                        MessageAttachmentPreview(attachment: attachment) {
+                        MessageAttachmentPreview(
+                            attachment: attachment,
+                            isOutgoing: message.outgoing
+                        ) {
                             onOpenAttachment?(attachment)
                         }
                     }
@@ -239,9 +283,11 @@ struct MessageBubbleView: View {
                 .padding(.bottom, appearance.compactBubbles ? 6 : 8)
         }
         .background(
-            message.outgoing
-                ? appearance.outgoingBubble(colorScheme: colorScheme)
-                : appearance.incomingBubble(colorScheme: colorScheme)
+            isStickerLikeOnly
+                ? Color.clear
+                : (message.outgoing
+                    ? appearance.outgoingBubble(colorScheme: colorScheme)
+                    : appearance.incomingBubble(colorScheme: colorScheme))
         )
         .clipShape(RoundedRectangle(cornerRadius: appearance.compactBubbles ? 14 : 16, style: .continuous))
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)

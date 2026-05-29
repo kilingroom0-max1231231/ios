@@ -2,6 +2,7 @@ import Foundation
 
 final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private let bridge: TDLibBridge
+    private let accountId: String
     private let syncQueue = DispatchQueue(label: "tdlib.client.sync")
 
     private var authState: AuthState = .waitPhone
@@ -14,7 +15,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private var userInfoCache: [Int64: (name: String, avatarPath: String?, isPremium: Bool, premiumBadgePath: String?)] = [:]
     private var customEmojiPathCache: [Int64: String] = [:]
 
-    init() throws {
+    init(accountId: String = "default") throws {
+        self.accountId = accountId
         self.bridge = try TDLibBridge()
     }
 
@@ -28,8 +30,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         try await waitForAuthorizationState("authorizationStateWaitTdlibParameters", timeout: 60)
 
-        let databaseDirectory = try TDLibPaths.databaseDirectory()
-        let filesDirectory = try TDLibPaths.filesDirectory()
+        let databaseDirectory = try TDLibPaths.databaseDirectory(accountId: accountId)
+        let filesDirectory = try TDLibPaths.filesDirectory(accountId: accountId)
 
         // TDLib 1.8.6+ requires flat fields at root — nested "parameters" makes api_id=0.
         _ = try await sendRequest([
@@ -172,6 +174,19 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let enriched = try await enrichMessagesWithSenderInfo(parsed)
         let withReadState = try await applyReadOutboxStatus(messages: enriched, chatId: chatId)
         return withReadState.sorted(by: { $0.createdAt < $1.createdAt })
+    }
+
+    func fetchMessagesByIds(chatId: Int64, messageIds: [Int64]) async throws -> [TgMessage] {
+        guard !messageIds.isEmpty else { return [] }
+        let response = try await sendRequest([
+            "@type": "getMessages",
+            "chat_id": chatId,
+            "message_ids": messageIds
+        ])
+        guard let items = response["messages"] as? [[String: Any]] else { return [] }
+        let parsed = items.compactMap { parseMessage($0, fallbackChatId: chatId) }
+        let enriched = try await enrichMessagesWithSenderInfo(parsed)
+        return try await applyReadOutboxStatus(messages: enriched, chatId: chatId)
     }
 
     func forwardMessages(fromChatId: Int64, toChatId: Int64, messageIds: [Int64]) async throws {
@@ -963,87 +978,139 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return items.sorted { $0.date < $1.date }
     }
 
-    func fetchReceivedGifts(userId: Int64, limit: Int = 50) async throws -> [TgGiftItem] {
-        let response = try await sendRequest([
-            "@type": "getReceivedGifts",
-            "business_connection_id": "",
-            "owner_id": [
-                "@type": "messageSenderUser",
-                "user_id": userId
-            ],
-            "collection_id": 0,
-            "exclude_unsaved": false,
-            "exclude_saved": false,
-            "exclude_unlimited": false,
-            "exclude_upgradable": false,
-            "exclude_non_upgradable": false,
-            "exclude_upgraded": false,
-            "exclude_without_colors": false,
-            "exclude_hosted": false,
-            "sort_by_price": false,
-            "offset": "",
-            "limit": limit
-        ])
-
-        let gifts = response["gifts"] as? [[String: Any]] ?? []
+    func fetchReceivedGifts(userId: Int64, limit: Int = 100) async throws -> [TgGiftItem] {
+        var offset = ""
         var items: [TgGiftItem] = []
-        for (index, entry) in gifts.enumerated() {
-            guard let gift = entry["gift"] as? [String: Any] else { continue }
-            let giftId = (entry["received_gift_id"] as? String) ?? (gift["id"] as? String) ?? "\(index)"
-            let title = (gift["title"] as? String) ?? AppText.tr("Подарок", "Gift")
-            var senderName = entry["sender_name"] as? String
-            var senderUserId: Int64?
-            var senderAvatarPath: String?
-            var senderIsPremium = false
-            var senderPremiumBadgePath: String?
+        var page = 0
 
-            if let sender = entry["sender_id"] as? [String: Any],
-               let senderType = sender["@type"] as? String,
-               senderType == "messageSenderUser",
-               let userId = int64Value(sender["user_id"]) {
-                senderUserId = userId
-                if let user = try? await sendRequest([
-                    "@type": "getUser",
+        while items.count < limit {
+            let pageLimit = min(100, limit - items.count)
+            let response = try await sendRequest([
+                "@type": "getReceivedGifts",
+                "business_connection_id": "",
+                "owner_id": [
+                    "@type": "messageSenderUser",
                     "user_id": userId
-                ]) {
-                    let firstName = user["first_name"] as? String ?? ""
-                    let lastName = user["last_name"] as? String ?? ""
-                    let name = [firstName, lastName]
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " ")
-                    if !name.isEmpty {
-                        senderName = name
-                    } else if let username = activeUsername(from: user) {
-                        senderName = "@\(username)"
-                    }
-                    senderAvatarPath = try? await resolveUserAvatarPath(user)
-                    senderIsPremium = (user["is_premium"] as? Bool) ?? false
-                    senderPremiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+                ],
+                "collection_id": 0,
+                "exclude_unsaved": false,
+                "exclude_saved": false,
+                "exclude_unlimited": false,
+                "exclude_upgradable": false,
+                "exclude_non_upgradable": false,
+                "exclude_upgraded": false,
+                "exclude_without_colors": false,
+                "exclude_hosted": false,
+                "sort_by_price": false,
+                "offset": offset,
+                "limit": pageLimit
+            ])
+
+            let gifts = response["gifts"] as? [[String: Any]] ?? []
+            for (index, entry) in gifts.enumerated() {
+                guard let sentGift = entry["gift"] as? [String: Any] else { continue }
+
+                let receivedId = (entry["received_gift_id"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let giftId: String
+                if let receivedId, !receivedId.isEmpty {
+                    giftId = "\(receivedId)-\(index)"
+                } else {
+                    giftId = "\(userId)-\(page)-\(index)"
                 }
+
+                let presentation = await resolveSentGiftPresentation(sentGift)
+                var senderName = entry["sender_name"] as? String
+                var senderUserId: Int64?
+                var senderAvatarPath: String?
+                var senderIsPremium = false
+                var senderPremiumBadgePath: String?
+
+                if let sender = entry["sender_id"] as? [String: Any],
+                   let senderType = sender["@type"] as? String,
+                   senderType == "messageSenderUser",
+                   let senderId = int64Value(sender["user_id"]) {
+                    senderUserId = senderId
+                    if let user = try? await sendRequest([
+                        "@type": "getUser",
+                        "user_id": senderId
+                    ]) {
+                        let firstName = user["first_name"] as? String ?? ""
+                        let lastName = user["last_name"] as? String ?? ""
+                        let name = [firstName, lastName]
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " ")
+                        if !name.isEmpty {
+                            senderName = name
+                        } else if let username = activeUsername(from: user) {
+                            senderName = "@\(username)"
+                        }
+                        senderAvatarPath = try? await resolveUserAvatarPath(user)
+                        senderIsPremium = (user["is_premium"] as? Bool) ?? false
+                        senderPremiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+                    }
+                }
+
+                items.append(
+                    TgGiftItem(
+                        id: giftId,
+                        title: presentation.title,
+                        subtitle: senderName,
+                        stickerPath: presentation.stickerPath,
+                        senderUserId: senderUserId,
+                        senderName: senderName,
+                        senderAvatarPath: senderAvatarPath,
+                        senderIsPremium: senderIsPremium,
+                        senderPremiumBadgePath: senderPremiumBadgePath
+                    )
+                )
             }
 
-            var stickerPath: String?
-            if let sticker = gift["sticker"] as? [String: Any],
-               let stickerFile = sticker["sticker"] as? [String: Any],
-               let fileId = int64Value(stickerFile["id"]) {
-                stickerPath = try? await downloadFile(fileId: fileId)
+            let nextOffset = (response["next_offset"] as? String) ?? ""
+            if gifts.isEmpty || nextOffset.isEmpty {
+                break
             }
-            items.append(
-                TgGiftItem(
-                    id: giftId,
-                    title: title,
-                    subtitle: senderName,
-                    stickerPath: stickerPath,
-                    senderUserId: senderUserId,
-                    senderName: senderName,
-                    senderAvatarPath: senderAvatarPath,
-                    senderIsPremium: senderIsPremium,
-                    senderPremiumBadgePath: senderPremiumBadgePath
-                )
-            )
+            offset = nextOffset
+            page += 1
         }
+
         return items
+    }
+
+    private func resolveSentGiftPresentation(_ sentGift: [String: Any]) async -> (title: String, stickerPath: String?) {
+        let type = sentGift["@type"] as? String ?? ""
+        var title = AppText.tr("Подарок", "Gift")
+        var stickerObject: [String: Any]?
+
+        switch type {
+        case "sentGiftRegular":
+            if let gift = sentGift["gift"] as? [String: Any] {
+                title = (gift["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? title
+                stickerObject = gift["sticker"] as? [String: Any]
+            }
+        case "sentGiftUpgraded":
+            if let upgraded = sentGift["upgraded_gift"] as? [String: Any] {
+                title = (upgraded["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    ?? (upgraded["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    ?? title
+                stickerObject = (upgraded["model"] as? [String: Any]) ?? (upgraded["sticker"] as? [String: Any])
+            }
+        default:
+            if let gift = sentGift["gift"] as? [String: Any] {
+                title = (gift["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? title
+                stickerObject = gift["sticker"] as? [String: Any]
+            } else {
+                stickerObject = sentGift["sticker"] as? [String: Any]
+            }
+        }
+
+        var stickerPath: String?
+        if let stickerObject,
+           let fileId = extractFileId(from: stickerObject["sticker"] ?? stickerObject) {
+            stickerPath = try? await downloadFile(fileId: fileId)
+        }
+        return (title, stickerPath)
     }
 
     private func startReceiveLoopIfNeeded() {
@@ -1258,6 +1325,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                let textObj = content["text"] as? [String: Any],
                let rawText = textObj["text"] as? String {
                 text = rawText
+            } else if let service = serviceMessageText(contentType: contentType, content: content) {
+                text = service
             } else if let captionObj = content["caption"] as? [String: Any],
                       let caption = captionObj["text"] as? String {
                 text = caption
@@ -1459,6 +1528,19 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 size: fileInfo.size ?? int64Value(sticker["size"]),
                 localPath: fileInfo.localPath
             )]
+        case "messageGift":
+            guard let gift = content["gift"] as? [String: Any],
+                  let sticker = gift["sticker"] as? [String: Any] else { return [] }
+            let fileInfo = extractFileInfo(from: sticker["sticker"])
+            return [TgAttachment(
+                id: UUID().uuidString,
+                kind: .gift,
+                fileId: fileInfo.id,
+                fileName: gift["title"] as? String,
+                mimeType: sticker["mime_type"] as? String,
+                size: fileInfo.size ?? int64Value(sticker["size"]),
+                localPath: fileInfo.localPath
+            )]
         case "messageDocument":
             guard let doc = content["document"] as? [String: Any] else { return [] }
             let fileInfo = extractFileInfo(from: doc["document"])
@@ -1515,10 +1597,41 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
     private func isRenderableAttachmentContent(_ contentType: String) -> Bool {
         switch contentType {
-        case "messagePhoto", "messageVideo", "messageVoiceNote", "messageVideoNote", "messageAnimation", "messageSticker", "messageDocument":
+        case "messagePhoto", "messageVideo", "messageVoiceNote", "messageVideoNote", "messageAnimation", "messageSticker", "messageGift", "messageDocument":
             return true
         default:
             return false
+        }
+    }
+
+    private func serviceMessageText(contentType: String, content: [String: Any]) -> String? {
+        switch contentType {
+        case "messagePinMessage":
+            return AppText.tr("📌 Закрепил(а) сообщение", "📌 Pinned a message")
+        case "messageChatJoinByLink":
+            return AppText.tr("🔗 Вступил(а) по ссылке-приглашению", "🔗 Joined via invite link")
+        case "messageChatJoinByRequest":
+            return AppText.tr("✅ Заявка на вступление одобрена", "✅ Join request approved")
+        case "messageChatAddMembers":
+            let count = (content["member_user_ids"] as? [Any])?.count ?? 0
+            return count > 1
+                ? AppText.tr("👥 Добавил(а) участников: \(count)", "👥 Added members: \(count)")
+                : AppText.tr("👤 Добавил(а) участника", "👤 Added a member")
+        case "messageChatDeleteMember":
+            return AppText.tr("🚫 Удалил(а) участника", "🚫 Removed a member")
+        case "messageChatChangeTitle":
+            if let title = content["title"] as? String, !title.isEmpty {
+                return AppText.tr("✏️ Изменил(а) название на «\(title)»", "✏️ Changed title to “\(title)”")
+            }
+            return AppText.tr("✏️ Изменил(а) название чата", "✏️ Changed chat title")
+        case "messageChatChangePhoto":
+            return AppText.tr("🖼️ Обновил(а) фото чата", "🖼️ Updated chat photo")
+        case "messageChatDeletePhoto":
+            return AppText.tr("🗑️ Удалил(а) фото чата", "🗑️ Removed chat photo")
+        case "messageChatSetTheme":
+            return AppText.tr("🎨 Изменил(а) тему чата", "🎨 Changed chat theme")
+        default:
+            return nil
         }
     }
 
@@ -2305,5 +2418,9 @@ private extension String {
         localizedCaseInsensitiveContains("http://")
             || localizedCaseInsensitiveContains("https://")
             || localizedCaseInsensitiveContains("t.me/")
+    }
+
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

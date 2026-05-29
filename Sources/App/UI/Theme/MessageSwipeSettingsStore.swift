@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 enum MessageSwipeAction: String, CaseIterable, Codable, Identifiable {
+    case off
     case reply
     case forward
     case quote
@@ -12,6 +13,7 @@ enum MessageSwipeAction: String, CaseIterable, Codable, Identifiable {
 
     var title: String {
         switch self {
+        case .off: return AppText.tr("Выключено", "Off")
         case .reply: return AppText.tr("Ответить", "Reply")
         case .forward: return AppText.tr("Переслать", "Forward")
         case .quote: return AppText.tr("Цитата", "Quote")
@@ -22,11 +24,23 @@ enum MessageSwipeAction: String, CaseIterable, Codable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .off: return "hand.draw"
         case .reply: return "arrowshape.turn.up.left"
         case .forward: return "arrowshape.turn.up.right"
         case .quote: return "text.quote"
         case .pin: return "pin.fill"
         case .delete: return "trash"
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .off: return .secondary
+        case .reply: return AppColors.accent
+        case .forward: return .orange
+        case .quote: return .teal
+        case .pin: return .indigo
+        case .delete: return .red
         }
     }
 }
@@ -35,63 +49,38 @@ enum MessageSwipeAction: String, CaseIterable, Codable, Identifiable {
 final class MessageSwipeSettingsStore: ObservableObject {
     static let shared = MessageSwipeSettingsStore()
 
-    @Published var orderedActions: [MessageSwipeAction] {
+    @Published var primaryAction: MessageSwipeAction {
         didSet { persist() }
     }
 
-    @Published var disabledActions: Set<MessageSwipeAction> {
-        didSet { persist() }
-    }
-
-    var enabledOrderedActions: [MessageSwipeAction] {
-        orderedActions.filter { !disabledActions.contains($0) }
-    }
-
-    private let orderKey = "messageSwipe.actionOrder"
-    private let disabledKey = "messageSwipe.disabled"
+    private let primaryKey = "messageSwipe.primaryAction"
+    private let legacyOrderKey = "messageSwipe.actionOrder"
+    private let legacyDisabledKey = "messageSwipe.disabled"
 
     private init() {
-        if let raw = UserDefaults.standard.stringArray(forKey: orderKey) {
-            let decoded = raw.compactMap(MessageSwipeAction.init(rawValue:))
-            orderedActions = decoded.isEmpty ? Self.defaultOrder : decoded
+        if let raw = UserDefaults.standard.string(forKey: primaryKey),
+           let action = MessageSwipeAction(rawValue: raw) {
+            primaryAction = action
         } else {
-            orderedActions = Self.defaultOrder
+            primaryAction = Self.migrateLegacyAction() ?? .reply
         }
-
-        if let raw = UserDefaults.standard.stringArray(forKey: disabledKey) {
-            disabledActions = Set(raw.compactMap(MessageSwipeAction.init(rawValue:)))
-        } else {
-            disabledActions = []
-        }
-    }
-
-    func setEnabled(_ action: MessageSwipeAction, enabled: Bool) {
-        if enabled {
-            disabledActions.remove(action)
-        } else {
-            disabledActions.insert(action)
-        }
-    }
-
-    func isEnabled(_ action: MessageSwipeAction) -> Bool {
-        !disabledActions.contains(action)
-    }
-
-    func move(from source: IndexSet, to destination: Int) {
-        orderedActions.move(fromOffsets: source, toOffset: destination)
     }
 
     func resetToDefaults() {
-        orderedActions = Self.defaultOrder
-        disabledActions = []
+        primaryAction = .reply
     }
 
-    private static let defaultOrder: [MessageSwipeAction] = [
-        .reply, .forward, .quote, .pin, .delete
-    ]
+    private static func migrateLegacyAction() -> MessageSwipeAction? {
+        guard let order = UserDefaults.standard.stringArray(forKey: legacyOrderKey) else { return nil }
+        let disabled = Set(
+            (UserDefaults.standard.stringArray(forKey: legacyDisabledKey) ?? [])
+                .compactMap(MessageSwipeAction.init(rawValue:))
+        )
+        let enabled = order.compactMap(MessageSwipeAction.init(rawValue:)).filter { !disabled.contains($0) }
+        return enabled.first
+    }
 
     private func persist() {
-        UserDefaults.standard.set(orderedActions.map(\.rawValue), forKey: orderKey)
-        UserDefaults.standard.set(disabledActions.map(\.rawValue), forKey: disabledKey)
+        UserDefaults.standard.set(primaryAction.rawValue, forKey: primaryKey)
     }
 }
