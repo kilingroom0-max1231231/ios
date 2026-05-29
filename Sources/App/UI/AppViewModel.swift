@@ -564,12 +564,14 @@ final class AppViewModel: ObservableObject {
         repository: TelegramRepository?,
         owner: AppViewModel?
     ) async {
-        guard let repository else {
-            await MainActor.run {
+        guard let repository = repository else {
+            await MainActor.run(body: {
                 owner?.mediaDownloadsInProgress.remove(chatId)
-            }
+            })
             return
+       
         }
+   
 
         defer {
             Task { @MainActor in

@@ -262,12 +262,12 @@ struct MessageBubbleView: View {
                         MessageAttachmentPreview(
                             attachment: attachment,
                             isOutgoing: message.outgoing,
+                            onOpen: { onOpenAttachment?(attachment) },
                             onPremiumSticker: onPremiumSticker
-                        ) {
-                            onOpenAttachment?(attachment)
-                        }
+                        )
                     }
                 }
+           
                 .padding(.horizontal, 11)
                 .padding(.top, (hasGridMedia || captionText != nil) ? 6 : 8)
             }
