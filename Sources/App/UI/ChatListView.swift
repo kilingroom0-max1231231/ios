@@ -8,6 +8,7 @@ struct ChatListView: View {
     }
 
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var appSettings: AppSettingsStore
     var mode: Mode = .main
     @State private var searchVisible = false
     @FocusState private var searchFocused: Bool
@@ -69,7 +70,7 @@ struct ChatListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
-                if !isArchiveMode {
+                if !isArchiveMode, appSettings.showChatFolderTabs {
                     ChatFolderTabsView(vm: vm)
                 }
                 if searchVisible || !vm.chatSearch.isEmpty {

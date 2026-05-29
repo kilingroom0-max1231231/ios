@@ -156,7 +156,7 @@ struct SettingsView: View {
                     settingsLinkLabel(
                         icon: "slider.horizontal.3",
                         title: AppText.tr("Поведение", "Behavior"),
-                        subtitle: AppText.tr("Профиль, свайпы, сообщения", "Profile, swipes, messages")
+                        subtitle: AppText.tr("Реакции, жесты, папки, свайпы", "Reactions, gestures, folders, swipes")
                     )
                 }
 

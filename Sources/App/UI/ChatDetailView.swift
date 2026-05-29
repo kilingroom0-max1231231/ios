@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct ChatDetailView: View {
     @ObservedObject var vm: AppViewModel
     @EnvironmentObject private var swipeSettings: MessageSwipeSettingsStore
+    @EnvironmentObject private var appSettings: AppSettingsStore
     let chatId: Int64
     @FocusState private var isComposerFocused: Bool
     @State private var showProfile = false
@@ -21,6 +22,8 @@ struct ChatDetailView: View {
     @State private var showStickerPicker = false
     @State private var showVideoNoteCamera = false
     @State private var messageActionTarget: MessageActionTarget?
+    @State private var messageBubbleFrames: [Int64: CGRect] = [:]
+    @State private var pendingReactionRemoval: PendingReactionRemoval?
     @StateObject private var voiceRecorder = VoiceNoteRecorder()
     @State private var isMicPressing = false
 
@@ -77,9 +80,18 @@ struct ChatDetailView: View {
     }
 
     var body: some View {
+        ZStack {
+            chatScreen
+            messageActionsOverlayLayer
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: messageActionTarget?.id)
+    }
+
+    private var chatScreen: some View {
         messageList
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 bottomBar
+                    .allowsHitTesting(messageActionTarget == nil)
             }
         .background(ChatScreenBackground().ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
@@ -224,34 +236,20 @@ struct ChatDetailView: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(item: $messageActionTarget) { target in
-            MessageActionsSheet(
-                vm: vm,
-                message: target.message,
-                canSend: canSend,
-                canEdit: target.message.outgoing && !target.message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                captionText: captionForMessage(target.message),
-                onReply: {
-                    vm.startReply(target.message)
-                    isComposerFocused = true
+        .alert(item: $pendingReactionRemoval) { pending in
+            Alert(
+                title: Text(AppText.tr("Снять реакцию?", "Remove reaction?")),
+                message: Text("\(pending.emoji)"),
+                primaryButton: .destructive(
+                    Text(AppText.tr("Снять", "Remove"))
+                ) {
+                    let live = liveMessage(pending.message)
+                    Task { await vm.toggleReaction(on: live, emoji: pending.emoji) }
                 },
-                onForward: {
-                    forwardingMessage = target.message
-                },
-                onEdit: {
-                    vm.startEditing(target.message)
-                    isComposerFocused = true
-                },
-                onDelete: { revoke in
-                    Task { await vm.deleteMyMessage(target.message, revoke: revoke) }
-                },
-                onCopy: {
-                    if let text = captionForMessage(target.message) {
-                        UIPasteboard.general.string = text
-                    }
-                }
+                secondaryButton: .cancel()
             )
         }
+        .onPreferenceChange(MessageBubbleFramePreferenceKey.self) { messageBubbleFrames = $0 }
         .sheet(item: $forwardingMessage) { message in
             NavigationStack {
                 List {
@@ -291,6 +289,48 @@ struct ChatDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var messageActionsOverlayLayer: some View {
+        if let target = messageActionTarget {
+            let replyMap = replyPreviewMap(from: vm.messages)
+            MessageActionsOverlay(
+                vm: vm,
+                target: target,
+                messageFrame: messageBubbleFrames[target.message.id],
+                chatKind: selectedChat?.kind ?? .unknown,
+                peerAvatarPath: selectedChat?.avatarPath,
+                peerTitle: selectedChat?.title,
+                replyPreviewText: target.message.replyToMessageId.flatMap { replyMap[$0] },
+                canSend: canSend,
+                canEdit: target.message.outgoing
+                    && !target.message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                captionText: captionForMessage(target.message),
+                onDismiss: { messageActionTarget = nil },
+                onReply: {
+                    vm.startReply(target.message)
+                    isComposerFocused = true
+                },
+                onForward: {
+                    forwardingMessage = target.message
+                },
+                onEdit: {
+                    vm.startEditing(target.message)
+                    isComposerFocused = true
+                },
+                onDelete: { revoke in
+                    Task { await vm.deleteMyMessage(target.message, revoke: revoke) }
+                },
+                onCopy: {
+                    if let text = captionForMessage(target.message) {
+                        UIPasteboard.general.string = text
+                    }
+                }
+            )
+            .transition(.opacity)
+            .zIndex(300)
         }
     }
 
@@ -364,6 +404,7 @@ struct ChatDetailView: View {
                 .animation(.spring(response: 0.32, dampingFraction: 0.9), value: grouped.last?.id)
             }
             .scrollDismissesKeyboard(.interactively)
+            .scrollDisabled(messageActionTarget != nil)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 8, coordinateSpace: .local)
                     .onChanged { value in
@@ -491,8 +532,14 @@ struct ChatDetailView: View {
                     onLongPress: {
                         messageActionTarget = MessageActionTarget(message: message)
                     },
+                    onDoubleTap: canSend && appSettings.enableDoubleTapQuickReaction ? {
+                        requestToggleReaction(
+                            on: message,
+                            emoji: appSettings.doubleTapQuickReactionEmoji
+                        )
+                    } : nil,
                     onReactionTap: canSend ? { reaction in
-                        Task { await vm.toggleReaction(on: message, reaction: reaction) }
+                        requestToggleReaction(on: message, reaction: reaction)
                     } : nil,
                     onForward: {
                         forwardingMessage = message
@@ -506,19 +553,25 @@ struct ChatDetailView: View {
                     }
                 )
 
-                let swipe = swipeSettings.primaryAction
-                if swipe != .off,
-                   let handler = swipeActionHandler(for: message, action: swipe) {
-                    SwipeableMessageRow(
-                        actionIcon: swipe.systemImage,
-                        actionColor: swipe.accentColor,
-                        onSwipe: handler
-                    ) {
+                let row = Group {
+                    let swipe = swipeSettings.primaryAction
+                    if swipe != .off,
+                       let handler = swipeActionHandler(for: message, action: swipe) {
+                        SwipeableMessageRow(
+                            actionIcon: swipe.systemImage,
+                            actionColor: swipe.accentColor,
+                            onSwipe: handler
+                        ) {
+                            bubble
+                        }
+                    } else {
                         bubble
                     }
-                } else {
-                    bubble
                 }
+                .opacity(messageActionTarget?.id == message.id ? 0 : 1)
+                .reportMessageBubbleFrame(messageId: message.id)
+
+                row
             }
         }
     }
@@ -918,4 +971,35 @@ struct ChatDetailView: View {
         }
         return out
     }
+
+    private func liveMessage(_ message: TgMessage) -> TgMessage {
+        vm.messages.first(where: { $0.id == message.id }) ?? message
+    }
+
+    private func requestToggleReaction(on message: TgMessage, emoji: String) {
+        let live = liveMessage(message)
+        if live.reactions.contains(where: { $0.emoji == emoji && $0.isChosen }),
+           appSettings.confirmReactionRemove {
+            pendingReactionRemoval = PendingReactionRemoval(message: live, emoji: emoji)
+            return
+        }
+        Task { await vm.toggleReaction(on: live, emoji: emoji) }
+    }
+
+    private func requestToggleReaction(on message: TgMessage, reaction: TgMessageReaction) {
+        if reaction.isChosen, appSettings.confirmReactionRemove {
+            pendingReactionRemoval = PendingReactionRemoval(
+                message: liveMessage(message),
+                emoji: reaction.emoji
+            )
+            return
+        }
+        Task { await vm.toggleReaction(on: liveMessage(message), reaction: reaction) }
+    }
+}
+
+private struct PendingReactionRemoval: Identifiable {
+    let id = UUID()
+    let message: TgMessage
+    let emoji: String
 }

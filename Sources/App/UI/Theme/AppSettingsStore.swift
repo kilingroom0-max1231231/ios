@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 @MainActor
 final class AppSettingsStore: ObservableObject {
@@ -53,6 +54,42 @@ final class AppSettingsStore: ObservableObject {
         didSet { persist() }
     }
 
+    @Published var enableDoubleTapQuickReaction: Bool {
+        didSet { persist() }
+    }
+
+    @Published var doubleTapQuickReactionEmoji: String {
+        didSet { persist() }
+    }
+
+    @Published var enableLongPressMessagePanel: Bool {
+        didSet { persist() }
+    }
+
+    @Published var enableTapOnReactionChips: Bool {
+        didSet { persist() }
+    }
+
+    @Published var reactionHapticFeedback: Bool {
+        didSet { persist() }
+    }
+
+    @Published var expandReactionPickerByDefault: Bool {
+        didSet { persist() }
+    }
+
+    @Published var showChatFolderTabs: Bool {
+        didSet { persist() }
+    }
+
+    @Published var confirmReactionRemove: Bool {
+        didSet { persist() }
+    }
+
+    static let quickReactionEmojiOptions = [
+        "👍", "❤️", "🔥", "🤣", "😍", "😮", "😢", "🎉", "🙏", "👏", "💯", "🤝", "⚡️", "🥰", "😡", "🤔"
+    ]
+
     private enum Key {
         static let showProfileChatKind = "app.settings.showProfileChatKind"
         static let showProfileChatId = "app.settings.showProfileChatId"
@@ -66,6 +103,14 @@ final class AppSettingsStore: ObservableObject {
         static let enablePushNotifications = "app.settings.enablePushNotifications"
         static let enableBackgroundSync = "app.settings.enableBackgroundSync"
         static let enableBackgroundMediaPrefetch = "app.settings.enableBackgroundMediaPrefetch"
+        static let enableDoubleTapQuickReaction = "app.settings.enableDoubleTapQuickReaction"
+        static let doubleTapQuickReactionEmoji = "app.settings.doubleTapQuickReactionEmoji"
+        static let enableLongPressMessagePanel = "app.settings.enableLongPressMessagePanel"
+        static let enableTapOnReactionChips = "app.settings.enableTapOnReactionChips"
+        static let reactionHapticFeedback = "app.settings.reactionHapticFeedback"
+        static let expandReactionPickerByDefault = "app.settings.expandReactionPickerByDefault"
+        static let showChatFolderTabs = "app.settings.showChatFolderTabs"
+        static let confirmReactionRemove = "app.settings.confirmReactionRemove"
     }
 
     private init() {
@@ -106,6 +151,28 @@ final class AppSettingsStore: ObservableObject {
         enableBackgroundMediaPrefetch = defaults.object(forKey: Key.enableBackgroundMediaPrefetch) == nil
             ? false
             : defaults.bool(forKey: Key.enableBackgroundMediaPrefetch)
+        enableDoubleTapQuickReaction = defaults.object(forKey: Key.enableDoubleTapQuickReaction) == nil
+            ? true
+            : defaults.bool(forKey: Key.enableDoubleTapQuickReaction)
+        doubleTapQuickReactionEmoji = defaults.string(forKey: Key.doubleTapQuickReactionEmoji) ?? "👍"
+        enableLongPressMessagePanel = defaults.object(forKey: Key.enableLongPressMessagePanel) == nil
+            ? true
+            : defaults.bool(forKey: Key.enableLongPressMessagePanel)
+        enableTapOnReactionChips = defaults.object(forKey: Key.enableTapOnReactionChips) == nil
+            ? true
+            : defaults.bool(forKey: Key.enableTapOnReactionChips)
+        reactionHapticFeedback = defaults.object(forKey: Key.reactionHapticFeedback) == nil
+            ? true
+            : defaults.bool(forKey: Key.reactionHapticFeedback)
+        expandReactionPickerByDefault = defaults.object(forKey: Key.expandReactionPickerByDefault) == nil
+            ? false
+            : defaults.bool(forKey: Key.expandReactionPickerByDefault)
+        showChatFolderTabs = defaults.object(forKey: Key.showChatFolderTabs) == nil
+            ? true
+            : defaults.bool(forKey: Key.showChatFolderTabs)
+        confirmReactionRemove = defaults.object(forKey: Key.confirmReactionRemove) == nil
+            ? false
+            : defaults.bool(forKey: Key.confirmReactionRemove)
     }
 
     private func persist() {
@@ -122,6 +189,19 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(enablePushNotifications, forKey: Key.enablePushNotifications)
         defaults.set(enableBackgroundSync, forKey: Key.enableBackgroundSync)
         defaults.set(enableBackgroundMediaPrefetch, forKey: Key.enableBackgroundMediaPrefetch)
+        defaults.set(enableDoubleTapQuickReaction, forKey: Key.enableDoubleTapQuickReaction)
+        defaults.set(doubleTapQuickReactionEmoji, forKey: Key.doubleTapQuickReactionEmoji)
+        defaults.set(enableLongPressMessagePanel, forKey: Key.enableLongPressMessagePanel)
+        defaults.set(enableTapOnReactionChips, forKey: Key.enableTapOnReactionChips)
+        defaults.set(reactionHapticFeedback, forKey: Key.reactionHapticFeedback)
+        defaults.set(expandReactionPickerByDefault, forKey: Key.expandReactionPickerByDefault)
+        defaults.set(showChatFolderTabs, forKey: Key.showChatFolderTabs)
+        defaults.set(confirmReactionRemove, forKey: Key.confirmReactionRemove)
+    }
+
+    func reactionHaptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
+        guard reactionHapticFeedback else { return }
+        UIImpactFeedbackGenerator(style: style).impactOccurred()
     }
 
     nonisolated static var keepDeletedMessagesValue: Bool {

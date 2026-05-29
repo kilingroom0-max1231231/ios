@@ -15,10 +15,13 @@ struct MessageBubbleView: View {
     var onPremiumSticker: ((TgAttachment) -> Void)?
     var onReply: (() -> Void)?
     var onLongPress: (() -> Void)?
+    var onDoubleTap: (() -> Void)?
     var onReactionTap: ((TgMessageReaction) -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
+    /// When false, long-press / double-tap are disabled (e.g. highlighted copy in action overlay).
+    var interactionsEnabled: Bool = true
 
     private var screenWidth: CGFloat {
         UIScreen.main.bounds.width
@@ -187,7 +190,7 @@ struct MessageBubbleView: View {
                     MessageReactionsView(
                         reactions: message.reactions,
                         outgoing: message.outgoing,
-                        onTap: onReactionTap
+                        onTap: appSettings.enableTapOnReactionChips ? onReactionTap : nil
                     )
                     .padding(.horizontal, 2)
                     .padding(.top, 2)
@@ -207,12 +210,27 @@ struct MessageBubbleView: View {
         .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
         .padding(.horizontal, horizontalRowPadding)
         .padding(.vertical, 2)
-        .highPriorityGesture(
-            LongPressGesture(minimumDuration: 0.38).onEnded { _ in
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                onLongPress?()
-            }
-        )
+        .modifier(MessageBubbleInteractionModifier(
+            enabled: interactionsEnabled,
+            longPress: longPressGesture,
+            doubleTap: doubleTapGesture
+        ))
+    }
+
+    private var longPressGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.38).onEnded { _ in
+            guard appSettings.enableLongPressMessagePanel else { return }
+            appSettings.reactionHaptic(.medium)
+            onLongPress?()
+        }
+    }
+
+    private var doubleTapGesture: some Gesture {
+        TapGesture(count: 2).onEnded {
+            guard appSettings.enableDoubleTapQuickReaction else { return }
+            appSettings.reactionHaptic(.light)
+            onDoubleTap?()
+        }
     }
 
     private var bubbleBody: some View {
@@ -384,5 +402,21 @@ struct MessageBubbleView: View {
             return String(format: "%.1fK", Double(count) / 1_000.0)
         }
         return "\(count)"
+    }
+}
+
+private struct MessageBubbleInteractionModifier<G1: Gesture, G2: Gesture>: ViewModifier {
+    let enabled: Bool
+    let longPress: G1
+    let doubleTap: G2
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .highPriorityGesture(longPress)
+                .simultaneousGesture(doubleTap)
+        } else {
+            content
+        }
     }
 }
