@@ -1,9 +1,16 @@
 import Foundation
 
+private actor TDLibRequestGate {
+    func perform<T>(_ operation: () async throws -> T) async rethrows -> T {
+        try await operation()
+    }
+}
+
 final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private let bridge: TDLibBridge
     private let accountId: String
     private let syncQueue = DispatchQueue(label: "tdlib.client.sync")
+    private let requestGate = TDLibRequestGate()
 
     private var authState: AuthState = .waitPhone
     private var lastAuthorizationStateType = ""
@@ -138,34 +145,16 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         var chats: [TgChat] = []
         chats.reserveCapacity(chatIds.count)
 
-        let batchSize = 12
-        var batchStart = 0
-        while batchStart < chatIds.count {
-            let batchEnd = min(batchStart + batchSize, chatIds.count)
-            let batch = Array(chatIds[batchStart..<batchEnd])
-            let batchChats = await withTaskGroup(of: TgChat?.self) { group in
-                for id in batch {
-                    group.addTask { [weak self] in
-                        guard let self else { return nil }
-                        guard let chatResp = try? await self.sendRequest([
-                            "@type": "getChat",
-                            "chat_id": id
-                        ]) else {
-                            return nil
-                        }
-                        return try? await self.parseChatSummary(chatResp, listKind: list, mode: .list)
-                    }
-                }
-                var results: [TgChat] = []
-                for await chat in group {
-                    if let chat {
-                        results.append(chat)
-                    }
-                }
-                return results
+        for id in chatIds {
+            guard let chatResp = try? await sendRequest([
+                "@type": "getChat",
+                "chat_id": id
+            ]) else {
+                continue
             }
-            chats.append(contentsOf: batchChats)
-            batchStart = batchEnd
+            if let chat = try? await parseChatSummary(chatResp, listKind: list, mode: .list) {
+                chats.append(chat)
+            }
         }
         return chats.sorted(by: chatSort)
     }
@@ -2194,6 +2183,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     private func sendRequest(_ body: [String: Any]) async throws -> [String: Any] {
+        try await requestGate.perform {
+            try await self.performSendRequest(body)
+        }
+    }
+
+    private func performSendRequest(_ body: [String: Any]) async throws -> [String: Any] {
         var payload = body
         let extra = UUID().uuidString
         payload["@extra"] = extra

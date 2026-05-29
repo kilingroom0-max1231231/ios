@@ -92,6 +92,7 @@ final class AppViewModel: ObservableObject {
     private var pendingChatPatchIds: Set<Int64> = []
     private var archiveSummaryTask: Task<Void, Never>?
     private var archiveFullyLoaded = false
+    private var chatListInitialLoadComplete = false
     private let chatListLimit = 80
     private let archiveSummaryLimit = 15
     private let credentials = ApiCredentialsStore()
@@ -315,6 +316,7 @@ final class AppViewModel: ObservableObject {
         archivedChats = []
         archiveSummary = nil
         archiveFullyLoaded = false
+        chatListInitialLoadComplete = false
         messages = []
         selectedChatId = nil
         authState = .waitPhone
@@ -349,6 +351,7 @@ final class AppViewModel: ObservableObject {
         archivedChats = []
         archiveSummary = nil
         archiveFullyLoaded = false
+        chatListInitialLoadComplete = false
         messages = []
         chatProfile = nil
         chatMembers = []
@@ -405,6 +408,7 @@ final class AppViewModel: ObservableObject {
                 typingByChat: typingByChat
             )
             status = ""
+            chatListInitialLoadComplete = true
             scheduleChatAvatarRefresh()
             scheduleArchiveSummaryRefresh()
         } catch {
@@ -431,8 +435,13 @@ final class AppViewModel: ObservableObject {
     private func scheduleArchiveSummaryRefresh() {
         archiveSummaryTask?.cancel()
         archiveSummaryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self, let repository = self.repository else { return }
             guard !Task.isCancelled else { return }
+            while self.isRefreshingChats {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+            }
             do {
                 let archived = try await repository.loadArchivedChats(limit: self.archiveSummaryLimit)
                 guard !Task.isCancelled else { return }
@@ -456,10 +465,19 @@ final class AppViewModel: ObservableObject {
 
     private func scheduleChatPatches(for chatIds: Set<Int64>) {
         guard !chatIds.isEmpty else { return }
+        guard chatListInitialLoadComplete else {
+            scheduleDebouncedChatListRefresh()
+            return
+        }
         pendingChatPatchIds.formUnion(chatIds)
+        if pendingChatPatchIds.count > 40 {
+            pendingChatPatchIds.removeAll()
+            scheduleDebouncedChatListRefresh()
+            return
+        }
         chatPatchTask?.cancel()
         chatPatchTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            try? await Task.sleep(nanoseconds: 500_000_000)
             guard let self, !Task.isCancelled else { return }
             let ids = self.pendingChatPatchIds
             self.pendingChatPatchIds.removeAll()
@@ -469,29 +487,24 @@ final class AppViewModel: ObservableObject {
 
     private func patchChats(ids: Set<Int64>) async {
         guard let repository, authState == .ready else { return }
+        guard !isRefreshingChats else {
+            scheduleDebouncedChatListRefresh()
+            return
+        }
         let listKind = mainListKind
         var touchedMain = false
         var touchedArchive = false
 
-        await withTaskGroup(of: (Int64, TgChat?, TgChat?).self) { group in
-            for chatId in ids {
-                group.addTask {
-                    async let mainTask = repository.loadChatPreview(chatId: chatId, listKind: listKind)
-                    async let archiveTask = repository.loadChatPreview(chatId: chatId, listKind: .archive)
-                    let main = try? await mainTask
-                    let archive = try? await archiveTask
-                    return (chatId, main, archive)
-                }
+        for chatId in ids {
+            if let main = try? await repository.loadChatPreview(chatId: chatId, listKind: listKind),
+               let index = chats.firstIndex(where: { $0.id == chatId }) {
+                chats[index] = mergePatchedChat(main, previous: chats[index])
+                touchedMain = true
             }
-            for await (chatId, main, archive) in group {
-                if let main, let index = chats.firstIndex(where: { $0.id == chatId }) {
-                    chats[index] = mergePatchedChat(main, previous: chats[index])
-                    touchedMain = true
-                }
-                if let archive, let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
-                    archivedChats[index] = mergePatchedChat(archive, previous: archivedChats[index])
-                    touchedArchive = true
-                }
+            if let archive = try? await repository.loadChatPreview(chatId: chatId, listKind: .archive),
+               let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
+                archivedChats[index] = mergePatchedChat(archive, previous: archivedChats[index])
+                touchedArchive = true
             }
         }
 
@@ -503,7 +516,7 @@ final class AppViewModel: ObservableObject {
             archiveSummary = Self.makeArchiveSummary(from: archivedChats)
         }
 
-        for chatId in ids {
+        for chatId in ids.prefix(12) {
             await refreshChatSendPermissions(chatId: chatId)
             await patchDeletedChatPreview(chatId: chatId)
             updateOutgoingReadReceipts(for: chatId)
@@ -1289,6 +1302,7 @@ final class AppViewModel: ObservableObject {
         guard selectedChatFolderId != folderId else { return }
         selectedChatFolderId = folderId
         archiveFullyLoaded = false
+        chatListInitialLoadComplete = false
         chats = []
         await refreshChats()
     }
@@ -1851,10 +1865,8 @@ final class AppViewModel: ObservableObject {
                     chats = sortChats(cached)
                 }
             }
-            async let foldersTask: Void = reloadChatFolders(force: true)
-            async let chatsTask: Void = refreshChats()
-            await foldersTask
-            await chatsTask
+            await reloadChatFolders(force: true)
+            await refreshChats()
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
