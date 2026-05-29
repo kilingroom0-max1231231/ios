@@ -55,25 +55,28 @@ enum TGSFileLoader {
 
             let chunkSize = 32_768
             var output = Data()
-            var buffer = [UInt8](repeating: 0, count: chunkSize)
 
-            while true {
-                stream.next_out = UnsafeMutablePointer<Bytef>(&buffer)
-                stream.avail_out = uInt(chunkSize)
-
-                let status = inflate(&stream, Z_NO_FLUSH)
+            repeat {
+                var chunk = [UInt8](repeating: 0, count: chunkSize)
+                let inflateStatus: Int32 = chunk.withUnsafeMutableBytes { rawBuffer in
+                    guard let outBase = rawBuffer.bindMemory(to: Bytef.self).baseAddress else { return -1 }
+                    stream.next_out = outBase
+                    stream.avail_out = uInt(chunkSize)
+                    return inflate(&stream, Z_NO_FLUSH)
+                }
                 let produced = chunkSize - Int(stream.avail_out)
                 if produced > 0 {
-                    output.append(buffer, count: produced)
+                    output.append(chunk, count: produced)
                 }
-
-                if status == Z_STREAM_END {
+                if inflateStatus == Z_STREAM_END {
                     return output
                 }
-                if status != Z_OK {
+                if inflateStatus != Z_OK {
                     return nil
                 }
-            }
+            } while stream.avail_out == 0
+
+            return output
         }
     }
 }

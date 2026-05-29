@@ -680,7 +680,7 @@ final class AppViewModel: ObservableObject {
         owner: AppViewModel?
     ) async {
         guard let repository = repository else {
-            await MainActor.run {
+            _ = await MainActor.run {
                 owner?.mediaDownloadsInProgress.remove(chatId)
             }
             return
