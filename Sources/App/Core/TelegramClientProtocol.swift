@@ -31,6 +31,7 @@ protocol TelegramClientProtocol {
     func searchStickerSets(query: String, limit: Int) async throws -> [TgSticker]
     func fetchAvailableReactions(chatId: Int64, messageId: Int64) async throws -> TgAvailableReactions
     func addMessageReaction(chatId: Int64, messageId: Int64, emoji: String) async throws
+    func addMessageReaction(chatId: Int64, messageId: Int64, item: TgReactionPickerItem) async throws
     func removeMessageReaction(chatId: Int64, messageId: Int64, reaction: TgMessageReaction) async throws
     func createNewSupergroupChat(title: String, isChannel: Bool, description: String?) async throws -> Int64
     func addChatMembers(chatId: Int64, userIds: [Int64]) async throws
