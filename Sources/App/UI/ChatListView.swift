@@ -83,8 +83,17 @@ struct ChatListView: View {
                 emptyChatsView
             }
         }
+        .task {
+            if isArchiveMode {
+                await vm.refreshArchivedChatsIfNeeded()
+            }
+        }
         .refreshable {
-            await vm.refreshChats()
+            if isArchiveMode {
+                await vm.refreshArchivedChatsIfNeeded()
+            } else {
+                await vm.refreshChats()
+            }
         }
         .toolbar {
             if !isArchiveMode, vm.selectedChatFolderId != nil {

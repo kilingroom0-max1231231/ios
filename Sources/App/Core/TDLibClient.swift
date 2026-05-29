@@ -15,6 +15,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private var userInfoCache: [Int64: (name: String, avatarPath: String?, isPremium: Bool, premiumBadgePath: String?)] = [:]
     private var customEmojiPathCache: [Int64: String] = [:]
     private var cachedChatFolders: [TgChatFolder] = []
+    private var supergroupCache: [Int64: (isChannel: Bool, memberCount: Int)] = [:]
+
+    private enum ChatSummaryParseMode {
+        case list
+        case full
+    }
 
     init(accountId: String = "default") throws {
         self.accountId = accountId
@@ -126,19 +132,50 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             "limit": limit
         ])
         guard let ids = response["chat_ids"] as? [Any] else { return [] }
+        let chatIds = ids.compactMap(int64Value)
+        guard !chatIds.isEmpty else { return [] }
 
         var chats: [TgChat] = []
-        for anyId in ids {
-            guard let id = int64Value(anyId) else { continue }
-            let chatResp = try await sendRequest([
-                "@type": "getChat",
-                "chat_id": id
-            ])
-            if let chat = try await parseChatSummary(chatResp, listKind: list) {
-                chats.append(chat)
+        chats.reserveCapacity(chatIds.count)
+
+        let batchSize = 12
+        var batchStart = 0
+        while batchStart < chatIds.count {
+            let batchEnd = min(batchStart + batchSize, chatIds.count)
+            let batch = Array(chatIds[batchStart..<batchEnd])
+            let batchChats = await withTaskGroup(of: TgChat?.self) { group in
+                for id in batch {
+                    group.addTask { [weak self] in
+                        guard let self else { return nil }
+                        guard let chatResp = try? await self.sendRequest([
+                            "@type": "getChat",
+                            "chat_id": id
+                        ]) else {
+                            return nil
+                        }
+                        return try? await self.parseChatSummary(chatResp, listKind: list, mode: .list)
+                    }
+                }
+                var results: [TgChat] = []
+                for await chat in group {
+                    if let chat {
+                        results.append(chat)
+                    }
+                }
+                return results
             }
+            chats.append(contentsOf: batchChats)
+            batchStart = batchEnd
         }
         return chats.sorted(by: chatSort)
+    }
+
+    func fetchChat(chatId: Int64, listKind: TgChatListKind = .main) async throws -> TgChat? {
+        let chatResp = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        return try await parseChatSummary(chatResp, listKind: listKind, mode: .list)
     }
 
     func fetchChatFolders(forceRefresh: Bool = false) async throws -> [TgChatFolder] {
@@ -2306,7 +2343,6 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 customEmojiPathCache.removeValue(forKey: emojiId)
             }
             userInfoCache.removeValue(forKey: userId)
-            eventHandler?(.chatsChanged)
             return
         }
 
@@ -2977,7 +3013,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return (photo["small"] as? [String: Any]) ?? (photo["big"] as? [String: Any])
     }
 
-    private func parseChatSummary(_ chat: [String: Any], listKind: TgChatListKind = .main) async throws -> TgChat? {
+    private func parseChatSummary(
+        _ chat: [String: Any],
+        listKind: TgChatListKind = .main,
+        mode: ChatSummaryParseMode = .full
+    ) async throws -> TgChat? {
         guard let id = int64Value(chat["id"]), let title = chat["title"] as? String else {
             return nil
         }
@@ -2988,27 +3028,43 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let unreadCount = (chat["unread_count"] as? Int) ?? Int(int64Value(chat["unread_count"]) ?? 0)
         let position = chatPosition(chat, listKind: listKind)
         let notification = notificationInfo(chat["notification_settings"] as? [String: Any])
-        let statusInfo = try await resolveChatStatusInfo(chat)
-        let sendInfo = try await resolveChatSendPermissions(chat)
-        var kind = try await resolveChatKind(chat)
+
+        let statusInfo: (text: String?, isOnline: Bool?)
+        let sendInfo: (canSend: Bool?, reason: String?)
+        var kind: ChatKind
         var privateUserId: Int64?
         var isBlockedByMe = false
         var isBlockedByPeer = false
-
         var peerIsPremium = false
         var peerPremiumBadgePath: String?
         var peerUsername: String?
-        if kind == .private,
-           let chatType = chat["type"] as? [String: Any],
-           let userId = int64Value(chatType["user_id"]) {
-            privateUserId = userId
-            let blockState = try await resolvePrivateUserBlockState(userId: userId)
-            isBlockedByMe = blockState.blockedByMe
-            isBlockedByPeer = blockState.blockedByPeer
-            if let meta = try? await loadUserMeta(userId: userId) {
-                peerIsPremium = meta.isPremium
-                peerPremiumBadgePath = meta.premiumBadgePath
-                peerUsername = meta.username
+
+        if mode == .list {
+            kind = quickChatKind(from: chat)
+            statusInfo = quickStatusInfo(for: kind)
+            sendInfo = (nil, nil)
+            if kind == .private,
+               let chatType = chat["type"] as? [String: Any],
+               let userId = int64Value(chatType["user_id"]) {
+                privateUserId = userId
+            }
+        } else {
+            statusInfo = try await resolveChatStatusInfo(chat)
+            sendInfo = try await resolveChatSendPermissions(chat)
+            kind = try await resolveChatKind(chat)
+
+            if kind == .private,
+               let chatType = chat["type"] as? [String: Any],
+               let userId = int64Value(chatType["user_id"]) {
+                privateUserId = userId
+                let blockState = try await resolvePrivateUserBlockState(userId: userId)
+                isBlockedByMe = blockState.blockedByMe
+                isBlockedByPeer = blockState.blockedByPeer
+                if let meta = try? await loadUserMeta(userId: userId) {
+                    peerIsPremium = meta.isPremium
+                    peerPremiumBadgePath = meta.premiumBadgePath
+                    peerUsername = meta.username
+                }
             }
         }
 
@@ -3080,6 +3136,47 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return (lhs.pinOrder ?? 0) > (rhs.pinOrder ?? 0)
         }
         return (lhs.lastMessageDate ?? .distantPast) > (rhs.lastMessageDate ?? .distantPast)
+    }
+
+    private func quickChatKind(from chat: [String: Any]) -> ChatKind {
+        guard
+            let type = chat["type"] as? [String: Any],
+            let typeName = type["@type"] as? String
+        else {
+            return .unknown
+        }
+
+        switch typeName {
+        case "chatTypePrivate":
+            return .private
+        case "chatTypeBasicGroup":
+            return .basicGroup
+        case "chatTypeSupergroup":
+            if let supergroupId = int64Value(type["supergroup_id"]),
+               let cached = supergroupCache[supergroupId] {
+                return cached.isChannel ? .channel : .supergroup
+            }
+            return .supergroup
+        default:
+            return .unknown
+        }
+    }
+
+    private func quickStatusInfo(for kind: ChatKind) -> (text: String?, isOnline: Bool?) {
+        switch kind {
+        case .channel:
+            return (AppText.tr("канал", "channel"), false)
+        case .supergroup, .basicGroup:
+            return (AppText.tr("группа", "group"), false)
+        default:
+            return (nil, nil)
+        }
+    }
+
+    private func rememberSupergroup(_ supergroup: [String: Any], supergroupId: Int64) {
+        let isChannel = (supergroup["is_channel"] as? Bool) ?? false
+        let count = memberCount(from: supergroup)
+        supergroupCache[supergroupId] = (isChannel, count)
     }
 
     private func chatPosition(_ chat: [String: Any], listKind: TgChatListKind) -> (isPinned: Bool, order: Int64?) {
@@ -3327,6 +3424,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 "@type": "getSupergroup",
                 "supergroup_id": supergroupId
             ])
+            rememberSupergroup(supergroup, supergroupId: supergroupId)
             let isChannel = (supergroup["is_channel"] as? Bool) ?? false
             let count = memberCount(from: supergroup)
             return (memberCountLabel(count, isChannel: isChannel), false)
@@ -3385,6 +3483,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 "@type": "getSupergroup",
                 "supergroup_id": supergroupId
             ])
+            rememberSupergroup(supergroup, supergroupId: supergroupId)
             return ((supergroup["is_channel"] as? Bool) ?? false) ? .channel : .supergroup
         default:
             return .unknown

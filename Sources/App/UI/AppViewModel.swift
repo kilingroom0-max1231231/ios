@@ -85,6 +85,15 @@ final class AppViewModel: ObservableObject {
     }
     private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
+    private var isRefreshingChats = false
+    private var needsAnotherChatRefresh = false
+    private var chatListRefreshTask: Task<Void, Never>?
+    private var chatPatchTask: Task<Void, Never>?
+    private var pendingChatPatchIds: Set<Int64> = []
+    private var archiveSummaryTask: Task<Void, Never>?
+    private var archiveFullyLoaded = false
+    private let chatListLimit = 80
+    private let archiveSummaryLimit = 15
     private let credentials = ApiCredentialsStore()
     private let accountSessions = AccountSessionStore.shared
     private var isLoadingOlderMessages = false
@@ -305,6 +314,7 @@ final class AppViewModel: ObservableObject {
         selectedChatFolderId = nil
         archivedChats = []
         archiveSummary = nil
+        archiveFullyLoaded = false
         messages = []
         selectedChatId = nil
         authState = .waitPhone
@@ -338,6 +348,7 @@ final class AppViewModel: ObservableObject {
         selectedChatFolderId = nil
         archivedChats = []
         archiveSummary = nil
+        archiveFullyLoaded = false
         messages = []
         chatProfile = nil
         chatMembers = []
@@ -353,6 +364,18 @@ final class AppViewModel: ObservableObject {
 
     func refreshChats() async {
         guard let repository, authState == .ready else { return }
+        if isRefreshingChats {
+            needsAnotherChatRefresh = true
+            return
+        }
+        isRefreshingChats = true
+        defer {
+            isRefreshingChats = false
+            if needsAnotherChatRefresh {
+                needsAnotherChatRefresh = false
+                Task { await refreshChats() }
+            }
+        }
 
         let typingByChat = Dictionary(uniqueKeysWithValues: chats.compactMap { chat in
             chat.typingText.map { (chat.id, $0) }
@@ -375,25 +398,136 @@ final class AppViewModel: ObservableObject {
 
         do {
             let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
-            async let listTask = repository.loadChats(list: mainListKind, limit: 80)
-            async let archiveTask = repository.loadArchivedChats(limit: 80)
-
-            let (listChats, archived) = try await (listTask, archiveTask)
+            let listChats = try await repository.loadChats(list: mainListKind, limit: chatListLimit)
             chats = mergeChatsPreservingState(
                 sortChats(listChats),
                 previousById: previousById,
                 typingByChat: typingByChat
             )
-            archivedChats = sortChats(archived)
-            archiveSummary = Self.makeArchiveSummary(from: archivedChats)
             status = ""
             scheduleChatAvatarRefresh()
-            await reloadChatFolders()
+            scheduleArchiveSummaryRefresh()
         } catch {
             if chats.isEmpty {
                 status = error.localizedDescription
             }
         }
+    }
+
+    func refreshArchivedChatsIfNeeded() async {
+        guard !archiveFullyLoaded else { return }
+        guard let repository, authState == .ready else { return }
+        do {
+            let archived = try await repository.loadArchivedChats(limit: chatListLimit)
+            archivedChats = sortChats(archived)
+            archiveSummary = Self.makeArchiveSummary(from: archivedChats)
+            archiveFullyLoaded = true
+            scheduleChatAvatarRefresh()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func scheduleArchiveSummaryRefresh() {
+        archiveSummaryTask?.cancel()
+        archiveSummaryTask = Task { @MainActor [weak self] in
+            guard let self, let repository = self.repository else { return }
+            guard !Task.isCancelled else { return }
+            do {
+                let archived = try await repository.loadArchivedChats(limit: self.archiveSummaryLimit)
+                guard !Task.isCancelled else { return }
+                self.archivedChats = sortChats(archived)
+                self.archiveSummary = Self.makeArchiveSummary(from: archivedChats)
+                self.archiveFullyLoaded = archived.count < self.archiveSummaryLimit
+            } catch {
+                // Archive preview is optional; keep the main list responsive.
+            }
+        }
+    }
+
+    private func scheduleDebouncedChatListRefresh() {
+        chatListRefreshTask?.cancel()
+        chatListRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshChatsPreservingFolder()
+        }
+    }
+
+    private func scheduleChatPatches(for chatIds: Set<Int64>) {
+        guard !chatIds.isEmpty else { return }
+        pendingChatPatchIds.formUnion(chatIds)
+        chatPatchTask?.cancel()
+        chatPatchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, !Task.isCancelled else { return }
+            let ids = self.pendingChatPatchIds
+            self.pendingChatPatchIds.removeAll()
+            await self.patchChats(ids: ids)
+        }
+    }
+
+    private func patchChats(ids: Set<Int64>) async {
+        guard let repository, authState == .ready else { return }
+        let listKind = mainListKind
+        var touchedMain = false
+        var touchedArchive = false
+
+        await withTaskGroup(of: (Int64, TgChat?, TgChat?).self) { group in
+            for chatId in ids {
+                group.addTask {
+                    async let mainTask = repository.loadChatPreview(chatId: chatId, listKind: listKind)
+                    async let archiveTask = repository.loadChatPreview(chatId: chatId, listKind: .archive)
+                    let main = try? await mainTask
+                    let archive = try? await archiveTask
+                    return (chatId, main, archive)
+                }
+            }
+            for await (chatId, main, archive) in group {
+                if let main, let index = chats.firstIndex(where: { $0.id == chatId }) {
+                    chats[index] = mergePatchedChat(main, previous: chats[index])
+                    touchedMain = true
+                }
+                if let archive, let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
+                    archivedChats[index] = mergePatchedChat(archive, previous: archivedChats[index])
+                    touchedArchive = true
+                }
+            }
+        }
+
+        if touchedMain {
+            chats = sortChats(chats)
+        }
+        if touchedArchive {
+            archivedChats = sortChats(archivedChats)
+            archiveSummary = Self.makeArchiveSummary(from: archivedChats)
+        }
+
+        for chatId in ids {
+            await refreshChatSendPermissions(chatId: chatId)
+            await patchDeletedChatPreview(chatId: chatId)
+            updateOutgoingReadReceipts(for: chatId)
+            if visibleChatId == chatId {
+                await markChatRead(chatId)
+            }
+        }
+    }
+
+    private func mergePatchedChat(_ chat: TgChat, previous: TgChat?) -> TgChat {
+        var updated = chat
+        if (updated.avatarPath?.isEmpty ?? true),
+           let previousPath = previous?.avatarPath,
+           !previousPath.isEmpty {
+            updated.avatarPath = previousPath
+        }
+        updated.typingText = previous?.typingText ?? chats.first(where: { $0.id == chat.id })?.typingText
+        if updated.peerPremiumBadgePath == nil {
+            updated.peerPremiumBadgePath = previous?.peerPremiumBadgePath
+        }
+        if !updated.peerIsPremium {
+            updated.peerIsPremium = previous?.peerIsPremium ?? false
+        }
+        return updated
     }
 
     func reloadChatFolders(force: Bool = false) async {
@@ -1154,6 +1288,7 @@ final class AppViewModel: ObservableObject {
     func selectChatFolder(_ folderId: Int32?) async {
         guard selectedChatFolderId != folderId else { return }
         selectedChatFolderId = folderId
+        archiveFullyLoaded = false
         chats = []
         await refreshChats()
     }
@@ -1618,19 +1753,13 @@ final class AppViewModel: ObservableObject {
 
         repository.onChatsChanged = { [weak self] in
             Task { @MainActor in
-                await self?.refreshChatsPreservingFolder()
+                self?.scheduleDebouncedChatListRefresh()
             }
         }
 
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
-                await self?.refreshChats()
-                await self?.refreshChatSendPermissions(chatId: chatId)
-                await self?.patchDeletedChatPreview(chatId: chatId)
-                self?.updateOutgoingReadReceipts(for: chatId)
-                if self?.visibleChatId == chatId {
-                    await self?.markChatRead(chatId)
-                }
+                self?.scheduleChatPatches(for: [chatId])
             }
         }
 
@@ -1722,9 +1851,11 @@ final class AppViewModel: ObservableObject {
                     chats = sortChats(cached)
                 }
             }
+            async let foldersTask: Void = reloadChatFolders(force: true)
+            async let chatsTask: Void = refreshChats()
+            await foldersTask
+            await chatsTask
             await refreshMe()
-            await reloadChatFolders(force: true)
-            await refreshChats()
         case .waitPhone, .waitCode, .waitPassword:
             phase = .login
             status = ""
@@ -1744,7 +1875,9 @@ final class AppViewModel: ObservableObject {
                 )
             }
             if phase == .main {
-                await refreshChats()
+                if chats.isEmpty {
+                    await refreshChats()
+                }
                 incomingNotificationsAllowed = true
                 await configurePushAndBackground()
                 await prepareContactsOnLaunch()

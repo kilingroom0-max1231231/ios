@@ -107,12 +107,14 @@ final class TelegramRepository {
 
     func loadChats(list: TgChatListKind = .main, limit: Int = 80) async throws -> [TgChat] {
         let remote = try await client.fetchChats(list: list, limit: limit)
-        let withAvatars = try await client.enrichChatsWithAvatarPaths(remote)
-        let enriched = try await client.enrichChatsWithPremiumBadges(withAvatars)
         if list == .main {
-            try? chatStore.write(chats: enriched)
+            try? chatStore.write(chats: remote)
         }
-        return enriched
+        return remote
+    }
+
+    func loadChatPreview(chatId: Int64, listKind: TgChatListKind) async throws -> TgChat? {
+        try await client.fetchChat(chatId: chatId, listKind: listKind)
     }
 
     func loadArchivedChats(limit: Int = 80) async throws -> [TgChat] {

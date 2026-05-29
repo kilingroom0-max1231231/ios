@@ -9,6 +9,7 @@ protocol TelegramClientProtocol {
     func submitPassword(_ password: String) async throws
 
     func fetchChats(list: TgChatListKind, limit: Int) async throws -> [TgChat]
+    func fetchChat(chatId: Int64, listKind: TgChatListKind) async throws -> TgChat?
     func fetchChatFolders(forceRefresh: Bool) async throws -> [TgChatFolder]
     func fetchChatFolderIncludedChatIds(folderId: Int32) async throws -> [Int64]
     func renameChatFolder(folderId: Int32, title: String) async throws
