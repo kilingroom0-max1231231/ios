@@ -202,7 +202,7 @@ struct ChatDetailView: View {
         let rows = chatRows(from: grouped)
         let replyPreviews = replyPreviewMap(from: vm.messages)
 
-        ScrollViewReader { proxy in
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { row in
@@ -223,8 +223,8 @@ struct ChatDetailView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 2)
-        }
-        .scrollDismissesKeyboard(.interactively)
+            }
+            .scrollDismissesKeyboard(.interactively)
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
                     .onChanged { value in
