@@ -11,23 +11,71 @@ enum AppText {
 
     static func typingStatus(_ raw: String?) -> String? {
         guard let raw else { return nil }
-        switch raw {
-        case "typing...":
+        if let action = typingActionPhrase(raw) {
+            return action
+        }
+        return raw
+    }
+
+    /// Group/supergroup: "Иван печатает…", "Иван и Петр печатают…", "4 печатают…"
+    static func groupTypingStatus(names: [String], actionKey: String) -> String? {
+        let verb = typingActionPhrase(actionKey) ?? tr("печатает…", "typing…")
+        let verbMany = typingActionPhraseMany(actionKey) ?? tr("печатают…", "are typing…")
+        let cleaned = names
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        switch cleaned.count {
+        case 0:
+            return verb
+        case 1:
+            return "\(cleaned[0]) \(verb)"
+        case 2:
+            return tr("\(cleaned[0]) и \(cleaned[1]) \(verbMany)", "\(cleaned[0]) and \(cleaned[1]) \(verbMany)")
+        default:
+            return tr("\(cleaned.count) \(verbMany)", "\(cleaned.count) \(verbMany)")
+        }
+    }
+
+    private static func typingActionPhrase(_ key: String) -> String? {
+        switch key {
+        case "typing", "typing...":
             return tr("печатает…", "typing…")
-        case "recording voice...":
+        case "recording_voice", "recording voice...":
             return tr("записывает голосовое…", "recording voice…")
-        case "recording video...":
+        case "recording_video", "recording video...":
             return tr("записывает видео…", "recording video…")
-        case "uploading photo...":
+        case "uploading_photo", "uploading photo...":
             return tr("отправляет фото…", "sending photo…")
-        case "uploading video...":
+        case "uploading_video", "uploading video...":
             return tr("отправляет видео…", "sending video…")
-        case "uploading file...":
+        case "uploading_file", "uploading file...":
             return tr("отправляет файл…", "sending file…")
-        case "choosing sticker...":
+        case "choosing_sticker", "choosing sticker...":
             return tr("выбирает стикер…", "choosing sticker…")
         default:
-            return raw
+            return nil
+        }
+    }
+
+    private static func typingActionPhraseMany(_ key: String) -> String? {
+        switch key {
+        case "typing", "typing...":
+            return tr("печатают…", "are typing…")
+        case "recording_voice", "recording voice...":
+            return tr("записывают голосовое…", "are recording voice…")
+        case "recording_video", "recording video...":
+            return tr("записывают видео…", "are recording video…")
+        case "uploading_photo", "uploading photo...":
+            return tr("отправляют фото…", "are sending photos…")
+        case "uploading_video", "uploading video...":
+            return tr("отправляют видео…", "are sending videos…")
+        case "uploading_file", "uploading file...":
+            return tr("отправляют файл…", "are sending files…")
+        case "choosing_sticker", "choosing sticker...":
+            return tr("выбирают стикер…", "are choosing stickers…")
+        default:
+            return nil
         }
     }
 

@@ -52,10 +52,24 @@ final class AppViewModel: ObservableObject {
     @Published var peekChatId: Int64?
     @Published var peekMessages: [TgMessage] = []
     @Published var isPeekLoading = false
+    @Published var userProfileDetail: UserProfileDetail?
+    @Published var userProfileStories: [TgStoryItem] = []
+    @Published var userProfileGifts: [TgGiftItem] = []
+    @Published var isUserProfileLoading = false
+    @Published var isUserProfileExtrasLoading = false
 
     private var repository: TelegramRepository?
+    private var loadedStoriesForUserId: Int64?
+    private var loadedGiftsForUserId: Int64?
     private var mediaDownloadsInProgress: Set<Int64> = []
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
+    private var typingUserClearTasks: [String: Task<Void, Never>] = [:]
+    private var activeTypersByChat: [Int64: [Int64: TypingParticipant]] = [:]
+
+    private struct TypingParticipant: Equatable {
+        var name: String
+        var actionKey: String
+    }
     private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
     private let credentials = ApiCredentialsStore()
@@ -280,10 +294,36 @@ final class AppViewModel: ObservableObject {
 
     func selectChat(_ chatId: Int64) async {
         selectedChatId = chatId
+        await refreshChatSendPermissions(chatId: chatId)
         await loadMessagesFromCache(chatId: chatId)
         await refreshMessages()
         if visibleChatId == chatId {
             await markChatRead(chatId)
+        }
+    }
+
+    func refreshChatSendPermissions(chatId: Int64) async {
+        guard let repository else { return }
+        do {
+            let permissions = try await repository.refreshChatSendPermissions(chatId: chatId)
+            updateLocalChat(chatId) { chat in
+                chat.canSendMessages = permissions.canSend
+                chat.sendRestrictionText = permissions.reason
+            }
+        } catch {
+            // Keep previous permissions on transient errors.
+        }
+    }
+
+    func pinMessage(_ message: TgMessage) async {
+        guard let repository, let chatId = selectedChatId else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.pinMessage(chatId: chatId, messageId: message.id)
+            status = AppText.tr("Сообщение закреплено", "Message pinned")
+        } catch {
+            status = error.localizedDescription
         }
     }
 
@@ -652,6 +692,10 @@ final class AppViewModel: ObservableObject {
                         ? AppText.tr("Заблокирован вами", "Blocked by you")
                         : profile.statusText,
                     userId: profile.userId,
+                    isPremium: profile.isPremium,
+                    premiumBadgePath: profile.premiumBadgePath,
+                    hasActiveStories: profile.hasActiveStories,
+                    giftCount: profile.giftCount,
                     isBlockedByMe: blocked,
                     isBlockedByPeer: profile.isBlockedByPeer
                 )
@@ -895,6 +939,7 @@ final class AppViewModel: ObservableObject {
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
                 await self?.refreshChats()
+                await self?.refreshChatSendPermissions(chatId: chatId)
                 await self?.patchDeletedChatPreview(chatId: chatId)
                 self?.updateOutgoingReadReceipts(for: chatId)
                 if self?.visibleChatId == chatId {
@@ -903,9 +948,9 @@ final class AppViewModel: ObservableObject {
             }
         }
 
-        repository.onTypingChanged = { [weak self] chatId, text in
+        repository.onTypingChanged = { [weak self] update in
             Task { @MainActor in
-                self?.applyTyping(text, for: chatId)
+                self?.applyTypingUpdate(update)
             }
         }
     }
@@ -992,6 +1037,61 @@ final class AppViewModel: ObservableObject {
         return messages.first(where: { $0.id == id })?.text
     }
 
+    func loadUserProfile(userId: Int64) async {
+        guard let repository else { return }
+        isUserProfileLoading = true
+        defer { isUserProfileLoading = false }
+
+        do {
+            userProfileDetail = try await repository.loadUserProfileDetail(userId: userId)
+            loadedStoriesForUserId = nil
+            loadedGiftsForUserId = nil
+            userProfileStories = []
+            userProfileGifts = []
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func loadUserProfileStories(userId: Int64) async {
+        guard let repository,
+              let profile = userProfileDetail,
+              profile.userId == userId,
+              loadedStoriesForUserId != userId else { return }
+
+        isUserProfileExtrasLoading = true
+        defer { isUserProfileExtrasLoading = false }
+
+        do {
+            userProfileStories = try await repository.loadUserStories(chatId: profile.privateChatId)
+            loadedStoriesForUserId = userId
+        } catch {
+            userProfileStories = []
+        }
+    }
+
+    func loadUserProfileGifts(userId: Int64) async {
+        guard let repository,
+              let profile = userProfileDetail,
+              profile.userId == userId,
+              loadedGiftsForUserId != userId else { return }
+
+        isUserProfileExtrasLoading = true
+        defer { isUserProfileExtrasLoading = false }
+
+        do {
+            userProfileGifts = try await repository.loadUserGifts(userId: userId)
+            loadedGiftsForUserId = userId
+        } catch {
+            userProfileGifts = []
+        }
+    }
+
+    func openMyProfile() async {
+        guard let me else { return }
+        await loadUserProfile(userId: me.id)
+    }
+
     func loadProfile(chatId: Int64) async {
         guard let repository else { return }
         profileLoadTask?.cancel()
@@ -1038,25 +1138,124 @@ final class AppViewModel: ObservableObject {
         await loadProfile(chatId: chatId)
     }
 
-    private func applyTyping(_ text: String?, for chatId: Int64) {
-        typingClearTasks[chatId]?.cancel()
-        updateLocalChat(chatId) { chat in
-            chat.typingText = text
+    private func applyTypingUpdate(_ update: ChatTypingUpdate) {
+        let chatId = update.chatId
+
+        if let userId = update.userId, userId == me?.id {
+            return
         }
 
-        guard text != nil else { return }
+        if let userId = update.userId {
+            let taskKey = "\(chatId)-\(userId)"
+            typingUserClearTasks[taskKey]?.cancel()
 
-        typingClearTasks[chatId] = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 5_500_000_000)
-            } catch {
-                return
+            if let actionKey = update.actionKey {
+                var chatTypers = activeTypersByChat[chatId] ?? [:]
+                let existingName = chatTypers[userId]?.name
+                chatTypers[userId] = TypingParticipant(name: existingName ?? "…", actionKey: actionKey)
+                activeTypersByChat[chatId] = chatTypers
+                publishTypingSummary(for: chatId)
+
+                if existingName == nil, let repository {
+                    Task { [weak self] in
+                        guard let self else { return }
+                        let name = (try? await repository.fetchUserDisplayName(userId: userId)) ?? "User"
+                        await MainActor.run {
+                            guard var typers = self.activeTypersByChat[chatId],
+                                  var participant = typers[userId] else { return }
+                            participant.name = name
+                            typers[userId] = participant
+                            self.activeTypersByChat[chatId] = typers
+                            self.publishTypingSummary(for: chatId)
+                        }
+                    }
+                }
+
+                typingUserClearTasks[taskKey] = Task { [weak self] in
+                    do {
+                        try await Task.sleep(nanoseconds: 5_500_000_000)
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.removeTyper(userId: userId, chatId: chatId)
+                        self?.typingUserClearTasks[taskKey] = nil
+                    }
+                }
+            } else {
+                removeTyper(userId: userId, chatId: chatId)
+                typingUserClearTasks[taskKey] = nil
             }
-            guard !Task.isCancelled else { return }
-            self?.updateLocalChat(chatId) { chat in
+            return
+        }
+
+        // Private chat / action without user id.
+        typingClearTasks[chatId]?.cancel()
+        if let actionKey = update.actionKey {
+            updateLocalChat(chatId) { chat in
+                chat.typingText = AppText.typingStatus(actionKey)
+            }
+            typingClearTasks[chatId] = Task { [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: 5_500_000_000)
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self?.updateLocalChat(chatId) { chat in
+                    chat.typingText = nil
+                }
+                self?.typingClearTasks[chatId] = nil
+            }
+        } else {
+            activeTypersByChat[chatId] = nil
+            updateLocalChat(chatId) { chat in
                 chat.typingText = nil
             }
-            self?.typingClearTasks[chatId] = nil
+        }
+    }
+
+    private func removeTyper(userId: Int64, chatId: Int64) {
+        guard var chatTypers = activeTypersByChat[chatId] else { return }
+        chatTypers.removeValue(forKey: userId)
+        if chatTypers.isEmpty {
+            activeTypersByChat[chatId] = nil
+            updateLocalChat(chatId) { chat in
+                chat.typingText = nil
+            }
+        } else {
+            activeTypersByChat[chatId] = chatTypers
+            publishTypingSummary(for: chatId)
+        }
+    }
+
+    private func publishTypingSummary(for chatId: Int64) {
+        guard let typers = activeTypersByChat[chatId], !typers.isEmpty else {
+            updateLocalChat(chatId) { chat in
+                chat.typingText = nil
+            }
+            return
+        }
+
+        let chatKind = chats.first(where: { $0.id == chatId })?.kind ?? .unknown
+        let actionKey = typers.values.first?.actionKey ?? "typing"
+        let names = typers.values.map(\.name).sorted()
+
+        let summary: String?
+        switch chatKind {
+        case .basicGroup, .supergroup, .channel:
+            summary = AppText.groupTypingStatus(names: names, actionKey: actionKey)
+        case .private, .savedMessages, .unknown:
+            if let only = names.first {
+                summary = AppText.groupTypingStatus(names: [only], actionKey: actionKey)
+            } else {
+                summary = AppText.typingStatus(actionKey)
+            }
+        }
+
+        updateLocalChat(chatId) { chat in
+            chat.typingText = summary
         }
     }
 

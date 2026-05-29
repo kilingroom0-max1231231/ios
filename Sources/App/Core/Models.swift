@@ -43,6 +43,9 @@ struct TgChat: Identifiable, Equatable, Codable {
     var draftText: String?
     var typingText: String?
     var privateUserId: Int64?
+    var peerIsPremium: Bool
+    var peerPremiumBadgePath: String?
+    var peerUsername: String?
     var isBlockedByMe: Bool
     var isBlockedByPeer: Bool
     var lastReadOutboxMessageId: Int64
@@ -70,6 +73,9 @@ struct TgChat: Identifiable, Equatable, Codable {
         draftText: String? = nil,
         typingText: String? = nil,
         privateUserId: Int64? = nil,
+        peerIsPremium: Bool = false,
+        peerPremiumBadgePath: String? = nil,
+        peerUsername: String? = nil,
         isBlockedByMe: Bool = false,
         isBlockedByPeer: Bool = false,
         lastReadOutboxMessageId: Int64 = 0
@@ -96,6 +102,9 @@ struct TgChat: Identifiable, Equatable, Codable {
         self.draftText = draftText
         self.typingText = typingText
         self.privateUserId = privateUserId
+        self.peerIsPremium = peerIsPremium
+        self.peerPremiumBadgePath = peerPremiumBadgePath
+        self.peerUsername = peerUsername
         self.isBlockedByMe = isBlockedByMe
         self.isBlockedByPeer = isBlockedByPeer
         self.lastReadOutboxMessageId = lastReadOutboxMessageId
@@ -220,6 +229,8 @@ struct TgUser: Identifiable, Equatable {
     let username: String?
     let phoneNumber: String?
     let avatarPath: String?
+    let isPremium: Bool
+    let premiumBadgePath: String?
 
     var displayName: String {
         let name = [firstName, lastName]
@@ -267,6 +278,10 @@ struct ChatProfile: Equatable {
     let membersCount: Int?
     let statusText: String?
     let userId: Int64?
+    let isPremium: Bool
+    let premiumBadgePath: String?
+    let hasActiveStories: Bool
+    let giftCount: Int
     let isBlockedByMe: Bool
     let isBlockedByPeer: Bool
 
@@ -280,6 +295,10 @@ struct ChatProfile: Equatable {
         membersCount: Int?,
         statusText: String?,
         userId: Int64? = nil,
+        isPremium: Bool = false,
+        premiumBadgePath: String? = nil,
+        hasActiveStories: Bool = false,
+        giftCount: Int = 0,
         isBlockedByMe: Bool = false,
         isBlockedByPeer: Bool = false
     ) {
@@ -292,18 +311,63 @@ struct ChatProfile: Equatable {
         self.membersCount = membersCount
         self.statusText = statusText
         self.userId = userId
+        self.isPremium = isPremium
+        self.premiumBadgePath = premiumBadgePath
+        self.hasActiveStories = hasActiveStories
+        self.giftCount = giftCount
         self.isBlockedByMe = isBlockedByMe
         self.isBlockedByPeer = isBlockedByPeer
     }
 }
 
+struct UserProfileDetail: Equatable, Identifiable {
+    var id: Int64 { userId }
+    let userId: Int64
+    let privateChatId: Int64
+    let displayName: String
+    let username: String?
+    let bio: String?
+    let avatarPath: String?
+    let statusText: String?
+    let isOnline: Bool
+    let isPremium: Bool
+    let premiumBadgePath: String?
+    let hasActiveStories: Bool
+    let giftCount: Int
+    let isBlockedByMe: Bool
+    let isBlockedByPeer: Bool
+    let isSelf: Bool
+}
+
+struct TgStoryItem: Identifiable, Equatable {
+    let id: Int64
+    let chatId: Int64
+    let date: Date
+    let caption: String
+    let previewPath: String?
+    let mediaPath: String?
+    let isVideo: Bool
+    let isViewed: Bool
+}
+
+struct TgGiftItem: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String?
+    let stickerPath: String?
+}
+
 struct ChatMember: Identifiable, Equatable {
     let id: Int64
     let title: String
+    let username: String?
     let avatarPath: String?
     let statusText: String?
     let isOnline: Bool?
+    let isPremium: Bool
+    let premiumBadgePath: String?
     let role: String?
+    let isUser: Bool
 }
 
 enum ChatMediaCategory: String, CaseIterable, Identifiable {
@@ -350,5 +414,12 @@ enum TelegramEvent {
     case messagesDeleted(chatId: Int64, messageIds: [Int64])
     case chatsChanged
     case chatChanged(Int64)
-    case chatTypingChanged(chatId: Int64, text: String?)
+    case chatTypingChanged(chatId: Int64, userId: Int64?, actionKey: String?)
+}
+
+struct ChatTypingUpdate: Equatable {
+    let chatId: Int64
+    let userId: Int64?
+    /// `nil` = cancel typing for this user (or entire chat when userId is nil).
+    let actionKey: String?
 }

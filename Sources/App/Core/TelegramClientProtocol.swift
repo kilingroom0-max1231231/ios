@@ -41,4 +41,10 @@ protocol TelegramClientProtocol {
     func fetchUserPrivacySettings() async throws -> [UserPrivacySettingValue]
     func setUserPrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws
     func searchMessagesGlobally(query: String, limit: Int) async throws -> [GlobalSearchMessageHit]
+    func fetchUserDisplayName(userId: Int64) async throws -> String
+    func chatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?)
+    func pinChatMessage(chatId: Int64, messageId: Int64) async throws
+    func fetchUserProfileDetail(userId: Int64) async throws -> UserProfileDetail
+    func fetchActiveStories(chatId: Int64) async throws -> [TgStoryItem]
+    func fetchReceivedGifts(userId: Int64, limit: Int) async throws -> [TgGiftItem]
 }

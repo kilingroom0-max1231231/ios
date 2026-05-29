@@ -11,7 +11,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private var pendingResponses: [String: CheckedContinuation<[String: Any], Error>] = [:]
     private var authorizationWaiters: [AuthStateWaiter] = []
     private var cachedMyUserId: Int64?
-    private var userInfoCache: [Int64: (name: String, avatarPath: String?)] = [:]
+    private var userInfoCache: [Int64: (name: String, avatarPath: String?, isPremium: Bool, premiumBadgePath: String?)] = [:]
+    private var customEmojiPathCache: [Int64: String] = [:]
 
     init() throws {
         self.bridge = try TDLibBridge()
@@ -277,23 +278,22 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         switch typeName {
         case "chatTypePrivate":
             if let userId = int64Value(type["user_id"]) {
-                let user = try await sendRequest([
-                    "@type": "getUser",
-                    "user_id": userId
-                ])
-                let username = (user["usernames"] as? [String: Any]).flatMap { $0["active_usernames"] as? [String] }?.first
-                    ?? (user["username"] as? String)
+                let meta = try await loadUserMeta(userId: userId)
                 let blockState = try await resolvePrivateUserBlockState(userId: userId)
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
                     kind: .private,
                     avatarPath: avatarPath,
-                    username: username,
-                    description: nil,
+                    username: meta.username,
+                    description: meta.bio,
                     membersCount: nil,
                     statusText: blockState.statusText ?? statusInfo.text,
                     userId: userId,
+                    isPremium: meta.isPremium,
+                    premiumBadgePath: meta.premiumBadgePath,
+                    hasActiveStories: meta.hasActiveStories,
+                    giftCount: meta.giftCount,
                     isBlockedByMe: blockState.blockedByMe,
                     isBlockedByPeer: blockState.blockedByPeer
                 )
@@ -414,10 +414,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                         ChatMember(
                             id: senderChatId,
                             title: (senderChat["title"] as? String) ?? "Чат",
+                            username: nil,
                             avatarPath: try await resolveChatAvatarPath(senderChat),
                             statusText: nil,
                             isOnline: nil,
-                            role: memberRole(member["status"] as? [String: Any])
+                            isPremium: false,
+                            premiumBadgePath: nil,
+                            role: memberRole(member["status"] as? [String: Any]),
+                            isUser: false
                         )
                     )
                 }
@@ -817,13 +821,17 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let phoneNumber = user["phone_number"] as? String
         let avatarPath = try await resolveUserAvatarPath(user)
 
+        let isPremium = (user["is_premium"] as? Bool) ?? false
         cachedMyUserId = id
+        let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
         userInfoCache[id] = (
             name: [firstName, lastName]
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " "),
-            avatarPath: avatarPath
+            avatarPath: avatarPath,
+            isPremium: isPremium,
+            premiumBadgePath: premiumBadgePath
         )
 
         return TgUser(
@@ -832,8 +840,170 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             lastName: lastName,
             username: username,
             phoneNumber: phoneNumber,
-            avatarPath: avatarPath
+            avatarPath: avatarPath,
+            isPremium: isPremium,
+            premiumBadgePath: premiumBadgePath
         )
+    }
+
+    func fetchUserProfileDetail(userId: Int64) async throws -> UserProfileDetail {
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        let meta = try await loadUserMeta(userId: userId)
+        let blockState = try await resolvePrivateUserBlockState(userId: userId)
+        let status = (user["status"] as? [String: Any]).map(mapUserStatus)
+
+        let privateChat = try await sendRequest([
+            "@type": "createPrivateChat",
+            "user_id": userId,
+            "force": false
+        ])
+        let privateChatId = int64Value(privateChat["id"]) ?? userId
+
+        let firstName = user["first_name"] as? String ?? ""
+        let lastName = user["last_name"] as? String ?? ""
+        let displayName = [firstName, lastName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        return UserProfileDetail(
+            userId: userId,
+            privateChatId: privateChatId,
+            displayName: displayName.isEmpty ? (meta.username.map { "@\($0)" } ?? "User") : displayName,
+            username: meta.username,
+            bio: meta.bio,
+            avatarPath: try await resolveUserAvatarPath(user),
+            statusText: blockState.statusText ?? status?.text,
+            isOnline: status?.isOnline ?? false,
+            isPremium: meta.isPremium,
+            premiumBadgePath: meta.premiumBadgePath,
+            hasActiveStories: meta.hasActiveStories,
+            giftCount: meta.giftCount,
+            isBlockedByMe: blockState.blockedByMe,
+            isBlockedByPeer: blockState.blockedByPeer,
+            isSelf: userId == cachedMyUserId
+        )
+    }
+
+    func fetchActiveStories(chatId: Int64) async throws -> [TgStoryItem] {
+        let response = try await sendRequest([
+            "@type": "getChatActiveStories",
+            "chat_id": chatId
+        ])
+        let maxReadStoryId = int64Value(response["max_read_story_id"]) ?? 0
+        let stories = response["stories"] as? [[String: Any]] ?? []
+        var items: [TgStoryItem] = []
+        for story in stories {
+            guard let storyId = int64Value(story["id"]) else { continue }
+            let dateUnix = (story["date"] as? Double) ?? Date().timeIntervalSince1970
+            let isViewed = maxReadStoryId > 0 && storyId <= maxReadStoryId
+            var previewPath: String?
+            var mediaPath: String?
+            var isVideo = false
+            var caption = ""
+
+            if let full = try? await sendRequest([
+                "@type": "getStory",
+                "story_id": storyId,
+                "only_active": true
+            ]) {
+                caption = formattedText(from: full["caption"] as? [String: Any])
+                if let content = full["content"] as? [String: Any],
+                   let contentType = content["@type"] as? String {
+                    switch contentType {
+                    case "storyContentPhoto":
+                        if let photo = content["photo"] as? [String: Any],
+                           let fileId = fileIdFromPhotoSource(photo) {
+                            previewPath = try? await downloadFile(fileId: fileId)
+                            mediaPath = previewPath
+                        }
+                    case "storyContentVideo":
+                        isVideo = true
+                        if let video = content["video"] as? [String: Any] {
+                            if let videoFile = video["video"] as? [String: Any],
+                               let fileId = int64Value(videoFile["id"]) {
+                                mediaPath = try? await downloadFile(fileId: fileId)
+                            } else if let fileId = int64Value(video["id"]) {
+                                mediaPath = try? await downloadFile(fileId: fileId)
+                            }
+                            if let thumbnail = video["thumbnail"] as? [String: Any],
+                               let fileId = fileIdFromPhotoSource(thumbnail) {
+                                previewPath = try? await downloadFile(fileId: fileId)
+                            } else if let preview = video["preview"] as? [String: Any],
+                                      let fileId = fileIdFromPhotoSource(preview) {
+                                previewPath = try? await downloadFile(fileId: fileId)
+                            }
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+
+            items.append(
+                TgStoryItem(
+                    id: storyId,
+                    chatId: chatId,
+                    date: Date(timeIntervalSince1970: dateUnix),
+                    caption: caption,
+                    previewPath: previewPath,
+                    mediaPath: mediaPath,
+                    isVideo: isVideo,
+                    isViewed: isViewed
+                )
+            )
+        }
+        return items.sorted { $0.date < $1.date }
+    }
+
+    func fetchReceivedGifts(userId: Int64, limit: Int = 50) async throws -> [TgGiftItem] {
+        let response = try await sendRequest([
+            "@type": "getReceivedGifts",
+            "business_connection_id": "",
+            "owner_id": [
+                "@type": "messageSenderUser",
+                "user_id": userId
+            ],
+            "collection_id": 0,
+            "exclude_unsaved": false,
+            "exclude_saved": false,
+            "exclude_unlimited": false,
+            "exclude_upgradable": false,
+            "exclude_non_upgradable": false,
+            "exclude_upgraded": false,
+            "exclude_without_colors": false,
+            "exclude_hosted": false,
+            "sort_by_price": false,
+            "offset": "",
+            "limit": limit
+        ])
+
+        let gifts = response["gifts"] as? [[String: Any]] ?? []
+        var items: [TgGiftItem] = []
+        for (index, entry) in gifts.enumerated() {
+            guard let gift = entry["gift"] as? [String: Any] else { continue }
+            let giftId = (gift["id"] as? String) ?? "\(index)"
+            let title = (gift["title"] as? String) ?? AppText.tr("Подарок", "Gift")
+            let senderName = entry["sender_name"] as? String
+            var stickerPath: String?
+            if let sticker = gift["sticker"] as? [String: Any],
+               let stickerFile = sticker["sticker"] as? [String: Any],
+               let fileId = int64Value(stickerFile["id"]) {
+                stickerPath = try? await downloadFile(fileId: fileId)
+            }
+            items.append(
+                TgGiftItem(
+                    id: giftId,
+                    title: title,
+                    subtitle: senderName,
+                    stickerPath: stickerPath
+                )
+            )
+        }
+        return items
     }
 
     private func startReceiveLoopIfNeeded() {
@@ -1018,7 +1188,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         if (type == "updateUserChatAction" || type == "updateChatAction"),
            let chatId = int64Value(obj["chat_id"]) {
-            eventHandler?(.chatTypingChanged(chatId: chatId, text: typingText(from: obj["action"] as? [String: Any])))
+            let userId = int64Value(obj["user_id"])
+            let actionKey = typingActionKey(from: obj["action"] as? [String: Any])
+            eventHandler?(.chatTypingChanged(chatId: chatId, userId: userId, actionKey: actionKey))
         }
     }
 
@@ -1115,7 +1287,13 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             let username = (user["username"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
             let displayName = name.isEmpty ? (username ?? "User") : name
             let avatarPath = try await resolveUserAvatarPath(user)
-            userInfoCache[userId] = (name: displayName, avatarPath: avatarPath)
+            let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+            userInfoCache[userId] = (
+                name: displayName,
+                avatarPath: avatarPath,
+                isPremium: (user["is_premium"] as? Bool) ?? false,
+                premiumBadgePath: premiumBadgePath
+            )
         }
 
         return messages.map { message in
@@ -1304,11 +1482,105 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
+    private struct UserMeta {
+        let username: String?
+        let isPremium: Bool
+        let premiumBadgePath: String?
+        let hasActiveStories: Bool
+        let giftCount: Int
+        let bio: String?
+    }
+
+    private func loadUserMeta(userId: Int64) async throws -> UserMeta {
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        let full = try? await sendRequest([
+            "@type": "getUserFullInfo",
+            "user_id": userId
+        ])
+        let giftCount = (full?["gift_count"] as? Int) ?? Int(int64Value(full?["gift_count"]) ?? 0)
+        let isPremium = (user["is_premium"] as? Bool) ?? false
+        let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+        return UserMeta(
+            username: activeUsername(from: user),
+            isPremium: isPremium,
+            premiumBadgePath: premiumBadgePath,
+            hasActiveStories: (user["has_active_stories"] as? Bool) ?? false,
+            giftCount: max(0, giftCount),
+            bio: formattedText(from: full?["bio"] as? [String: Any])
+        )
+    }
+
+    private func resolvePremiumBadgeImagePath(user: [String: Any]) async -> String? {
+        guard (user["is_premium"] as? Bool) == true else { return nil }
+        guard let customEmojiId = customEmojiId(from: user["emoji_status"] as? [String: Any]) else {
+            return nil
+        }
+        if let cached = customEmojiPathCache[customEmojiId] {
+            return cached
+        }
+        guard let path = try? await fetchCustomEmojiImagePath(customEmojiId: customEmojiId) else {
+            return nil
+        }
+        customEmojiPathCache[customEmojiId] = path
+        return path
+    }
+
+    private func customEmojiId(from emojiStatus: [String: Any]?) -> Int64? {
+        guard let emojiStatus else { return nil }
+        let typeObject = (emojiStatus["type"] as? [String: Any]) ?? emojiStatus
+        guard let typeName = typeObject["@type"] as? String else { return nil }
+        if typeName == "emojiStatusTypeCustomEmoji" {
+            return int64Value(typeObject["custom_emoji_id"])
+        }
+        return nil
+    }
+
+    private func fetchCustomEmojiImagePath(customEmojiId: Int64) async throws -> String? {
+        let response = try await sendRequest([
+            "@type": "getCustomEmojiStickers",
+            "custom_emoji_ids": [customEmojiId]
+        ])
+        let stickers = response["stickers"] as? [[String: Any]] ?? []
+        guard let sticker = stickers.first else { return nil }
+
+        if let stickerFile = sticker["sticker"] as? [String: Any],
+           let fileId = int64Value(stickerFile["id"]) {
+            return try await downloadFile(fileId: fileId)
+        }
+        if let thumbnail = sticker["thumbnail"] as? [String: Any],
+           let fileId = fileIdFromPhotoSource(thumbnail) {
+            return try await downloadFile(fileId: fileId)
+        }
+        return nil
+    }
+
+    private func activeUsername(from user: [String: Any]) -> String? {
+        if let usernames = user["usernames"] as? [String: Any],
+           let active = usernames["active_usernames"] as? [String],
+           let first = active.first,
+           !first.isEmpty {
+            return first
+        }
+        if let username = user["username"] as? String, !username.isEmpty {
+            return username
+        }
+        return nil
+    }
+
+    private func formattedText(from obj: [String: Any]?) -> String {
+        guard let obj else { return "" }
+        return (obj["text"] as? String) ?? ""
+    }
+
     private func chatMemberFromUserId(_ userId: Int64, role: String?) async throws -> ChatMember {
         let user = try await sendRequest([
             "@type": "getUser",
             "user_id": userId
         ])
+        let meta = try await loadUserMeta(userId: userId)
         let firstName = user["first_name"] as? String ?? ""
         let lastName = user["last_name"] as? String ?? ""
         let name = [firstName, lastName]
@@ -1320,10 +1592,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return ChatMember(
             id: userId,
             title: name.isEmpty ? "Пользователь" : name,
+            username: meta.username,
             avatarPath: try await resolveUserAvatarPath(user),
             statusText: status?.text,
             isOnline: status?.isOnline,
-            role: role
+            isPremium: meta.isPremium,
+            premiumBadgePath: meta.premiumBadgePath,
+            role: role,
+            isUser: true
         )
     }
 
@@ -1406,6 +1682,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         var isBlockedByMe = false
         var isBlockedByPeer = false
 
+        var peerIsPremium = false
+        var peerPremiumBadgePath: String?
+        var peerUsername: String?
         if kind == .private,
            let chatType = chat["type"] as? [String: Any],
            let userId = int64Value(chatType["user_id"]) {
@@ -1413,6 +1692,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             let blockState = try await resolvePrivateUserBlockState(userId: userId)
             isBlockedByMe = blockState.blockedByMe
             isBlockedByPeer = blockState.blockedByPeer
+            if let meta = try? await loadUserMeta(userId: userId) {
+                peerIsPremium = meta.isPremium
+                peerPremiumBadgePath = meta.premiumBadgePath
+                peerUsername = meta.username
+            }
         }
 
         if (chat["is_saved_messages"] as? Bool) == true {
@@ -1464,6 +1748,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             draftText: draftText(from: chat["draft_message"] as? [String: Any]),
             typingText: nil,
             privateUserId: privateUserId,
+            peerIsPremium: peerIsPremium,
+            peerPremiumBadgePath: peerPremiumBadgePath,
+            peerUsername: peerUsername,
             isBlockedByMe: isBlockedByMe,
             isBlockedByPeer: isBlockedByPeer,
             lastReadOutboxMessageId: lastReadOutboxMessageId
@@ -1574,28 +1861,74 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ]
     }
 
-    private func typingText(from action: [String: Any]?) -> String? {
+    private func typingActionKey(from action: [String: Any]?) -> String? {
         guard let action, let type = action["@type"] as? String else { return nil }
         switch type {
         case "chatActionCancel":
             return nil
         case "chatActionTyping":
-            return "typing..."
+            return "typing"
         case "chatActionRecordingVoiceNote":
-            return "recording voice..."
+            return "recording_voice"
         case "chatActionRecordingVideo", "chatActionRecordingVideoNote":
-            return "recording video..."
+            return "recording_video"
         case "chatActionUploadingPhoto":
-            return "uploading photo..."
+            return "uploading_photo"
         case "chatActionUploadingVideo", "chatActionUploadingVideoNote":
-            return "uploading video..."
+            return "uploading_video"
         case "chatActionUploadingDocument":
-            return "uploading file..."
+            return "uploading_file"
         case "chatActionChoosingSticker":
-            return "choosing sticker..."
+            return "choosing_sticker"
         default:
             return nil
         }
+    }
+
+    func fetchUserDisplayName(userId: Int64) async throws -> String {
+        if let cached = userInfoCache[userId] {
+            return cached.name
+        }
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        let firstName = user["first_name"] as? String ?? ""
+        let lastName = user["last_name"] as? String ?? ""
+        let name = [firstName, lastName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let username = (user["username"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
+        let displayName = name.isEmpty ? (username ?? "User") : name
+        let avatarPath = try await resolveUserAvatarPath(user)
+        let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
+        userInfoCache[userId] = (
+            name: displayName,
+            avatarPath: avatarPath,
+            isPremium: (user["is_premium"] as? Bool) ?? false,
+            premiumBadgePath: premiumBadgePath
+        )
+        return displayName
+    }
+
+    func chatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
+        let chat = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        let resolved = try await resolveChatSendPermissions(chat)
+        return (resolved.canSend ?? true, resolved.reason)
+    }
+
+    func pinChatMessage(chatId: Int64, messageId: Int64) async throws {
+        _ = try await sendRequest([
+            "@type": "pinChatMessage",
+            "chat_id": chatId,
+            "message_id": messageId,
+            "disable_notification": false,
+            "only_for_self": false
+        ])
     }
 
     private func resolveChatStatusInfo(_ chat: [String: Any]) async throws -> (text: String?, isOnline: Bool?) {
@@ -1652,45 +1985,32 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     private func resolveChatSendPermissions(_ chat: [String: Any]) async throws -> (canSend: Bool?, reason: String?) {
-        // 1) If TDLib provided chat permissions directly (groups), trust it.
+        let isChannel = (try? await resolveChatKind(chat)) == .channel
+
+        // For channels, supergroup.status is the most reliable source for owner/admin posting rights.
+        if isChannel,
+           let selfStatus = try await resolveSupergroupSelfStatus(chat),
+           let access = sendAccessFromMemberStatus(selfStatus, isChannel: true) {
+            return access
+        }
+
+        if let chatId = int64Value(chat["id"]),
+           let memberAccess = try await resolveMyMemberSendAccess(chatId: chatId, chat: chat) {
+            return memberAccess
+        }
+
+        if isChannel {
+            return (false, AppText.tr("Это канал — писать могут только администраторы", "Only admins can post in this channel"))
+        }
+
+        // Groups: TDLib chat.permissions applies to ordinary members.
         if let permissions = chat["permissions"] as? [String: Any] {
             if let canSend = permissions["can_send_messages"] as? Bool {
-                return (canSend, canSend ? nil : "Запрещено отправлять сообщения")
+                return (canSend, canSend ? nil : AppText.tr("Запрещено отправлять сообщения", "Sending messages is not allowed"))
             }
         }
 
-        // 2) Supergroups/channels: if it's a channel, usually нельзя писать (только постить, если админ).
-        if
-            let type = chat["type"] as? [String: Any],
-            let typeName = type["@type"] as? String,
-            typeName == "chatTypeSupergroup",
-            let supergroupId = int64Value(type["supergroup_id"])
-        {
-            let sg = try await sendRequest([
-                "@type": "getSupergroup",
-                "supergroup_id": supergroupId
-            ])
-
-            let isChannel = (sg["is_channel"] as? Bool) ?? false
-            if isChannel {
-                // If admin with posting rights, allow.
-                if
-                    let status = sg["status"] as? [String: Any],
-                    let statusType = status["@type"] as? String,
-                    statusType.contains("Administrator"),
-                    let canPost = status["can_post_messages"] as? Bool,
-                    canPost == true
-                {
-                    return (true, nil)
-                }
-                return (false, "Это канал — отправка сообщений недоступна")
-            }
-
-            // Non-channel supergroup: allow by default unless restricted (we'll refine later).
-            return (true, nil)
-        }
-
-        // 3) Private chats: check block state.
+        // Private chats: check block state.
         if
             let type = chat["type"] as? [String: Any],
             let typeName = type["@type"] as? String,
@@ -1707,6 +2027,108 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         return (true, nil)
+    }
+
+    private func resolveSupergroupSelfStatus(_ chat: [String: Any]) async throws -> [String: Any]? {
+        guard
+            let type = chat["type"] as? [String: Any],
+            (type["@type"] as? String) == "chatTypeSupergroup",
+            let supergroupId = int64Value(type["supergroup_id"])
+        else {
+            return nil
+        }
+
+        let supergroup = try await sendRequest([
+            "@type": "getSupergroup",
+            "supergroup_id": supergroupId
+        ])
+        return supergroup["status"] as? [String: Any]
+    }
+
+    private func administratorRights(from status: [String: Any]) -> [String: Any]? {
+        status["rights"] as? [String: Any]
+    }
+
+    private func canPostInChannel(from status: [String: Any]) -> Bool {
+        if let rights = administratorRights(from: status) {
+            if (rights["can_post_messages"] as? Bool) == true { return true }
+            if (rights["can_manage_chat"] as? Bool) == true { return true }
+        }
+        return (status["can_post_messages"] as? Bool) == true
+    }
+
+    private func canSendMessagesInChat(from status: [String: Any]) -> Bool {
+        if let rights = administratorRights(from: status) {
+            if (rights["can_send_messages"] as? Bool) == true { return true }
+            if (rights["can_manage_chat"] as? Bool) == true { return true }
+            if (rights["can_post_messages"] as? Bool) == true { return true }
+        }
+        return (status["can_send_messages"] as? Bool) == true
+    }
+
+    private func sendAccessFromMemberStatus(
+        _ status: [String: Any],
+        isChannel: Bool
+    ) -> (canSend: Bool?, reason: String?)? {
+        guard let statusType = status["@type"] as? String else { return nil }
+
+        switch statusType {
+        case "chatMemberStatusCreator":
+            return (true, nil)
+        case "chatMemberStatusAdministrator":
+            if isChannel {
+                if canPostInChannel(from: status) || canSendMessagesInChat(from: status) {
+                    return (true, nil)
+                }
+                return (false, AppText.tr("Нет прав на публикацию в канале", "No permission to post in this channel"))
+            }
+            let canSend = canSendMessagesInChat(from: status)
+            return (canSend, canSend ? nil : AppText.tr("Запрещено отправлять сообщения", "Sending messages is not allowed"))
+        case "chatMemberStatusMember":
+            if isChannel {
+                return (false, AppText.tr("Это канал — писать могут только администраторы", "Only admins can post in this channel"))
+            }
+            return (true, nil)
+        case "chatMemberStatusRestricted":
+            let canSend = (status["can_send_messages"] as? Bool) ?? false
+            let canPost = canPostInChannel(from: status)
+            if isChannel, canPost || canSend {
+                return (true, nil)
+            }
+            return (canSend, canSend ? nil : AppText.tr("Запрещено отправлять сообщения", "Sending messages is not allowed"))
+        case "chatMemberStatusLeft", "chatMemberStatusBanned":
+            return (false, AppText.tr("Вы не участник этого чата", "You are not a member of this chat"))
+        default:
+            return nil
+        }
+    }
+
+    private func resolveMyMemberSendAccess(
+        chatId: Int64,
+        chat: [String: Any]
+    ) async throws -> (canSend: Bool?, reason: String?)? {
+        guard let myId = cachedMyUserId else { return nil }
+
+        let member: [String: Any]
+        do {
+            member = try await sendRequest([
+                "@type": "getChatMember",
+                "chat_id": chatId,
+                "member_id": [
+                    "@type": "messageSenderUser",
+                    "user_id": myId
+                ]
+            ])
+        } catch {
+            return nil
+        }
+
+        guard let status = member["status"] as? [String: Any] else {
+            return nil
+        }
+
+        let isChannel = try await resolveChatKind(chat) == .channel
+        return sendAccessFromMemberStatus(status, isChannel: isChannel)
     }
 
     private struct PrivateUserBlockState {

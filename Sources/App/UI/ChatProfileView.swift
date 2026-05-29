@@ -9,6 +9,8 @@ struct ChatProfileView: View {
     @State private var mediaSelection: MediaViewerSelection?
     @State private var showAvatar = false
     @State private var profilePhotoPaths: [String] = []
+    @State private var selectedStoryIndex = 0
+    @State private var showStoryViewer = false
 
     private var hasAvatar: Bool {
         guard let avatarPath = profile.avatarPath else { return false }
@@ -43,6 +45,10 @@ struct ChatProfileView: View {
                     } else {
                         EmptyView()
                     }
+                case .stories:
+                    userStoriesSection
+                case .gifts:
+                    userGiftsSection
                 case .media:
                     mediaSection
                 }
@@ -75,13 +81,35 @@ struct ChatProfileView: View {
         .fullScreenCover(item: $mediaSelection) { selection in
             MediaViewerView(attachments: selection.attachments, startIndex: selection.startIndex)
         }
+        .fullScreenCover(isPresented: $showStoryViewer) {
+            if !vm.userProfileStories.isEmpty {
+                StoryViewerView(
+                    stories: vm.userProfileStories,
+                    startIndex: selectedStoryIndex
+                )
+            }
+        }
+        .task(id: profile.userId) {
+            if let userId = profile.userId {
+                await vm.loadUserProfile(userId: userId)
+            }
+        }
     }
 
     private var availableTabs: [ProfileTab] {
-        var tabs: [ProfileTab] = [.overview, .media]
+        var tabs: [ProfileTab] = [.overview]
         if shouldShowMembersTab {
-            tabs.insert(.members, at: 1)
+            tabs.append(.members)
         }
+        if profile.userId != nil {
+            if profile.hasActiveStories || !vm.userProfileStories.isEmpty {
+                tabs.append(.stories)
+            }
+            if profile.giftCount > 0 || !vm.userProfileGifts.isEmpty {
+                tabs.append(.gifts)
+            }
+        }
+        tabs.append(.media)
         return tabs
     }
 
@@ -141,10 +169,23 @@ struct ChatProfileView: View {
             .buttonStyle(.plain)
             .disabled(!hasAvatar)
 
-            Text(profile.title)
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
+            DisplayNameWithPremium(
+                name: profile.title,
+                isPremium: profile.isPremium,
+                font: .title2.weight(.bold),
+                lineLimit: 2
+            )
+            .multilineTextAlignment(.center)
+
+            if let username = profile.username, !username.isEmpty {
+                UsernameWithPremium(
+                    username: username,
+                    isPremium: profile.isPremium,
+                    badgeImagePath: profile.premiumBadgePath,
+                    font: .subheadline,
+                    color: AppColors.accent
+                )
+            }
 
             if profile.isBlockedByMe || profile.isBlockedByPeer {
                 Label(blockBannerText, systemImage: "hand.raised.fill")
@@ -221,24 +262,123 @@ struct ChatProfileView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(vm.chatMembers) { member in
-                    HStack(spacing: 12) {
-                        AvatarView(
-                            title: member.title,
-                            identifier: member.id,
-                            imagePath: member.avatarPath,
-                            size: 38
-                        )
+                    if member.isUser {
+                        NavigationLink {
+                            UserProfileView(vm: vm, userId: member.id)
+                        } label: {
+                            memberRow(member)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        memberRow(member)
+                    }
+                }
+            }
+        }
+    }
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(member.title)
-                                .font(.subheadline.weight(.semibold))
-                            Text(member.role ?? member.statusText ?? "member")
-                                .font(.caption)
-                                .foregroundStyle((member.isOnline ?? false) ? .green : .secondary)
+    private func memberRow(_ member: ChatMember) -> some View {
+        HStack(spacing: 12) {
+            AvatarView(
+                title: member.title,
+                identifier: member.id,
+                imagePath: member.avatarPath,
+                size: 38
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                DisplayNameWithPremium(
+                    name: member.title,
+                    isPremium: member.isPremium,
+                    font: .subheadline.weight(.semibold)
+                )
+                if let username = member.username, !username.isEmpty {
+                    UsernameWithPremium(
+                        username: username,
+                        isPremium: member.isPremium,
+                        badgeImagePath: member.premiumBadgePath,
+                        font: .caption,
+                        color: .secondary
+                    )
+                } else {
+                    Text(member.role ?? member.statusText ?? "member")
+                        .font(.caption)
+                        .foregroundStyle((member.isOnline ?? false) ? .green : .secondary)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var userStoriesSection: some View {
+        Section(AppText.tr("Истории", "Stories")) {
+            if vm.isUserProfileExtrasLoading && vm.userProfileStories.isEmpty {
+                ProgressView()
+            } else if vm.userProfileStories.isEmpty {
+                Text(AppText.tr("Нет активных историй", "No active stories"))
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(vm.userProfileStories.enumerated()), id: \.element.id) { index, story in
+                            Button {
+                                selectedStoryIndex = index
+                                showStoryViewer = true
+                            } label: {
+                                StoryThumbView(story: story)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.vertical, 4)
                 }
+                .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            }
+        }
+        .onAppear {
+            if let userId = profile.userId {
+                Task { await vm.loadUserProfileStories(userId: userId) }
+            }
+        }
+    }
+
+    private var userGiftsSection: some View {
+        Section(AppText.tr("Подарки", "Gifts")) {
+            if vm.isUserProfileExtrasLoading && vm.userProfileGifts.isEmpty {
+                ProgressView()
+            } else if vm.userProfileGifts.isEmpty {
+                Text(AppText.tr("Нет подарков", "No gifts"))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(vm.userProfileGifts) { gift in
+                    HStack(spacing: 12) {
+                        if let path = gift.stickerPath, let image = LocalImageCache.shared.image(path: path) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 40)
+                        } else {
+                            Image(systemName: "gift.fill")
+                                .foregroundStyle(AppColors.accent)
+                                .frame(width: 40, height: 40)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(gift.title)
+                                .font(.subheadline.weight(.semibold))
+                            if let subtitle = gift.subtitle, !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .onAppear {
+            if let userId = profile.userId {
+                Task { await vm.loadUserProfileGifts(userId: userId) }
             }
         }
     }
@@ -374,15 +514,19 @@ struct ChatProfileView: View {
 private enum ProfileTab: String, CaseIterable, Identifiable {
     case overview
     case members
+    case stories
+    case gifts
     case media
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .overview: return "Info"
-        case .members: return "Members"
-        case .media: return "Media"
+        case .overview: return AppText.tr("Обзор", "Overview")
+        case .members: return AppText.tr("Участники", "Members")
+        case .stories: return AppText.tr("Истории", "Stories")
+        case .gifts: return AppText.tr("Подарки", "Gifts")
+        case .media: return AppText.tr("Медиа", "Media")
         }
     }
 }

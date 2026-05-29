@@ -19,7 +19,7 @@ final class TelegramRepository {
     var onMessagesChanged: ((Int64) -> Void)?
     var onChatsChanged: (() -> Void)?
     var onChatChanged: ((Int64) -> Void)?
-    var onTypingChanged: ((Int64, String?) -> Void)?
+    var onTypingChanged: ((ChatTypingUpdate) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
     var onMessageUpserted: ((TgMessage) -> Void)?
     var onMessageReplaced: ((Int64, Int64, TgMessage) -> Void)?
@@ -56,8 +56,8 @@ final class TelegramRepository {
                 self.onChatsChanged?()
             case .chatChanged(let chatId):
                 self.onChatChanged?(chatId)
-            case .chatTypingChanged(let chatId, let text):
-                self.onTypingChanged?(chatId, text)
+            case .chatTypingChanged(let chatId, let userId, let actionKey):
+                self.onTypingChanged?(ChatTypingUpdate(chatId: chatId, userId: userId, actionKey: actionKey))
             }
         }
     }
@@ -99,7 +99,7 @@ final class TelegramRepository {
 
     func loadChats() async throws -> [TgChat] {
         let remote = try await client.fetchChats(limit: 200)
-        try? chatStore.write(chats: remote)
+        try? chatStore.write(remote)
         return remote
     }
 
@@ -144,6 +144,30 @@ final class TelegramRepository {
 
     func loadUserProfilePhotoPaths(userId: Int64) async throws -> [String] {
         try await client.fetchUserProfilePhotoPaths(userId: userId, limit: 100)
+    }
+
+    func refreshChatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
+        try await client.chatSendPermissions(chatId: chatId)
+    }
+
+    func fetchUserDisplayName(userId: Int64) async throws -> String {
+        try await client.fetchUserDisplayName(userId: userId)
+    }
+
+    func pinMessage(chatId: Int64, messageId: Int64) async throws {
+        try await client.pinChatMessage(chatId: chatId, messageId: messageId)
+    }
+
+    func loadUserProfileDetail(userId: Int64) async throws -> UserProfileDetail {
+        try await client.fetchUserProfileDetail(userId: userId)
+    }
+
+    func loadUserStories(chatId: Int64) async throws -> [TgStoryItem] {
+        try await client.fetchActiveStories(chatId: chatId)
+    }
+
+    func loadUserGifts(userId: Int64, limit: Int = 50) async throws -> [TgGiftItem] {
+        try await client.fetchReceivedGifts(userId: userId, limit: limit)
     }
 
     func forwardMessage(fromChatId: Int64, toChatId: Int64, messageId: Int64) async throws {

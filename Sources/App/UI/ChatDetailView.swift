@@ -3,6 +3,7 @@ import UIKit
 
 struct ChatDetailView: View {
     @ObservedObject var vm: AppViewModel
+    @EnvironmentObject private var swipeSettings: MessageSwipeSettingsStore
     let chatId: Int64
     @FocusState private var isComposerFocused: Bool
     @State private var showProfile = false
@@ -225,14 +226,8 @@ struct ChatDetailView: View {
                                     Task { await vm.loadOlderMessagesIfNeeded(triggerMessageId: message.id) }
                                 }
                             }
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                Button {
-                                    vm.quoteMessage(message)
-                                    isComposerFocused = true
-                                } label: {
-                                    Label(AppText.tr("Цитата", "Quote"), systemImage: "arrowshape.turn.up.left")
-                                }
-                                .tint(AppColors.accent)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                messageSwipeActions(for: message)
                             }
                     }
                 }
@@ -270,6 +265,67 @@ struct ChatDetailView: View {
                     scrollToBottom(proxy: proxy, anchorId: anchorId, animated: false)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func messageSwipeActions(for message: TgMessage) -> some View {
+        ForEach(swipeSettings.enabledOrderedActions) { action in
+            switch action {
+            case .reply:
+                if canSend {
+                    Button {
+                        vm.startReply(message)
+                        isComposerFocused = true
+                    } label: {
+                        Label(MessageSwipeAction.reply.title, systemImage: MessageSwipeAction.reply.systemImage)
+                    }
+                    .tint(AppColors.accent)
+                }
+            case .forward:
+                Button {
+                    forwardingMessage = message
+                } label: {
+                    Label(MessageSwipeAction.forward.title, systemImage: MessageSwipeAction.forward.systemImage)
+                }
+                .tint(.orange)
+            case .quote:
+                if canSend {
+                    Button {
+                        vm.quoteMessage(message)
+                        isComposerFocused = true
+                    } label: {
+                        Label(MessageSwipeAction.quote.title, systemImage: MessageSwipeAction.quote.systemImage)
+                    }
+                    .tint(.teal)
+                }
+            case .pin:
+                if canPinMessages {
+                    Button {
+                        Task { await vm.pinMessage(message) }
+                    } label: {
+                        Label(MessageSwipeAction.pin.title, systemImage: MessageSwipeAction.pin.systemImage)
+                    }
+                    .tint(.indigo)
+                }
+            case .delete:
+                if message.outgoing {
+                    Button(role: .destructive) {
+                        Task { await vm.deleteMyMessage(message, revoke: true) }
+                    } label: {
+                        Label(MessageSwipeAction.delete.title, systemImage: MessageSwipeAction.delete.systemImage)
+                    }
+                }
+            }
+        }
+    }
+
+    private var canPinMessages: Bool {
+        switch selectedChat?.kind {
+        case .basicGroup, .supergroup, .channel:
+            return true
+        default:
+            return false
         }
     }
 

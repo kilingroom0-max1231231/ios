@@ -352,9 +352,12 @@ private struct ChatCardView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    Text(chat.title)
-                        .font(.headline)
-                        .lineLimit(1)
+                    DisplayNameWithPremium(
+                        name: chat.title,
+                        isPremium: chat.kind == .private && chat.peerIsPremium,
+                        font: .headline,
+                        lineLimit: 1
+                    )
 
                     if chat.isPinned {
                         Image(systemName: "pin.fill")
@@ -391,6 +394,18 @@ private struct ChatCardView: View {
                     .font(.subheadline)
                     .foregroundStyle(chat.typingText != nil ? .green : .secondary)
                     .lineLimit(1)
+
+                if chat.kind == .private,
+                   let username = chat.peerUsername,
+                   !username.isEmpty {
+                    UsernameWithPremium(
+                        username: username,
+                        isPremium: chat.peerIsPremium,
+                        badgeImagePath: chat.peerPremiumBadgePath,
+                        font: .caption,
+                        color: .secondary
+                    )
+                }
 
                 if chat.isBlockedByMe || chat.isBlockedByPeer {
                     HStack(spacing: 4) {
