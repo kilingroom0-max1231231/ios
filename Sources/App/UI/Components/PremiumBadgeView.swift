@@ -22,8 +22,16 @@ struct PremiumBadgeView: View {
 
     @ViewBuilder
     private var badgeContent: some View {
-        if let imagePath,
-           let image = LocalImageCache.shared.image(path: imagePath) {
+        if let imagePath, !imagePath.isEmpty, hasStickerMedia {
+            StickerMediaView(
+                displayPath: imagePath,
+                animationPath: animatedStickerPath,
+                isAnimated: StickerMediaView.isPlayableVideoPath(imagePath),
+                maxSide: size * 1.35
+            )
+            .frame(width: size, height: size)
+        } else if let imagePath,
+                  let image = LocalImageCache.shared.image(path: imagePath, maxPixelSize: size * 3) {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
@@ -31,6 +39,21 @@ struct PremiumBadgeView: View {
         } else {
             defaultStar
         }
+    }
+
+    private var hasStickerMedia: Bool {
+        guard let imagePath, !imagePath.isEmpty else { return false }
+        return TGSFileLoader.isTGSPath(imagePath)
+            || StickerMediaView.isPlayableVideoPath(imagePath)
+            || StickerMediaView.isRasterImagePath(imagePath)
+    }
+
+    private var animatedStickerPath: String? {
+        guard let imagePath, !imagePath.isEmpty else { return nil }
+        if TGSFileLoader.isTGSPath(imagePath) || StickerMediaView.isPlayableVideoPath(imagePath) {
+            return imagePath
+        }
+        return nil
     }
 
     private var defaultStar: some View {

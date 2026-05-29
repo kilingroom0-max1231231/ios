@@ -2005,15 +2005,11 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let stickers = response["stickers"] as? [[String: Any]] ?? []
         guard let sticker = stickers.first else { return nil }
 
-        if let stickerFile = sticker["sticker"] as? [String: Any],
-           let fileId = int64Value(stickerFile["id"]) {
-            return try await downloadFile(fileId: fileId)
+        let media = await resolveStickerMediaPaths(from: sticker, downloadIfMissing: true)
+        if let animationPath = media.animationPath, !animationPath.isEmpty {
+            return animationPath
         }
-        if let thumbnail = sticker["thumbnail"] as? [String: Any],
-           let fileId = extractFileId(from: thumbnail) {
-            return try await downloadFile(fileId: fileId)
-        }
-        return nil
+        return media.displayPath
     }
 
     private func activeUsername(from user: [String: Any]) -> String? {

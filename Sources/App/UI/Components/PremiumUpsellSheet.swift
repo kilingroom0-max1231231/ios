@@ -2,15 +2,25 @@ import SwiftUI
 
 struct PremiumUpsellContext: Identifiable, Equatable {
     let id = UUID()
+    let displayName: String?
     let previewPath: String?
     let previewAnimationPath: String?
     let headlineText: String?
     let title: String
     let explanation: String
 
+    private static func stickerAnimationPath(for path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        if TGSFileLoader.isTGSPath(path) || StickerMediaView.isPlayableVideoPath(path) {
+            return path
+        }
+        return nil
+    }
+
     static func premiumSticker(attachment: TgAttachment, setTitle: String? = nil) -> PremiumUpsellContext {
         let setName = setTitle ?? AppText.tr("Premium", "Premium")
         return PremiumUpsellContext(
+            displayName: nil,
             previewPath: attachment.localPath,
             previewAnimationPath: attachment.animationPath,
             headlineText: nil,
@@ -27,8 +37,9 @@ struct PremiumUpsellContext: Identifiable, Equatable {
 
     static func premiumUser(displayName: String, badgePath: String?) -> PremiumUpsellContext {
         PremiumUpsellContext(
+            displayName: displayName,
             previewPath: badgePath,
-            previewAnimationPath: nil,
+            previewAnimationPath: stickerAnimationPath(for: badgePath),
             headlineText: nil,
             title: AppText.tr(
                 "\(displayName) — подписчик Telegram Premium",
@@ -43,6 +54,7 @@ struct PremiumUpsellContext: Identifiable, Equatable {
 
     static func emojiStatus(headline: String, userName: String, setName: String) -> PremiumUpsellContext {
         PremiumUpsellContext(
+            displayName: userName,
             previewPath: nil,
             previewAnimationPath: nil,
             headlineText: headline,
@@ -112,16 +124,43 @@ struct PremiumUpsellSheet: View {
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 12)
+        } else if let displayName = context.displayName, !displayName.isEmpty {
+            premiumUserHeader(displayName: displayName)
         } else if context.previewPath != nil || context.previewAnimationPath != nil {
             StickerMediaView(
                 displayPath: context.previewPath,
                 animationPath: context.previewAnimationPath,
-                isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false
+                isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false,
+                maxSide: 140
             )
-            .frame(width: 160, height: 160)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
         }
+    }
+
+    private func premiumUserHeader(displayName: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(displayName)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            Spacer(minLength: 0)
+
+            if let badgePath = context.previewPath, !badgePath.isEmpty {
+                StickerMediaView(
+                    displayPath: badgePath,
+                    animationPath: context.previewAnimationPath ?? badgePath,
+                    isAnimated: context.previewAnimationPath.map(StickerMediaView.isPlayableVideoPath) ?? false,
+                    maxSide: 52
+                )
+                .frame(width: 52, height: 52)
+            } else {
+                PremiumBadgeView(size: 32)
+            }
+        }
+        .padding(.vertical, 10)
     }
 
     private var textBlock: some View {

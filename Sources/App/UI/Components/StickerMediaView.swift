@@ -6,6 +6,8 @@ struct StickerMediaView: View {
     let displayPath: String?
     let animationPath: String?
     var isAnimated: Bool = false
+    /// Caps Lottie/video layout so grid cells do not expand to full animation bounds.
+    var maxSide: CGFloat? = nil
 
     private var animationURL: URL? {
         guard let animationPath, !animationPath.isEmpty,
@@ -37,15 +39,18 @@ struct StickerMediaView: View {
     var body: some View {
         Group {
             if let tgsPath {
-                LottieStickerView(tgsPath: tgsPath)
+                LottieStickerView(tgsPath: tgsPath, maxSide: maxSide ?? 96)
             } else if shouldPlayVideo, let animationURL {
                 LoopingVideoStickerView(url: animationURL, fallbackPath: rasterDisplayPath)
+                    .frame(maxWidth: maxSide, maxHeight: maxSide)
             } else {
                 CachedLocalImage(path: rasterDisplayPath, contentMode: .fit) {
                     loadingPlaceholder
                 }
             }
         }
+        .frame(width: maxSide, height: maxSide)
+        .clipped()
     }
 
     static func isPlayableVideoPath(_ path: String) -> Bool {

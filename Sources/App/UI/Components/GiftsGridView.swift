@@ -6,6 +6,7 @@ struct GiftsGridView: View {
     let gifts: [TgGiftItem]
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+    private let stickerSide: CGFloat = 64
 
     private var cellBackground: Color {
         Color(uiColor: .secondarySystemGroupedBackground)
@@ -14,7 +15,11 @@ struct GiftsGridView: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(gifts) { gift in
-                GiftGridCell(gift: gift, cellBackground: cellBackground)
+                GiftGridCell(
+                    gift: gift,
+                    cellBackground: cellBackground,
+                    stickerSide: stickerSide
+                )
             }
         }
     }
@@ -23,29 +28,31 @@ struct GiftsGridView: View {
 private struct GiftGridCell: View {
     let gift: TgGiftItem
     let cellBackground: Color
+    let stickerSide: CGFloat
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack(alignment: .topLeading) {
                 stickerView
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.top, 8)
-                    .padding(.horizontal, 4)
+                    .frame(width: stickerSide, height: stickerSide)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
 
                 if hasSender {
                     senderOverlay
-                        .padding(4)
+                        .padding(6)
                 }
             }
-            .aspectRatio(1, contentMode: .fit)
+            .frame(height: stickerSide + 14)
 
             Text(gift.title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .top)
         }
+        .padding(.horizontal, 6)
         .padding(.bottom, 8)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -68,9 +75,9 @@ private struct GiftGridCell: View {
         StickerMediaView(
             displayPath: gift.stickerPath,
             animationPath: gift.animationPath,
-            isAnimated: gift.isAnimated
+            isAnimated: gift.isAnimated,
+            maxSide: stickerSide
         )
-        .padding(6)
     }
 
     private var senderOverlay: some View {
@@ -79,7 +86,7 @@ private struct GiftGridCell: View {
                 title: gift.senderName ?? "?",
                 identifier: gift.senderUserId ?? 0,
                 imagePath: gift.senderAvatarPath,
-                size: 28
+                size: 26
             )
             .overlay(
                 Circle()
@@ -87,10 +94,10 @@ private struct GiftGridCell: View {
             )
 
             if gift.senderIsPremium {
-                PremiumBadgeView(imagePath: gift.senderPremiumBadgePath, size: 11)
-                    .offset(x: 3, y: 3)
+                PremiumBadgeView(imagePath: gift.senderPremiumBadgePath, size: 10)
+                    .offset(x: 2, y: 2)
             }
         }
-        .frame(width: 32, height: 32, alignment: .topLeading)
+        .frame(width: 30, height: 30, alignment: .topLeading)
     }
 }
