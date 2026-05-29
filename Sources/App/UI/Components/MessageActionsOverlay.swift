@@ -192,24 +192,24 @@ struct MessageActionsOverlay: View {
         return LiquidGlassGroup(spacing: 18) {
             ZStack {
                 reactionsPanel(
-                    width: layout.panelWidth,
+                    width: layout.reactionsWidth,
                     maxExpandedHeight: maxExpandedReactionsHeight
                 )
                 .scaleEffect(reactionsScale, anchor: .bottom)
                 .opacity(panelsOpacity)
                 .offset(y: panelsOffset)
-                .position(x: layout.panelCenterX, y: layout.reactionsCenterY)
+                .position(x: layout.reactionsCenterX, y: layout.reactionsCenterY)
 
                 highlightedBubble
                     .scaleEffect(bubbleScale)
                     .frame(width: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
                     .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
-                actionsMenu(width: layout.panelWidth)
+                actionsMenu(width: layout.actionsWidth)
                     .scaleEffect(actionsScale, anchor: .top)
                     .opacity(panelsOpacity)
                     .offset(y: -panelsOffset)
-                    .position(x: layout.panelCenterX, y: layout.actionsCenterY)
+                    .position(x: layout.actionsCenterX, y: layout.actionsCenterY)
             }
         }
         .allowsHitTesting(true)
@@ -240,8 +240,10 @@ struct MessageActionsOverlay: View {
     }
 
     private struct OverlayLayout {
-        let panelWidth: CGFloat
-        let panelCenterX: CGFloat
+        let reactionsWidth: CGFloat
+        let reactionsCenterX: CGFloat
+        let actionsWidth: CGFloat
+        let actionsCenterX: CGFloat
         let bubbleCenterX: CGFloat
         let bubbleCenterY: CGFloat
         let reactionsCenterY: CGFloat
@@ -255,7 +257,10 @@ struct MessageActionsOverlay: View {
         safeBottom: CGFloat,
         maxExpandedReactionsHeight: CGFloat
     ) -> OverlayLayout {
-        let panelWidth = min(containerSize.width - 24, 360)
+        let inset: CGFloat = 12
+        let availableWidth = containerSize.width - inset * 2
+        let reactionsWidth = min(availableWidth, 340)
+        let actionsWidth = min(availableWidth, 250)
         let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
         let actionsH = actionsMenuHeight
         let gap: CGFloat = 10
@@ -274,30 +279,32 @@ struct MessageActionsOverlay: View {
             bubbleCenterY = (contentTop + contentBottom) / 2
         }
 
-        let panelCenterX: CGFloat = {
-            let half = panelWidth / 2
-            let inset: CGFloat = 12
+        // Align a panel of the given width to the message's side, kept on screen.
+        func centerX(for width: CGFloat) -> CGFloat {
+            let half = width / 2
             if message.outgoing {
                 return min(containerSize.width - inset - half, max(half + inset, messageFrame.maxX - half))
             }
             return max(inset + half, min(containerSize.width - inset - half, messageFrame.minX + half))
-        }()
+        }
+
+        let reactionsCenterX = centerX(for: reactionsWidth)
+        let actionsCenterX = centerX(for: actionsWidth)
 
         // Anchor reactions panel bottom edge just above the message bubble.
-        var reactionsBottom = bubbleCenterY - bubbleHalf - gap
-        var reactionsCenterY = reactionsBottom - reactionsH / 2
+        var reactionsCenterY = bubbleCenterY - bubbleHalf - gap - reactionsH / 2
         let minReactionsTop = safeTop + 10
-        let reactionsTop = reactionsCenterY - reactionsH / 2
-        if reactionsTop < minReactionsTop {
+        if reactionsCenterY - reactionsH / 2 < minReactionsTop {
             reactionsCenterY = minReactionsTop + reactionsH / 2
-            reactionsBottom = reactionsCenterY + reactionsH / 2
         }
 
         let actionsCenterY = bubbleCenterY + bubbleHalf + gap + actionsH / 2
 
         return OverlayLayout(
-            panelWidth: panelWidth,
-            panelCenterX: panelCenterX,
+            reactionsWidth: reactionsWidth,
+            reactionsCenterX: reactionsCenterX,
+            actionsWidth: actionsWidth,
+            actionsCenterX: actionsCenterX,
             bubbleCenterX: bubbleCenterX,
             bubbleCenterY: bubbleCenterY,
             reactionsCenterY: reactionsCenterY,
@@ -316,8 +323,10 @@ struct MessageActionsOverlay: View {
         return collapsedReactionsHeight
     }
 
+    private let actionRowHeight: CGFloat = 48
+
     private var actionsMenuHeight: CGFloat {
-        CGFloat(actionItems.count) * 46 + 12
+        CGFloat(actionItems.count) * actionRowHeight
     }
 
     private var highlightedBubble: some View {
@@ -332,63 +341,62 @@ struct MessageActionsOverlay: View {
         .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
     }
 
+    private func collapsedReactionsWidth(maxWidth: CGFloat) -> CGFloat {
+        let itemExtent: CGFloat = 44 + 4
+        var content = CGFloat(pickerItems.count) * itemExtent
+        if canExpandReactions { content += itemExtent }
+        let horizontalPadding: CGFloat = 12
+        return min(maxWidth, content + horizontalPadding)
+    }
+
+    @ViewBuilder
     private func reactionsPanel(width: CGFloat, maxExpandedHeight: CGFloat) -> some View {
+        if reactionsExpanded {
+            expandedReactionsPanel(width: width, maxExpandedHeight: maxExpandedHeight)
+        } else {
+            collapsedReactionsPanel(maxWidth: width)
+        }
+    }
+
+    private func collapsedReactionsPanel(maxWidth: CGFloat) -> some View {
+        compactReactionsStrip
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+            .frame(width: collapsedReactionsWidth(maxWidth: maxWidth))
+            .glassSurface(cornerRadius: collapsedReactionsHeight / 2)
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 6)
+            .frame(maxWidth: maxWidth, alignment: message.outgoing ? .trailing : .leading)
+    }
+
+    private func expandedReactionsPanel(width: CGFloat, maxExpandedHeight: CGFloat) -> some View {
         let expandedHeight = reactionsPanelHeight(maxExpandedHeight: maxExpandedHeight)
-        let currentHeight = reactionsExpanded ? expandedHeight : collapsedReactionsHeight
-
         return VStack(spacing: 6) {
-            ZStack(alignment: .bottom) {
-                if !reactionsExpanded {
-                    compactReactionsStrip
-                        .transition(
-                            .asymmetric(
-                                insertion: .scale(scale: 0.85, anchor: .bottom).combined(with: .opacity),
-                                removal: .scale(scale: 0.9, anchor: .bottom).combined(with: .opacity)
-                            )
-                        )
-                }
-
-                if reactionsExpanded {
-                    expandedReactionsGrid(maxHeight: maxExpandedHeight - 30)
-                        .transition(
-                            .asymmetric(
-                                insertion: .scale(scale: 0.88, anchor: .bottom).combined(with: .opacity),
-                                removal: .scale(scale: 0.92, anchor: .bottom).combined(with: .opacity)
-                            )
-                        )
-                }
-            }
-            .frame(height: reactionsExpanded ? expandedHeight - (canExpandReactions ? 26 : 0) : collapsedReactionsHeight - 4)
-            .clipped()
+            expandedReactionsGrid(maxHeight: maxExpandedHeight - 30)
+                .frame(height: expandedHeight - (canExpandReactions ? 26 : 0))
+                .clipped()
 
             if canExpandReactions {
-                if reactionsExpanded {
-                    collapseReactionsButton
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else {
-                    expandReactionsButton(compact: false)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
+                collapseReactionsButton
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: width, height: currentHeight)
-        .glassSurface(cornerRadius: 26)
-        .shadow(color: .black.opacity(0.18), radius: reactionsExpanded ? 14 : 8, y: 6)
+        .frame(width: width, height: expandedHeight)
+        .glassSurface(cornerRadius: 24)
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
     }
 
     private var compactReactionsStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(pickerItems) { item in
                     reactionButton(item: item, compact: false)
                 }
                 if canExpandReactions {
-                    expandReactionsButton(compact: true)
+                    expandReactionsButton
                 }
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
         }
     }
 
@@ -427,31 +435,17 @@ struct MessageActionsOverlay: View {
         }
     }
 
-    private func expandReactionsButton(compact: Bool) -> some View {
+    private var expandReactionsButton: some View {
         Button {
             expandReactionsPanel()
         } label: {
-            if compact {
-                VStack(spacing: 2) {
-                    Image(systemName: "chevron.down")
-                        .font(.body.weight(.semibold))
-                    Text(AppText.tr("ещё", "more"))
-                        .font(.caption2)
-                }
+            Image(systemName: "chevron.down")
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 44, height: 44)
                 .background {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.quaternary)
+                    Circle().fill(.quaternary)
                 }
-            } else {
-                Label(
-                    AppText.tr("Все реакции (\(pickerItems.count))", "All reactions (\(pickerItems.count))"),
-                    systemImage: "chevron.down"
-                )
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            }
         }
         .buttonStyle(.plain)
     }
@@ -479,8 +473,12 @@ struct MessageActionsOverlay: View {
                 .frame(maxWidth: compact ? .infinity : nil)
                 .background {
                     if isChosen {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(AppColors.accent.opacity(0.28))
+                        if compact {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(AppColors.accent.opacity(0.28))
+                        } else {
+                            Circle().fill(AppColors.accent.opacity(0.28))
+                        }
                     }
                 }
         }
@@ -494,7 +492,6 @@ struct MessageActionsOverlay: View {
         let id = UUID()
         let title: String
         let icon: String
-        let color: Color
         let role: ButtonRole?
         let handler: () -> Void
     }
@@ -504,8 +501,7 @@ struct MessageActionsOverlay: View {
         if canSend {
             items.append(ActionItem(
                 title: AppText.tr("Ответить", "Reply"),
-                icon: "arrowshape.turn.up.left.fill",
-                color: AppColors.accent,
+                icon: "arrowshape.turn.up.left",
                 role: nil
             ) {
                 onReply()
@@ -514,8 +510,7 @@ struct MessageActionsOverlay: View {
         }
         items.append(ActionItem(
             title: AppText.tr("Переслать", "Forward"),
-            icon: "arrowshape.turn.up.right.fill",
-            color: .green,
+            icon: "arrowshape.turn.up.right",
             role: nil
         ) {
             onForward()
@@ -524,8 +519,7 @@ struct MessageActionsOverlay: View {
         if let captionText, !captionText.isEmpty {
             items.append(ActionItem(
                 title: AppText.tr("Скопировать", "Copy"),
-                icon: "doc.on.doc.fill",
-                color: .orange,
+                icon: "doc.on.doc",
                 role: nil
             ) {
                 onCopy()
@@ -536,7 +530,6 @@ struct MessageActionsOverlay: View {
             items.append(ActionItem(
                 title: AppText.tr("Изменить", "Edit"),
                 icon: "pencil",
-                color: .blue,
                 role: nil
             ) {
                 onEdit()
@@ -547,7 +540,6 @@ struct MessageActionsOverlay: View {
             items.append(ActionItem(
                 title: AppText.tr("Удалить у меня", "Delete for me"),
                 icon: "trash",
-                color: .secondary,
                 role: nil
             ) {
                 onDelete(false)
@@ -555,8 +547,7 @@ struct MessageActionsOverlay: View {
             })
             items.append(ActionItem(
                 title: AppText.tr("Удалить у всех", "Delete for everyone"),
-                icon: "trash.fill",
-                color: .red,
+                icon: "trash",
                 role: .destructive
             ) {
                 onDelete(true)
@@ -569,34 +560,37 @@ struct MessageActionsOverlay: View {
     private func actionsMenu(width: CGFloat) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(actionItems.enumerated()), id: \.offset) { index, item in
-                Button(role: item.role) {
-                    item.handler()
-                } label: {
+                Button(role: item.role, action: item.handler) {
                     HStack(spacing: 12) {
-                        Image(systemName: item.icon)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(item.color)
-                            .frame(width: 24)
                         Text(item.title)
                             .font(.body)
-                            .foregroundStyle(item.role == .destructive ? .red : .primary)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 8)
+                        Image(systemName: item.icon)
+                            .font(.body)
+                            .frame(width: 22)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .foregroundStyle(item.role == .destructive ? Color.red : Color.primary)
+                    .padding(.horizontal, 16)
+                    .frame(height: actionRowHeight)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ActionRowButtonStyle())
 
                 if index < actionItems.count - 1 {
-                    Divider().opacity(0.35)
+                    Divider().padding(.leading, 16)
                 }
             }
         }
-        .padding(.vertical, 4)
         .frame(width: width)
         .glassSurface(cornerRadius: 22)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
+    }
+
+    private struct ActionRowButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .background(Color.primary.opacity(configuration.isPressed ? 0.08 : 0))
+        }
     }
 
     private func dismiss() {
