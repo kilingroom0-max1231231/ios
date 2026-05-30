@@ -106,6 +106,7 @@ final class AppViewModel: ObservableObject {
     private var toastDismissTask: Task<Void, Never>?
     private var toastDismissGeneration = 0
     private var folderSelectionGeneration = 0
+    private var isReadyBootstrapping = false
     private var incomingNotificationsAllowed = false
     private var lastIncomingSoundPlayedAt: Date?
     @Published var premiumUpsellContext: PremiumUpsellContext?
@@ -175,7 +176,6 @@ final class AppViewModel: ObservableObject {
     private func applyLoadedChatSummary(_ updated: TgChat) {
         var merged = updated
         merged.typingText = resolvedTypingText(for: updated.id)
-        openChatCache[updated.id] = merged
 
         if let index = chats.firstIndex(where: { $0.id == updated.id }) {
             var listMerged = merged
@@ -191,15 +191,32 @@ final class AppViewModel: ObservableObject {
             listMerged.lastMessageId = chats[index].lastMessageId ?? listMerged.lastMessageId
             listMerged.lastMessageDate = chats[index].lastMessageDate ?? listMerged.lastMessageDate
             chats[index] = listMerged
-            openChatCache[updated.id] = listMerged
+            return
         }
 
         if let index = archivedChats.firstIndex(where: { $0.id == updated.id }) {
             var archiveMerged = merged
             preserveInteractionPermissions(from: archivedChats[index], into: &archiveMerged)
             archivedChats[index] = archiveMerged
-            openChatCache[updated.id] = archiveMerged
+            return
         }
+
+        openChatCache[updated.id] = merged
+    }
+
+    private func chatsById(_ chats: [TgChat]) -> [Int64: TgChat] {
+        Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+    }
+
+    private func knownChatMetadataById() -> [Int64: TgChat] {
+        var byId = chatsById(openChatCache.values.map { $0 })
+        for chat in archivedChats {
+            byId[chat.id] = chat
+        }
+        for chat in chats {
+            byId[chat.id] = chat
+        }
+        return byId
     }
 
     var accountList: [AccountSession] {
@@ -555,7 +572,7 @@ final class AppViewModel: ObservableObject {
         defer { if showBlockingLoader { isBusy = false } }
 
         do {
-            let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
+            let previousById = chatsById(chats)
             let listChats = try await repository.loadChats(list: listKindAtStart, limit: chatListLimit)
 
             if let folderGeneration, folderGeneration != self.folderSelectionGeneration {
@@ -841,18 +858,20 @@ final class AppViewModel: ObservableObject {
     private func scheduleChatMemberStatusRefresh() {
         chatMemberStatusRefreshTask?.cancel()
         chatMemberStatusRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard let self, let repository = self.repository else { return }
-            let snapshot = self.chats + self.archivedChats
-            let needsRefresh = snapshot.contains { TDLibClient.needsMemberStatusEnrichment($0) }
-            guard needsRefresh else { return }
-            guard let enriched = try? await repository.enrichChatMemberStatus(snapshot) else { return }
+            guard !Task.isCancelled else { return }
+            let snapshot = Array((self.chats + self.archivedChats).prefix(40))
+            let needsRefresh = snapshot.filter { TDLibClient.needsMemberStatusEnrichment($0) }
+            guard !needsRefresh.isEmpty else { return }
+            guard let enriched = try? await repository.enrichChatMemberStatus(needsRefresh) else { return }
             guard !Task.isCancelled else { return }
             self.applyEnrichedMemberStatus(enriched)
         }
     }
 
     private func applyEnrichedMemberStatus(_ enriched: [TgChat]) {
-        let byId = Dictionary(uniqueKeysWithValues: enriched.map { ($0.id, $0) })
+        let byId = chatsById(enriched)
         chats = chats.map { chat in
             mergeMemberStatus(from: byId[chat.id], into: chat)
         }
@@ -916,12 +935,24 @@ final class AppViewModel: ObservableObject {
     private func scheduleChatAvatarRefresh() {
         chatAvatarRefreshTask?.cancel()
         chatAvatarRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard let self, let repository = self.repository else { return }
-            if let refreshed = await self.refreshMissingAvatars(in: self.chats, repository: repository) {
+            guard !Task.isCancelled else { return }
+            let mainTargets = Array(self.chats.prefix(35))
+            if let refreshed = await self.refreshMissingAvatars(
+                in: mainTargets,
+                repository: repository,
+                mergeInto: self.chats
+            ) {
                 self.chats = refreshed
             }
             guard !Task.isCancelled else { return }
-            if let refreshed = await self.refreshMissingAvatars(in: self.archivedChats, repository: repository) {
+            let archiveTargets = Array(self.archivedChats.prefix(20))
+            if let refreshed = await self.refreshMissingAvatars(
+                in: archiveTargets,
+                repository: repository,
+                mergeInto: self.archivedChats
+            ) {
                 self.archivedChats = refreshed
                 self.archiveSummary = Self.makeArchiveSummary(from: refreshed)
             }
@@ -929,19 +960,25 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshMissingAvatars(
-        in chats: [TgChat],
-        repository: TelegramRepository
+        in targets: [TgChat],
+        repository: TelegramRepository,
+        mergeInto allChats: [TgChat]
     ) async -> [TgChat]? {
-        let needsRefresh = chats.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
+        let needsRefresh = targets.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
         guard needsRefresh else { return nil }
-        let snapshot = chats
-        guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return nil }
-        let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
-        return mergeChatsPreservingState(sortChats(enriched), previousById: previousById)
+        guard let enriched = try? await repository.enrichChatAvatars(targets) else { return nil }
+        let previousById = chatsById(allChats)
+        let enrichedById = chatsById(enriched)
+        return mergeChatsPreservingState(
+            allChats.map { chat in
+                enrichedById[chat.id] ?? chat
+            },
+            previousById: previousById
+        )
     }
 
     private func applyKnownChatMetadata(to chats: [TgChat]) -> [TgChat] {
-        let knownById = Dictionary(uniqueKeysWithValues: (self.chats + openChatCache.values).map { ($0.id, $0) })
+        let knownById = knownChatMetadataById()
         return chats.map { chat in
             guard let known = knownById[chat.id] else { return chat }
             var updated = chat
@@ -2342,6 +2379,13 @@ final class AppViewModel: ObservableObject {
     private func applyPhase(for state: AuthState) async {
         switch state {
         case .ready:
+            if isReadyBootstrapping {
+                phase = .main
+                return
+            }
+            isReadyBootstrapping = true
+            defer { isReadyBootstrapping = false }
+
             phase = .main
             status = ""
             incomingNotificationsAllowed = false
@@ -2799,11 +2843,13 @@ final class AppViewModel: ObservableObject {
     private func updateLocalChat(_ chatId: Int64, mutate: (inout TgChat) -> Void) {
         if let index = chats.firstIndex(where: { $0.id == chatId }) {
             mutate(&chats[index])
-            openChatCache[chatId] = chats[index]
-        } else if let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
+            return
+        }
+        if let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
             mutate(&archivedChats[index])
-            openChatCache[chatId] = archivedChats[index]
-        } else if var cached = openChatCache[chatId] {
+            return
+        }
+        if var cached = openChatCache[chatId] {
             mutate(&cached)
             openChatCache[chatId] = cached
         }

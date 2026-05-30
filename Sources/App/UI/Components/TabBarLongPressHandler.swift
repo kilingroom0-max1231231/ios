@@ -54,15 +54,10 @@ final class TabBarLongPressInstaller: NSObject {
     }
 
     private func gestureTargets(for tabBar: UITabBar) -> [UIView] {
-        var views: [UIView] = []
-        func collect(from view: UIView) {
-            views.append(view)
-            for subview in view.subviews {
-                collect(from: subview)
-            }
+        if let itemsContainer = tabBar.subviews.first(where: { String(describing: type(of: $0)).contains("ContentView") }) {
+            return [itemsContainer]
         }
-        collect(from: tabBar)
-        return views
+        return [tabBar]
     }
 
     private func clearRecognizers() {
