@@ -917,26 +917,27 @@ final class AppViewModel: ObservableObject {
         chatAvatarRefreshTask?.cancel()
         chatAvatarRefreshTask = Task { @MainActor [weak self] in
             guard let self, let repository = self.repository else { return }
-            await self.refreshMissingAvatars(in: &self.chats, repository: repository)
+            if let refreshed = await self.refreshMissingAvatars(in: self.chats, repository: repository) {
+                self.chats = refreshed
+            }
             guard !Task.isCancelled else { return }
-            await self.refreshMissingAvatars(in: &self.archivedChats, repository: repository)
-            guard !Task.isCancelled else { return }
-            if !self.archivedChats.isEmpty {
-                self.archiveSummary = Self.makeArchiveSummary(from: self.archivedChats)
+            if let refreshed = await self.refreshMissingAvatars(in: self.archivedChats, repository: repository) {
+                self.archivedChats = refreshed
+                self.archiveSummary = Self.makeArchiveSummary(from: refreshed)
             }
         }
     }
 
     private func refreshMissingAvatars(
-        in chats: inout [TgChat],
+        in chats: [TgChat],
         repository: TelegramRepository
-    ) async {
+    ) async -> [TgChat]? {
         let needsRefresh = chats.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
-        guard needsRefresh else { return }
+        guard needsRefresh else { return nil }
         let snapshot = chats
-        guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return }
+        guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return nil }
         let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
-        chats = mergeChatsPreservingState(sortChats(enriched), previousById: previousById)
+        return mergeChatsPreservingState(sortChats(enriched), previousById: previousById)
     }
 
     private func applyKnownChatMetadata(to chats: [TgChat]) -> [TgChat] {

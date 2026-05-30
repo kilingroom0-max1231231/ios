@@ -60,11 +60,9 @@ struct MessageActionsOverlay: View {
     @ObservedObject private var appSettings = AppSettingsStore.shared
     @State private var reactionsExpanded = false
     @State private var backdropOpacity: Double = 0
-    @State private var bubbleScale: CGFloat = 0.9
+    @State private var contentScale: CGFloat = 0.97
     @State private var panelsOpacity: Double = 0
-    @State private var panelsOffset: CGFloat = 16
-    @State private var reactionsScale: CGFloat = 0.88
-    @State private var actionsScale: CGFloat = 0.92
+    @State private var panelsOffset: CGFloat = 8
 
     private let collapsedReactionsHeight: CGFloat = 56
     private let expandedRowHeight: CGFloat = 42
@@ -138,13 +136,11 @@ struct MessageActionsOverlay: View {
                 backdropOpacity = 1
             }
             withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
-                bubbleScale = 1.03
+                contentScale = 1
             }
             withAnimation(.spring(response: 0.42, dampingFraction: 0.82).delay(0.04)) {
                 panelsOpacity = 1
                 panelsOffset = 0
-                reactionsScale = 1
-                actionsScale = 1
             }
         }
         .task {
@@ -196,13 +192,13 @@ struct MessageActionsOverlay: View {
                     width: layout.reactionsWidth,
                     maxExpandedHeight: maxExpandedReactionsHeight
                 )
-                .scaleEffect(reactionsScale, anchor: .bottom)
+                .scaleEffect(contentScale, anchor: .bottom)
                 .opacity(panelsOpacity)
                 .offset(y: panelsOffset)
                 .position(x: layout.reactionsCenterX, y: layout.reactionsCenterY)
 
                 highlightedBubble(maxHeight: layout.bubbleHeight, scrollable: needsScroll)
-                    .scaleEffect(bubbleScale)
+                    .scaleEffect(contentScale)
                     .frame(
                         width: messageFrame.width,
                         height: layout.bubbleHeight,
@@ -211,7 +207,7 @@ struct MessageActionsOverlay: View {
                     .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
                 actionsMenu(width: layout.actionsWidth, maxHeight: actionsMenuMaxHeight)
-                    .scaleEffect(actionsScale, anchor: .top)
+                    .scaleEffect(contentScale, anchor: .top)
                     .opacity(panelsOpacity)
                     .offset(y: -panelsOffset)
                     .position(x: layout.actionsCenterX, y: layout.actionsCenterY)
@@ -231,16 +227,16 @@ struct MessageActionsOverlay: View {
                 width: reactionsWidth,
                 maxExpandedHeight: fallbackMaxReactionsH
             )
-            .scaleEffect(reactionsScale, anchor: .bottom)
+            .scaleEffect(contentScale, anchor: .bottom)
             .opacity(panelsOpacity)
             .offset(y: panelsOffset)
 
             highlightedBubble(maxHeight: size.height * 0.34, scrollable: true)
-                .scaleEffect(bubbleScale)
+                .scaleEffect(contentScale)
                 .padding(.horizontal, 12)
 
             actionsMenu(width: actionsWidth, maxHeight: actionsMenuMaxHeight)
-                .scaleEffect(actionsScale, anchor: .top)
+                .scaleEffect(contentScale, anchor: .top)
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
         }
@@ -461,7 +457,6 @@ struct MessageActionsOverlay: View {
         appSettings.reactionHaptic(.light)
         withAnimation(panelSpring) {
             reactionsExpanded = true
-            reactionsScale = 1
         }
     }
 
@@ -469,7 +464,6 @@ struct MessageActionsOverlay: View {
         appSettings.reactionHaptic(.light)
         withAnimation(panelSpring) {
             reactionsExpanded = false
-            reactionsScale = 1
         }
     }
 
@@ -642,10 +636,8 @@ struct MessageActionsOverlay: View {
         withAnimation(.easeIn(duration: 0.2)) {
             backdropOpacity = 0
             panelsOpacity = 0
-            panelsOffset = 12
-            bubbleScale = 0.92
-            reactionsScale = 0.86
-            actionsScale = 0.9
+            panelsOffset = 8
+            contentScale = 0.97
             reactionsExpanded = false
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
