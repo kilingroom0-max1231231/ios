@@ -507,6 +507,10 @@ final class TelegramRepository {
         try await client.fetchChatProfile(chatId: chatId)
     }
 
+    func chatPeerIsBot(chatId: Int64) async throws -> Bool {
+        try await client.chatPeerIsBot(chatId: chatId)
+    }
+
     func loadChatMembers(chatId: Int64) async throws -> [ChatMember] {
         try await client.fetchChatMembers(chatId: chatId, limit: 80)
     }

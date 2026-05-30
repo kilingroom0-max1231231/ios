@@ -33,9 +33,9 @@ final class LocalMessageStore {
             INSERT INTO messages(
                 message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                 forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                sender_avatar_path, author_signature, view_count, reactions_json
+                sender_avatar_path, author_signature, view_count, reactions_json, is_service
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, message_id) DO UPDATE SET
               text=CASE
                 WHEN messages.is_deleted = 1 AND length(trim(excluded.text)) = 0 THEN messages.text
@@ -68,7 +68,8 @@ final class LocalMessageStore {
                 ELSE messages.author_signature
               END,
               view_count=COALESCE(excluded.view_count, messages.view_count),
-              reactions_json=excluded.reactions_json;
+              reactions_json=excluded.reactions_json,
+              is_service=excluded.is_service;
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -113,6 +114,7 @@ final class LocalMessageStore {
                     sqlite3_bind_null(stmt, 14)
                 }
                 bindReactionsJSON(stmt, 15, message.reactions)
+                sqlite3_bind_int(stmt, 16, message.isService ? 1 : 0)
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw NSError(domain: "LocalMessageStore", code: 3, userInfo: nil)
                 }
@@ -129,11 +131,11 @@ final class LocalMessageStore {
             let sql = """
             SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                    forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                   sender_avatar_path, author_signature, view_count, reactions_json
+                   sender_avatar_path, author_signature, view_count, reactions_json, is_service
             FROM (
                 SELECT message_id, chat_id, text, outgoing, created_at, is_deleted, media_album_id,
                        forwarded_from, reply_to_message_id, sender_user_id, sender_name,
-                       sender_avatar_path, author_signature, view_count, reactions_json
+                       sender_avatar_path, author_signature, view_count, reactions_json, is_service
                 FROM messages
                 WHERE chat_id = ?
                 ORDER BY created_at DESC
@@ -170,7 +172,8 @@ final class LocalMessageStore {
                         senderAvatarPath: optionalTextColumn(stmt, 11),
                         authorSignature: optionalTextColumn(stmt, 12),
                         viewCount: optionalIntColumn(stmt, 13),
-                        reactions: readReactionsJSON(stmt, 14)
+                        reactions: readReactionsJSON(stmt, 14),
+                        isService: sqlite3_column_int(stmt, 15) == 1
                     )
                 )
             }
@@ -304,6 +307,7 @@ final class LocalMessageStore {
             author_signature TEXT,
             view_count INTEGER,
             reactions_json TEXT,
+            is_service INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (chat_id, message_id)
         );
         CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at);
@@ -343,7 +347,8 @@ final class LocalMessageStore {
             ("sender_avatar_path", "TEXT"),
             ("author_signature", "TEXT"),
             ("view_count", "INTEGER"),
-            ("reactions_json", "TEXT")
+            ("reactions_json", "TEXT"),
+            ("is_service", "INTEGER")
         ]
         for (name, type) in columns where !columnExists("messages", name) {
             let sql = "ALTER TABLE messages ADD COLUMN \(name) \(type);"

@@ -30,6 +30,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedChatId: Int64?
     @Published var visibleChatId: Int64?
     @Published var messages: [TgMessage] = []
+    @Published var selectedChatPeerIsBot = false
     @Published var incomingToast: IncomingMessageToast?
     @Published var privacySettings: [UserPrivacySettingValue] = UserPrivacySettingKind.allCases.map {
         UserPrivacySettingValue(kind: $0, visibility: .contacts)
@@ -675,6 +676,7 @@ final class AppViewModel: ObservableObject {
     func selectChat(_ chatId: Int64) async {
         if selectedChatId != chatId {
             messages = []
+            selectedChatPeerIsBot = false
         }
         selectedChatId = chatId
         await refreshChatSendPermissions(chatId: chatId)
@@ -682,6 +684,27 @@ final class AppViewModel: ObservableObject {
         await refreshMessages(force: true)
         if visibleChatId == chatId {
             await markChatRead(chatId)
+        }
+        if let repository {
+            let isBot = (try? await repository.chatPeerIsBot(chatId: chatId)) ?? false
+            if selectedChatId == chatId {
+                selectedChatPeerIsBot = isBot
+            }
+        }
+    }
+
+    /// Sends the `/start` command Telegram shows for first-time bot interactions.
+    func sendBotStart() async {
+        guard let repository, let chatId = selectedChatId else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.openChat(chatId: chatId)
+            try await repository.send(chatId: chatId, text: "/start")
+            await refreshMessages(force: true)
+            await refreshChats()
+        } catch {
+            status = error.localizedDescription
         }
     }
 
@@ -1256,6 +1279,74 @@ final class AppViewModel: ObservableObject {
     func openChatByUsername(_ username: String) async throws -> Int64 {
         guard let repository else { throw NSError(domain: "App", code: -1) }
         return try await repository.openChatByUsername(username)
+    }
+
+    /// Entry point for tappable links inside messages and profiles.
+    func handleInternalLink(_ url: URL) {
+        Task { await resolveAndOpenLink(url) }
+    }
+
+    private func resolveAndOpenLink(_ url: URL) async {
+        let scheme = url.scheme?.lowercased() ?? ""
+
+        // tg://resolve?domain=... and tg://join?invite=...
+        if scheme == "tg" {
+            if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                if let domain = comps.queryItems?.first(where: { $0.name == "domain" })?.value {
+                    await openUsernameLink(domain)
+                    return
+                }
+                if let invite = comps.queryItems?.first(where: { $0.name == "invite" })?.value {
+                    await openInviteLink("https://t.me/+\(invite)")
+                    return
+                }
+            }
+            await openExternalLink(url)
+            return
+        }
+
+        let host = url.host?.lowercased()
+        if host == "t.me" || host == "telegram.me" || host == "telegram.dog" {
+            let parts = url.path.split(separator: "/").map(String.init)
+            if let first = parts.first, !first.isEmpty {
+                if first.hasPrefix("+") || first.lowercased() == "joinchat" {
+                    await openInviteLink(url.absoluteString)
+                    return
+                }
+                // Public username (ignore trailing message ids / extra path).
+                await openUsernameLink(first)
+                return
+            }
+            await openExternalLink(url)
+            return
+        }
+
+        await openExternalLink(url)
+    }
+
+    private func openUsernameLink(_ username: String) async {
+        let clean = username.hasPrefix("@") ? String(username.dropFirst()) : username
+        guard !clean.isEmpty else { return }
+        do {
+            let chatId = try await openChatByUsername(clean)
+            await openChat(chatId: chatId)
+        } catch {
+            status = AppText.tr("Не удалось открыть @\(clean)", "Couldn't open @\(clean)")
+        }
+    }
+
+    private func openInviteLink(_ link: String) async {
+        do {
+            let chatId = try await joinChatByInviteLink(link)
+            await openChat(chatId: chatId)
+        } catch {
+            status = AppText.tr("Не удалось перейти по ссылке", "Couldn't open invite link")
+        }
+    }
+
+    private func openExternalLink(_ url: URL) async {
+        guard url.scheme != nil else { return }
+        _ = await UIApplication.shared.open(url)
     }
 
     func joinChatByInviteLink(_ link: String) async throws -> Int64 {

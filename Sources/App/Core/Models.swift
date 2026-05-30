@@ -207,6 +207,8 @@ struct TgMessage: Identifiable, Equatable {
     let authorSignature: String?
     let viewCount: Int?
     let reactions: [TgMessageReaction]
+    /// True for chat service/system events (joins, pins, title changes, etc.).
+    let isService: Bool
 
     init(
         id: Int64,
@@ -226,7 +228,8 @@ struct TgMessage: Identifiable, Equatable {
         senderAvatarPath: String? = nil,
         authorSignature: String? = nil,
         viewCount: Int? = nil,
-        reactions: [TgMessageReaction] = []
+        reactions: [TgMessageReaction] = [],
+        isService: Bool = false
     ) {
         self.id = id
         self.chatId = chatId
@@ -246,6 +249,7 @@ struct TgMessage: Identifiable, Equatable {
         self.authorSignature = authorSignature
         self.viewCount = viewCount
         self.reactions = reactions
+        self.isService = isService
     }
 
     func withReactions(_ newReactions: [TgMessageReaction]) -> TgMessage {
@@ -267,7 +271,8 @@ struct TgMessage: Identifiable, Equatable {
             senderAvatarPath: senderAvatarPath,
             authorSignature: authorSignature,
             viewCount: viewCount,
-            reactions: newReactions
+            reactions: newReactions,
+            isService: isService
         )
     }
 
@@ -290,7 +295,8 @@ struct TgMessage: Identifiable, Equatable {
             senderAvatarPath: senderAvatarPath,
             authorSignature: authorSignature,
             viewCount: viewCount,
-            reactions: reactions
+            reactions: reactions,
+            isService: isService
         )
     }
 
@@ -316,7 +322,8 @@ struct TgMessage: Identifiable, Equatable {
             senderAvatarPath: senderAvatarPath ?? previous.senderAvatarPath,
             authorSignature: authorSignature ?? previous.authorSignature,
             viewCount: viewCount ?? previous.viewCount,
-            reactions: reactions
+            reactions: reactions,
+            isService: isService
         )
     }
 
@@ -452,6 +459,8 @@ struct ChatProfile: Equatable {
     let giftCount: Int
     let isBlockedByMe: Bool
     let isBlockedByPeer: Bool
+    let inviteLink: String?
+    let isBot: Bool
 
     init(
         chatId: Int64,
@@ -470,7 +479,9 @@ struct ChatProfile: Equatable {
         hasActiveStories: Bool = false,
         giftCount: Int = 0,
         isBlockedByMe: Bool = false,
-        isBlockedByPeer: Bool = false
+        isBlockedByPeer: Bool = false,
+        inviteLink: String? = nil,
+        isBot: Bool = false
     ) {
         self.chatId = chatId
         self.title = title
@@ -489,6 +500,8 @@ struct ChatProfile: Equatable {
         self.giftCount = giftCount
         self.isBlockedByMe = isBlockedByMe
         self.isBlockedByPeer = isBlockedByPeer
+        self.inviteLink = inviteLink
+        self.isBot = isBot
     }
 }
 

@@ -85,6 +85,7 @@ struct ChatDetailView: View {
             messageActionsOverlayLayer
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: messageActionTarget?.id)
+        .handleTelegramLinks(vm)
     }
 
     private var chatScreen: some View {
@@ -577,16 +578,7 @@ struct ChatDetailView: View {
     }
 
     private func isServiceMessage(_ message: TgMessage) -> Bool {
-        message.text.hasPrefix("📌 ")
-            || message.text.hasPrefix("🔗 ")
-            || message.text.hasPrefix("✅ ")
-            || message.text.hasPrefix("👥 ")
-            || message.text.hasPrefix("👤 ")
-            || message.text.hasPrefix("🚫 ")
-            || message.text.hasPrefix("✏️ ")
-            || message.text.hasPrefix("🖼️ ")
-            || message.text.hasPrefix("🗑️ ")
-            || message.text.hasPrefix("🎨 ")
+        message.isService
     }
 
     private func swipeActionHandler(for message: TgMessage, action: MessageSwipeAction) -> (() -> Void)? {
@@ -667,9 +659,18 @@ struct ChatDetailView: View {
         .accessibilityLabel(AppText.tr("Вниз", "Scroll down"))
     }
 
+    private var showBotStartButton: Bool {
+        vm.selectedChatPeerIsBot
+            && vm.messages.isEmpty
+            && !vm.isBusy
+            && canSend
+    }
+
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            if !canSend, let reason = selectedChat?.sendRestrictionText {
+            if showBotStartButton {
+                botStartButton
+            } else if !canSend, let reason = selectedChat?.sendRestrictionText {
                 Text(reason)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -681,6 +682,22 @@ struct ChatDetailView: View {
             }
         }
         .background(Color.clear)
+    }
+
+    private var botStartButton: some View {
+        Button {
+            Task { await vm.sendBotStart() }
+        } label: {
+            Text(AppText.tr("ЗАПУСТИТЬ", "START"))
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(AppColors.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var composerBar: some View {

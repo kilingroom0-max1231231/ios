@@ -43,6 +43,7 @@ protocol TelegramClientProtocol {
     func deleteMessages(chatId: Int64, messageIds: [Int64], revoke: Bool) async throws
     func downloadFile(fileId: Int64) async throws -> String?
     func fetchChatProfile(chatId: Int64) async throws -> ChatProfile
+    func chatPeerIsBot(chatId: Int64) async throws -> Bool
     func fetchChatMembers(chatId: Int64, limit: Int) async throws -> [ChatMember]
     func fetchChatMedia(chatId: Int64, limit: Int) async throws -> [TgMessage]
     func openChat(chatId: Int64) async throws

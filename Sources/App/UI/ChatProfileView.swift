@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ChatProfileView: View {
     @ObservedObject var vm: AppViewModel
@@ -77,6 +78,7 @@ struct ChatProfileView: View {
         }
         .navigationTitle("Профиль")
         .navigationBarTitleDisplayMode(.inline)
+        .handleTelegramLinks(vm)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: selectedTab)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: showAvatar)
         .fullScreenCover(item: $mediaSelection) { selection in
@@ -193,13 +195,23 @@ struct ChatProfileView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.orange)
             } else {
-                Text(profile.statusText?.isEmpty == false ? profile.statusText ?? "" : kindText(profile.kind))
+                Text(headerStatusText)
                     .font(.subheadline)
                     .foregroundStyle(statusColor(profile.statusText))
                     .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var headerStatusText: String {
+        if let status = profile.statusText, !status.isEmpty {
+            return status
+        }
+        if profile.isBot {
+            return AppText.tr("бот", "bot")
+        }
+        return kindText(profile.kind)
     }
 
     private var blockBannerText: String {
@@ -254,12 +266,18 @@ struct ChatProfileView: View {
                 profileRow(
                     icon: "person.text.rectangle",
                     title: AppText.tr("Тип", "Type"),
-                    value: kindText(profile.kind)
+                    value: profile.isBot ? AppText.tr("Бот", "Bot") : kindText(profile.kind)
                 )
             }
 
-            if let members = profile.membersCount {
-                profileRow(icon: "person.2.fill", title: "Участники", value: membersText(members))
+            if let members = profile.membersCount, members > 0 {
+                profileRow(
+                    icon: "person.2.fill",
+                    title: profile.kind == .channel
+                        ? AppText.tr("Подписчики", "Subscribers")
+                        : AppText.tr("Участники", "Members"),
+                    value: membersText(members, isChannel: profile.kind == .channel)
+                )
             }
 
             if appSettings.showProfileChatId {
@@ -274,9 +292,23 @@ struct ChatProfileView: View {
 
         if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
            !description.isEmpty {
-            Section("Описание") {
-                Text(description)
-                    .textSelection(.enabled)
+            Section(AppText.tr("Описание", "About")) {
+                LinkifiedText(text: description)
+                    .font(.subheadline)
+                    .tint(AppColors.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+
+        if let invite = profile.inviteLink, !invite.isEmpty {
+            Section(AppText.tr("Ссылка", "Link")) {
+                Button {
+                    UIPasteboard.general.string = invite
+                    vm.status = AppText.tr("Ссылка скопирована", "Link copied")
+                } label: {
+                    profileRow(icon: "link", title: AppText.tr("Пригласительная ссылка", "Invite link"), value: invite)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -510,8 +542,11 @@ struct ChatProfileView: View {
             : .secondary
     }
 
-    private func membersText(_ count: Int) -> String {
-        "\(count) \(count == 1 ? "участник" : "участников")"
+    private func membersText(_ count: Int, isChannel: Bool = false) -> String {
+        if isChannel {
+            return AppText.tr("\(count) подписчиков", "\(count) subscribers")
+        }
+        return "\(count) \(count == 1 ? "участник" : "участников")"
     }
 
     private func kindText(_ kind: ChatKind) -> String {

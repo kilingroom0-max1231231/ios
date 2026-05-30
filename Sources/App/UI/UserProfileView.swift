@@ -40,6 +40,7 @@ struct UserProfileView: View {
         }
         .navigationTitle(AppText.tr("Профиль", "Profile"))
         .navigationBarTitleDisplayMode(.inline)
+        .handleTelegramLinks(vm)
         .task(id: userId) {
             await vm.loadUserProfile(userId: userId)
         }
@@ -213,8 +214,10 @@ struct UserProfileView: View {
                     Text(AppText.tr("О себе", "Bio"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(bio)
-                        .textSelection(.enabled)
+                    LinkifiedText(text: bio)
+                        .font(.subheadline)
+                        .tint(AppColors.accent)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if profile.giftCount > 0 {

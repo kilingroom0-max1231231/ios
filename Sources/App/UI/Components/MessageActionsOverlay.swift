@@ -169,7 +169,78 @@ struct MessageActionsOverlay: View {
         }
     }
 
+    @ViewBuilder
     private func positionedContent(
+        messageFrame: CGRect,
+        containerSize: CGSize,
+        safeTop: CGFloat,
+        safeBottom: CGFloat,
+        maxExpandedReactionsHeight: CGFloat
+    ) -> some View {
+        let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
+        let actionsH = actionsMenuHeight
+        let topMargin = safeTop + 8
+        let bottomMargin = safeBottom + 8
+        let available = containerSize.height - topMargin - bottomMargin
+        // Natural height with an uncapped bubble. When it doesn't fit, fall back to a
+        // scrollable stack so the action buttons stay reachable for long messages.
+        let naturalStack = reactionsH + 10 + min(messageFrame.height, available) + 10 + actionsH
+
+        if naturalStack > available {
+            scrollableStack(
+                messageFrame: messageFrame,
+                containerSize: containerSize,
+                safeTop: safeTop,
+                safeBottom: safeBottom,
+                maxExpandedReactionsHeight: maxExpandedReactionsHeight
+            )
+        } else {
+            anchoredContent(
+                messageFrame: messageFrame,
+                containerSize: containerSize,
+                safeTop: safeTop,
+                safeBottom: safeBottom,
+                maxExpandedReactionsHeight: maxExpandedReactionsHeight
+            )
+        }
+    }
+
+    private func scrollableStack(
+        messageFrame: CGRect,
+        containerSize: CGSize,
+        safeTop: CGFloat,
+        safeBottom: CGFloat,
+        maxExpandedReactionsHeight: CGFloat
+    ) -> some View {
+        let inset: CGFloat = 12
+        let reactionsWidth = min(containerSize.width - inset * 2, 340)
+        let actionsWidth = min(containerSize.width - inset * 2, 250)
+        let alignment: HorizontalAlignment = message.outgoing ? .trailing : .leading
+
+        return ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: alignment, spacing: 10) {
+                reactionsPanel(width: reactionsWidth, maxExpandedHeight: maxExpandedReactionsHeight)
+                    .scaleEffect(reactionsScale, anchor: .bottom)
+                    .opacity(panelsOpacity)
+
+                highlightedBubble()
+                    .scaleEffect(bubbleScale)
+                    .frame(maxWidth: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
+
+                actionsMenu(width: actionsWidth)
+                    .scaleEffect(actionsScale, anchor: .top)
+                    .opacity(panelsOpacity)
+            }
+            .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
+            .padding(.horizontal, inset)
+            .padding(.top, safeTop + 8)
+            .padding(.bottom, safeBottom + 8)
+        }
+        .frame(width: containerSize.width, height: containerSize.height)
+        .animation(panelSpring, value: reactionsExpanded)
+    }
+
+    private func anchoredContent(
         messageFrame: CGRect,
         containerSize: CGSize,
         safeTop: CGFloat,

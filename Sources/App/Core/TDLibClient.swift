@@ -1129,6 +1129,23 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return nil
     }
 
+    func chatPeerIsBot(chatId: Int64) async throws -> Bool {
+        let chat = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        guard
+            let type = chat["type"] as? [String: Any],
+            (type["@type"] as? String) == "chatTypePrivate",
+            let userId = int64Value(type["user_id"])
+        else { return false }
+        let user = try await sendRequest([
+            "@type": "getUser",
+            "user_id": userId
+        ])
+        return ((user["type"] as? [String: Any])?["@type"] as? String) == "userTypeBot"
+    }
+
     func fetchChatProfile(chatId: Int64) async throws -> ChatProfile {
         let chat = try await sendRequest([
             "@type": "getChat",
@@ -1177,7 +1194,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     hasActiveStories: meta.hasActiveStories,
                     giftCount: meta.giftCount,
                     isBlockedByMe: blockState.blockedByMe,
-                    isBlockedByPeer: blockState.blockedByPeer
+                    isBlockedByPeer: blockState.blockedByPeer,
+                    isBot: meta.isBot
                 )
             }
             fallthrough
@@ -1187,16 +1205,23 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     "@type": "getBasicGroup",
                     "basic_group_id": groupId
                 ])
-                let members = (group["member_count"] as? Int)
+                let fullInfo = try? await sendRequest([
+                    "@type": "getBasicGroupFullInfo",
+                    "basic_group_id": groupId
+                ])
+                let members = (group["member_count"] as? Int) ?? (fullInfo?["members"] as? [Any])?.count
+                let desc = (fullInfo?["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let invite = (fullInfo?["invite_link"] as? [String: Any])?["invite_link"] as? String
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
                     kind: .basicGroup,
                     avatarPath: avatarPath,
                     username: nil,
-                    description: nil,
+                    description: (desc?.isEmpty ?? true) ? nil : desc,
                     membersCount: members,
-                    statusText: nil
+                    statusText: nil,
+                    inviteLink: invite
                 )
             }
             fallthrough
@@ -1206,19 +1231,26 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     "@type": "getSupergroup",
                     "supergroup_id": sgId
                 ])
+                let fullInfo = try? await sendRequest([
+                    "@type": "getSupergroupFullInfo",
+                    "supergroup_id": sgId
+                ])
                 let isChannel = (sg["is_channel"] as? Bool) ?? false
-                let username = sg["username"] as? String
-                let members = sg["member_count"] as? Int
-                let desc = sg["description"] as? String
+                let username = activeUsername(from: sg)
+                let members = (fullInfo?["member_count"] as? Int)
+                    ?? (sg["member_count"] as? Int)
+                let desc = (fullInfo?["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let invite = (fullInfo?["invite_link"] as? [String: Any])?["invite_link"] as? String
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
                     kind: isChannel ? .channel : .supergroup,
                     avatarPath: avatarPath,
                     username: username,
-                    description: desc,
+                    description: (desc?.isEmpty ?? true) ? nil : desc,
                     membersCount: members,
-                    statusText: nil
+                    statusText: nil,
+                    inviteLink: invite
                 )
             }
             fallthrough
@@ -2448,6 +2480,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         var isDeleted = false
+        var isService = false
         var text = ""
         if let content = obj["content"] as? [String: Any],
            let contentType = content["@type"] as? String {
@@ -2459,6 +2492,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 text = rawText
             } else if let service = serviceMessageText(contentType: contentType, content: content) {
                 text = service
+                isService = true
             } else if let captionObj = content["caption"] as? [String: Any],
                       let caption = captionObj["text"] as? String {
                 text = caption
@@ -2498,7 +2532,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             senderUserId: senderUserId,
             authorSignature: signature,
             viewCount: viewCount,
-            reactions: reactions
+            reactions: reactions,
+            isService: isService
         )
     }
 
@@ -2835,6 +2870,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let hasActiveStories: Bool
         let giftCount: Int
         let bio: String?
+        let isBot: Bool
     }
 
     private func loadUserMeta(userId: Int64) async throws -> UserMeta {
@@ -2857,6 +2893,21 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         if let channelId = int64Value(full?["personal_channel_id"]), channelId != 0 {
             personalChannel = try? await resolveLinkedChannel(chatId: channelId)
         }
+
+        let isBot = ((user["type"] as? [String: Any])?["@type"] as? String) == "userTypeBot"
+
+        // Regular users expose `bio`; bots expose their description via `bot_info`.
+        var about = formattedText(from: full?["bio"] as? [String: Any])
+        if (about?.isEmpty ?? true), let botInfo = full?["bot_info"] as? [String: Any] {
+            let desc = (botInfo["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shortDesc = (botInfo["short_description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let desc, !desc.isEmpty {
+                about = desc
+            } else if let shortDesc, !shortDesc.isEmpty {
+                about = shortDesc
+            }
+        }
+
         return UserMeta(
             username: activeUsername(from: user),
             phoneNumber: phone,
@@ -2865,7 +2916,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             premiumBadgePath: premiumBadgePath,
             hasActiveStories: (user["has_active_stories"] as? Bool) ?? false,
             giftCount: max(0, giftCount),
-            bio: formattedText(from: full?["bio"] as? [String: Any])
+            bio: about,
+            isBot: isBot
         )
     }
 
@@ -3494,7 +3546,16 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             ])
             rememberSupergroup(supergroup, supergroupId: supergroupId)
             let isChannel = (supergroup["is_channel"] as? Bool) ?? false
-            let count = memberCount(from: supergroup)
+            var count = memberCount(from: supergroup)
+            // `getSupergroup` often reports 0 members for channels; full info is authoritative.
+            if count <= 0 {
+                if let full = try? await sendRequest([
+                    "@type": "getSupergroupFullInfo",
+                    "supergroup_id": supergroupId
+                ]) {
+                    count = memberCount(from: full)
+                }
+            }
             return (memberCountLabel(count, isChannel: isChannel), false)
         }
 

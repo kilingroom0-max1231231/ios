@@ -272,9 +272,10 @@ struct MessageBubbleView: View {
             }
 
             if let captionText {
-                Text(captionText)
+                LinkifiedText(text: captionText)
                     .font(captionFont)
                     .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme) : .primary)
+                    .tint(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme) : appearance.accentColor)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 11)
