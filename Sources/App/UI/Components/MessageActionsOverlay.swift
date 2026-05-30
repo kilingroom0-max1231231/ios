@@ -625,7 +625,7 @@ struct MessageActionsOverlay: View {
             }
         }
 
-        Group {
+        return Group {
             if actionItems.count > actionsScrollThreshold {
                 ScrollView(.vertical, showsIndicators: true) {
                     rows
