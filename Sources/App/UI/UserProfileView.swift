@@ -220,9 +220,8 @@ struct UserProfileView: View {
                     Text(AppText.tr("О себе", "Bio"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    LinkifiedText(text: bio)
+                    LinkifiedText(text: bio, linkColor: AppColors.accent)
                         .font(.subheadline)
-                        .linkColor(AppColors.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

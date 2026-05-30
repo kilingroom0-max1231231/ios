@@ -303,9 +303,8 @@ struct ChatProfileView: View {
         if let description = profile.description?.trimmingCharacters(in: .whitespacesAndNewlines),
            !description.isEmpty {
             Section(AppText.tr("Описание", "About")) {
-                LinkifiedText(text: description)
+                LinkifiedText(text: description, linkColor: AppColors.accent)
                     .font(.subheadline)
-                    .linkColor(AppColors.accent)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
