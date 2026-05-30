@@ -7,7 +7,7 @@ struct ChatPeekView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var chat: TgChat? {
-        vm.chats.first(where: { $0.id == chatId })
+        vm.chat(for: chatId)
     }
 
     var body: some View {

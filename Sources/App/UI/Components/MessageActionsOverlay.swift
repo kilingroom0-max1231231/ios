@@ -68,7 +68,7 @@ struct MessageActionsOverlay: View {
 
     private let collapsedReactionsHeight: CGFloat = 56
     private let expandedRowHeight: CGFloat = 42
-    private let expandedMaxRowsVisible: CGFloat = 3.5
+    private let expandedMaxRowsVisible: CGFloat = 6
 
     private var reactionGridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
@@ -160,7 +160,7 @@ struct MessageActionsOverlay: View {
     ) -> CGFloat {
         let available = containerHeight - safeTop - safeBottom
         let preferred = expandedMaxRowsVisible * expandedRowHeight + 36
-        return max(110, min(preferred, available * 0.42, 240))
+        return max(110, min(preferred, available * 0.62, 380))
     }
 
     private var backdrop: some View {
@@ -210,7 +210,7 @@ struct MessageActionsOverlay: View {
                     .scaleEffect(reactionsScale, anchor: .bottom)
                     .opacity(panelsOpacity)
 
-                    highlightedBubble()
+                    highlightedBubble(maxHeight: containerSize.height * 0.55, scrollable: true)
                         .scaleEffect(bubbleScale)
                         .frame(maxWidth: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
 

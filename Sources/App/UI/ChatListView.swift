@@ -33,6 +33,15 @@ struct ChatListView: View {
 
     private var chatListContent: some View {
         List {
+            if !isArchiveMode, appSettings.showChatFolderTabs, !vm.chatFolders.isEmpty {
+                Section {
+                    ChatFolderTabsView(vm: vm)
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
+            }
+
             if !isArchiveMode, let summary = vm.archiveSummary {
                 NavigationLink {
                     ChatListView(vm: vm, mode: .archive)
@@ -69,13 +78,9 @@ struct ChatListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
             text: $vm.chatSearch,
+            placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: AppText.tr("Поиск", "Search")
         )
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !isArchiveMode, appSettings.showChatFolderTabs, !vm.chatFolders.isEmpty {
-                ChatFolderTabsView(vm: vm)
-            }
-        }
         .overlay {
             if displayedChats.isEmpty && !vm.isBusy {
                 emptyChatsView

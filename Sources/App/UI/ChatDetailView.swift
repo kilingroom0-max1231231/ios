@@ -33,7 +33,7 @@ struct ChatDetailView: View {
     }
 
     private var selectedChat: TgChat? {
-        vm.chats.first(where: { $0.id == chatId })
+        vm.chat(for: chatId)
     }
 
     private var title: String {

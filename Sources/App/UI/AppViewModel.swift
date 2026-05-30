@@ -81,6 +81,7 @@ final class AppViewModel: ObservableObject {
     private var activeTypersByChat: [Int64: [Int64: TypingParticipant]] = [:]
     private var ephemeralTypingByChat: [Int64: String] = [:]
     private var chatFoldersByAccount: [String: [TgChatFolder]] = [:]
+    private var openChatCache: [Int64: TgChat] = [:]
 
     private struct TypingParticipant: Equatable {
         var name: String
@@ -148,8 +149,56 @@ final class AppViewModel: ObservableObject {
 
     var selectedChat: TgChat? {
         guard let selectedChatId else { return nil }
-        return chats.first(where: { $0.id == selectedChatId })
-            ?? archivedChats.first(where: { $0.id == selectedChatId })
+        return chat(for: selectedChatId)
+    }
+
+    func chat(for chatId: Int64) -> TgChat? {
+        chats.first(where: { $0.id == chatId })
+            ?? archivedChats.first(where: { $0.id == chatId })
+            ?? openChatCache[chatId]
+    }
+
+    func prepareChatFromContact(_ contact: TgContact) {
+        openChatCache[contact.privateChatId] = TgChat(
+            id: contact.privateChatId,
+            title: contact.displayName,
+            avatarPath: contact.avatarPath,
+            kind: .private,
+            privateUserId: contact.userId,
+            peerIsPremium: contact.isPremium,
+            peerPremiumBadgePath: contact.premiumBadgePath,
+            peerUsername: contact.username
+        )
+    }
+
+    private func applyLoadedChatSummary(_ updated: TgChat) {
+        var merged = updated
+        merged.typingText = resolvedTypingText(for: updated.id)
+        openChatCache[updated.id] = merged
+
+        if let index = chats.firstIndex(where: { $0.id == updated.id }) {
+            var listMerged = merged
+            preserveInteractionPermissions(from: chats[index], into: &listMerged)
+            listMerged.isPinned = chats[index].isPinned
+            listMerged.pinOrder = chats[index].pinOrder
+            listMerged.unreadCount = chats[index].unreadCount
+            listMerged.isMuted = chats[index].isMuted
+            listMerged.muteUntil = chats[index].muteUntil
+            listMerged.isMarkedUnread = chats[index].isMarkedUnread
+            listMerged.draftText = chats[index].draftText
+            listMerged.lastMessagePreview = chats[index].lastMessagePreview ?? listMerged.lastMessagePreview
+            listMerged.lastMessageId = chats[index].lastMessageId ?? listMerged.lastMessageId
+            listMerged.lastMessageDate = chats[index].lastMessageDate ?? listMerged.lastMessageDate
+            chats[index] = listMerged
+            openChatCache[updated.id] = listMerged
+        }
+
+        if let index = archivedChats.firstIndex(where: { $0.id == updated.id }) {
+            var archiveMerged = merged
+            preserveInteractionPermissions(from: archivedChats[index], into: &archiveMerged)
+            archivedChats[index] = archiveMerged
+            openChatCache[updated.id] = archiveMerged
+        }
     }
 
     var accountList: [AccountSession] {
@@ -347,6 +396,7 @@ final class AppViewModel: ObservableObject {
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
         clearAllTypingState()
+        openChatCache.removeAll()
 
         let outgoingAccountId = accountSessions.activeAccountId
         if !chatFolders.isEmpty {
@@ -803,18 +853,7 @@ final class AppViewModel: ObservableObject {
         guard let repository else { return }
         guard let updated = try? await repository.loadChatDetails(chatId: chatId, listKind: mainListKind) else { return }
         guard selectedChatId == chatId else { return }
-        updateLocalChat(chatId) { chat in
-            chat.statusText = updated.statusText
-            chat.isOnline = updated.isOnline
-            chat.kind = updated.kind
-            chat.canSendMessages = updated.canSendMessages
-            chat.canAddReactions = updated.canAddReactions
-            chat.sendRestrictionText = updated.sendRestrictionText
-            chat.peerUsername = updated.peerUsername ?? chat.peerUsername
-            chat.peerIsPremium = updated.peerIsPremium
-            chat.isBlockedByMe = updated.isBlockedByMe
-            chat.isBlockedByPeer = updated.isBlockedByPeer
-        }
+        applyLoadedChatSummary(updated)
     }
 
     func refreshChatSendPermissions(chatId: Int64) async {
@@ -2554,9 +2593,13 @@ final class AppViewModel: ObservableObject {
     private func updateLocalChat(_ chatId: Int64, mutate: (inout TgChat) -> Void) {
         if let index = chats.firstIndex(where: { $0.id == chatId }) {
             mutate(&chats[index])
-        }
-        if let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
+            openChatCache[chatId] = chats[index]
+        } else if let index = archivedChats.firstIndex(where: { $0.id == chatId }) {
             mutate(&archivedChats[index])
+            openChatCache[chatId] = archivedChats[index]
+        } else if var cached = openChatCache[chatId] {
+            mutate(&cached)
+            openChatCache[chatId] = cached
         }
     }
 

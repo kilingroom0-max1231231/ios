@@ -211,6 +211,7 @@ struct ContactsListView: View {
 
     private func contactRow(_ contact: TgContact) -> some View {
         Button {
+            vm.prepareChatFromContact(contact)
             navigationPath.append(contact.privateChatId)
         } label: {
             ContactCardView(
