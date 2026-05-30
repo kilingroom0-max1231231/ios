@@ -3,6 +3,7 @@ import SwiftUI
 struct UserProfileView: View {
     @ObservedObject var vm: AppViewModel
     @EnvironmentObject private var appSettings: AppSettingsStore
+    @Environment(\.dismiss) private var dismiss
     let userId: Int64
 
     @State private var selectedTab: Tab = .overview
@@ -40,7 +41,7 @@ struct UserProfileView: View {
         }
         .navigationTitle(AppText.tr("Профиль", "Profile"))
         .navigationBarTitleDisplayMode(.inline)
-        .handleTelegramLinks(vm)
+        .handleTelegramLinks(vm, onNavigate: { dismiss() })
         .task(id: userId) {
             await vm.loadUserProfile(userId: userId)
         }
@@ -119,7 +120,9 @@ struct UserProfileView: View {
                 UsernameLine(
                     username: username,
                     font: .subheadline,
-                    color: AppColors.accent
+                    color: AppColors.accent,
+                    vm: vm,
+                    onNavigate: { dismiss() }
                 )
             }
 
@@ -188,7 +191,10 @@ struct UserProfileView: View {
 
             if let channel = profile.personalChannel {
                 ProfileLinkedChannelRow(channel: channel) {
-                    Task { await vm.openChat(chatId: channel.chatId) }
+                    Task {
+                        await vm.openChat(chatId: channel.chatId)
+                        dismiss()
+                    }
                 }
             }
 
@@ -216,7 +222,7 @@ struct UserProfileView: View {
                         .foregroundStyle(.secondary)
                     LinkifiedText(text: bio)
                         .font(.subheadline)
-                        .tint(AppColors.accent)
+                        .linkColor(AppColors.accent)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

@@ -63,6 +63,7 @@ struct TgChat: Identifiable, Equatable, Codable {
     var statusText: String?
     var isOnline: Bool?
     var canSendMessages: Bool?
+    var canAddReactions: Bool?
     var sendRestrictionText: String?
     var unreadCount: Int
     var kind: ChatKind
@@ -93,6 +94,7 @@ struct TgChat: Identifiable, Equatable, Codable {
         statusText: String? = nil,
         isOnline: Bool? = nil,
         canSendMessages: Bool? = nil,
+        canAddReactions: Bool? = nil,
         sendRestrictionText: String? = nil,
         unreadCount: Int = 0,
         kind: ChatKind = .unknown,
@@ -122,6 +124,7 @@ struct TgChat: Identifiable, Equatable, Codable {
         self.statusText = statusText
         self.isOnline = isOnline
         self.canSendMessages = canSendMessages
+        self.canAddReactions = canAddReactions
         self.sendRestrictionText = sendRestrictionText
         self.unreadCount = unreadCount
         self.kind = kind
@@ -515,8 +518,8 @@ struct UserProfileDetail: Equatable, Identifiable {
     let bio: String?
     let avatarPath: String?
     let personalChannel: ProfileLinkedChannel?
-    let statusText: String?
-    let isOnline: Bool
+    var statusText: String?
+    var isOnline: Bool
     let isPremium: Bool
     let premiumBadgePath: String?
     let hasActiveStories: Bool
@@ -669,6 +672,7 @@ enum TelegramEvent {
     case chatFoldersChanged
     case chatChanged(Int64)
     case chatTypingChanged(chatId: Int64, userId: Int64?, actionKey: String?)
+    case userStatusChanged(userId: Int64, statusText: String, isOnline: Bool)
     case messageInteractionUpdated(chatId: Int64, messageId: Int64, reactions: [TgMessageReaction], viewCount: Int?)
 }
 

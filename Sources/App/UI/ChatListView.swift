@@ -69,7 +69,6 @@ struct ChatListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
             text: $vm.chatSearch,
-            placement: .navigationBarDrawer(displayMode: .always),
             prompt: AppText.tr("Поиск", "Search")
         )
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -170,6 +169,7 @@ struct ChatListView: View {
         NavigationLink(value: chat.id) {
             ChatCardView(
                 chat: chat,
+                vm: vm,
                 onPremiumBadgeTap: chat.kind == .private && chat.peerIsPremium
                     ? { vm.presentPremiumUpsell(for: chat.title, badgePath: chat.peerPremiumBadgePath) }
                     : nil
@@ -414,6 +414,7 @@ struct ChatListView: View {
 
 private struct ChatCardView: View {
     let chat: TgChat
+    var vm: AppViewModel? = nil
     var onPremiumBadgeTap: (() -> Void)?
 
     var body: some View {
@@ -426,9 +427,9 @@ private struct ChatCardView: View {
                     size: 52,
                     isSavedMessages: chat.kind == .savedMessages
                 )
-                if chat.kind == .private {
+                if chat.kind == .private, chat.isOnline == true {
                     Circle()
-                        .fill((chat.isOnline ?? false) ? Color.green : Color.gray.opacity(0.75))
+                        .fill(Color.green)
                         .frame(width: 12, height: 12)
                         .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
                         .offset(x: 1, y: 1)
@@ -488,7 +489,8 @@ private struct ChatCardView: View {
                     UsernameLine(
                         username: username,
                         font: .caption,
-                        color: .secondary
+                        color: AppColors.accent,
+                        vm: vm
                     )
                 }
 

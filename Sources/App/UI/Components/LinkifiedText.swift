@@ -2,8 +2,6 @@ import Foundation
 import SwiftUI
 
 /// Builds an `AttributedString` with tappable links for URLs, @mentions and t.me links.
-/// Only the `.link` attribute is applied so the caller controls font/color via SwiftUI
-/// modifiers (`.font`, `.foregroundStyle`) and link tint via `.tint`.
 enum MessageTextLinker {
     static func attributed(_ text: String) -> AttributedString {
         var attr = AttributedString(text)
@@ -18,12 +16,11 @@ enum MessageTextLinker {
                 let lower = AttributedString.Index(swiftRange.lowerBound, within: attr),
                 let upper = AttributedString.Index(swiftRange.upperBound, within: attr)
             else { return }
-            // Don't overwrite an already-linked region (e.g. URL detected first).
             if attr[lower..<upper].runs.contains(where: { $0.link != nil }) { return }
             attr[lower..<upper].link = url
+            attr[lower..<upper].underlineStyle = .single
         }
 
-        // 1. Standard URLs / emails via the system detector.
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
             detector.enumerateMatches(in: text, options: [], range: full) { result, _, _ in
                 guard let result, let url = result.url else { return }
@@ -31,7 +28,6 @@ enum MessageTextLinker {
             }
         }
 
-        // 2. Bare t.me / telegram.me links without a scheme.
         addRegexLinks(
             in: text,
             attr: &attr,
@@ -43,7 +39,6 @@ enum MessageTextLinker {
             }
         )
 
-        // 3. @mentions -> resolved as public usernames.
         addRegexLinks(
             in: text,
             attr: &attr,
@@ -75,6 +70,7 @@ enum MessageTextLinker {
             else { return }
             if attr[lower..<upper].runs.contains(where: { $0.link != nil }) { return }
             attr[lower..<upper].link = url
+            attr[lower..<upper].underlineStyle = .single
         }
     }
 }
@@ -83,18 +79,29 @@ enum MessageTextLinker {
 /// `.tint` on the resulting view to control styling.
 struct LinkifiedText: View {
     let text: String
+    var linkColor: Color = AppColors.accent
 
     var body: some View {
         Text(MessageTextLinker.attributed(text))
+            .tint(linkColor)
             .textSelection(.enabled)
     }
 }
 
+struct TappableLinkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.65 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 extension View {
-    /// Routes link taps (URLs, @mentions, t.me invite links) through the view model so
-    /// they open the right chat / external page instead of the default browser handler.
-    func handleTelegramLinks(_ vm: AppViewModel) -> some View {
+    /// Routes link taps through the view model and optionally dismisses the current screen.
+    func handleTelegramLinks(_ vm: AppViewModel, onNavigate: (() -> Void)? = nil) -> some View {
         environment(\.openURL, OpenURLAction { url in
+            onNavigate?()
             vm.handleInternalLink(url)
             return .handled
         })

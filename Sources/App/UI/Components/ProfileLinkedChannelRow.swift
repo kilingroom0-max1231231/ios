@@ -23,6 +23,7 @@ struct ProfileLinkedChannelRow: View {
                         Text("@\(username)")
                             .font(.caption)
                             .foregroundStyle(AppColors.accent)
+                            .underline(true, color: AppColors.accent.opacity(0.45))
                     } else {
                         Text(AppText.tr("Личный канал", "Personal channel"))
                             .font(.caption)
@@ -38,6 +39,6 @@ struct ProfileLinkedChannelRow: View {
             }
             .padding(.vertical, 2)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TappableLinkButtonStyle())
     }
 }

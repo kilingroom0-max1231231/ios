@@ -22,6 +22,7 @@ final class TelegramRepository {
     var onChatFoldersChanged: (() -> Void)?
     var onChatChanged: ((Int64) -> Void)?
     var onTypingChanged: ((ChatTypingUpdate) -> Void)?
+    var onUserStatusChanged: ((Int64, String, Bool) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
     var onMessageUpserted: ((TgMessage) -> Void)?
     var onMessagesDeleted: ((Int64, [Int64]) -> Void)?
@@ -67,6 +68,8 @@ final class TelegramRepository {
                 self.onChatChanged?(chatId)
             case .chatTypingChanged(let chatId, let userId, let actionKey):
                 self.onTypingChanged?(ChatTypingUpdate(chatId: chatId, userId: userId, actionKey: actionKey))
+            case .userStatusChanged(let userId, let statusText, let isOnline):
+                self.onUserStatusChanged?(userId, statusText, isOnline)
             case .messageInteractionUpdated(let chatId, let messageId, let reactions, let viewCount):
                 self.onMessageInteractionUpdated?(chatId, messageId, reactions, viewCount)
             }
@@ -384,8 +387,8 @@ final class TelegramRepository {
         try await client.closeChat(chatId: chatId)
     }
 
-    func refreshChatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
-        try await client.chatSendPermissions(chatId: chatId)
+    func refreshChatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, canAddReactions: Bool, reason: String?) {
+        try await client.chatInteractionPermissions(chatId: chatId)
     }
 
     func pinMessage(chatId: Int64, messageId: Int64) async throws {

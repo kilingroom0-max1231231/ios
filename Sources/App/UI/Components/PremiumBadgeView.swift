@@ -78,13 +78,37 @@ struct PremiumBadgeView: View {
 struct UsernameLine: View {
     let username: String
     var font: Font = .caption
-    var color: Color = .secondary
+    var color: Color = AppColors.accent
+    var vm: AppViewModel? = nil
+    var onNavigate: (() -> Void)? = nil
+
+    private var isInteractive: Bool { vm != nil }
 
     var body: some View {
+        Group {
+            if isInteractive {
+                Button(action: openUsername) {
+                    label
+                }
+                .buttonStyle(TappableLinkButtonStyle())
+            } else {
+                label
+            }
+        }
+    }
+
+    private var label: some View {
         Text("@\(username)")
             .font(font)
             .foregroundStyle(color)
+            .underline(isInteractive, color: color.opacity(0.5))
             .lineLimit(1)
+    }
+
+    private func openUsername() {
+        onNavigate?()
+        guard let vm, let url = URL(string: "https://t.me/\(username)") else { return }
+        vm.handleInternalLink(url)
     }
 }
 

@@ -215,6 +215,7 @@ struct ContactsListView: View {
         } label: {
             ContactCardView(
                 contact: contact,
+                vm: vm,
                 onPremiumBadgeTap: contact.isPremium
                     ? { vm.presentPremiumUpsell(for: contact.displayName, badgePath: contact.premiumBadgePath) }
                     : nil
@@ -226,6 +227,7 @@ struct ContactsListView: View {
 
 private struct ContactCardView: View {
     let contact: TgContact
+    var vm: AppViewModel? = nil
     var onPremiumBadgeTap: (() -> Void)?
 
     var body: some View {
@@ -256,7 +258,8 @@ private struct ContactCardView: View {
                     UsernameLine(
                         username: username,
                         font: .subheadline,
-                        color: .secondary
+                        color: AppColors.accent,
+                        vm: vm
                     )
                 } else {
                     Text(AppText.tr("Контакт Telegram", "Telegram contact"))

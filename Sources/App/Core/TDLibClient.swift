@@ -2477,6 +2477,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             let userId = int64Value(obj["user_id"])
             let actionKey = typingActionKey(from: obj["action"] as? [String: Any])
             eventHandler?(.chatTypingChanged(chatId: chatId, userId: userId, actionKey: actionKey))
+            return
+        }
+
+        if type == "updateUserStatus",
+           let userId = int64Value(obj["user_id"]),
+           let status = obj["status"] as? [String: Any] {
+            let mapped = mapUserStatus(status)
+            eventHandler?(.userStatusChanged(userId: userId, statusText: mapped.text, isOnline: mapped.isOnline))
         }
     }
 
@@ -3166,6 +3174,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         let statusInfo: (text: String?, isOnline: Bool?)
         let sendInfo: (canSend: Bool?, reason: String?)
+        var canAddReactions: Bool?
         var kind: ChatKind
         var privateUserId: Int64?
         var isBlockedByMe = false
@@ -3186,6 +3195,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         } else {
             statusInfo = try await resolveChatStatusInfo(chat)
             sendInfo = try await resolveChatSendPermissions(chat)
+            canAddReactions = try await resolveChatReactionPermissions(chat)
             kind = try await resolveChatKind(chat)
 
             if kind == .private,
@@ -3243,6 +3253,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             statusText: displayStatus,
             isOnline: isBlockedByMe || isBlockedByPeer ? false : statusInfo.isOnline,
             canSendMessages: finalSendInfo.canSend,
+            canAddReactions: canAddReactions,
             sendRestrictionText: finalSendInfo.reason,
             unreadCount: unreadCount,
             kind: kind,
@@ -3352,6 +3363,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         switch chat.kind {
         case .channel, .supergroup, .basicGroup:
             return !memberStatusLooksComplete(chat.statusText)
+        case .private:
+            let trimmed = chat.statusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty
         default:
             return false
         }
@@ -3557,13 +3571,22 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return displayName
     }
 
-    func chatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
+    func chatInteractionPermissions(chatId: Int64) async throws -> (canSend: Bool, canAddReactions: Bool, reason: String?) {
         let chat = try await sendRequest([
             "@type": "getChat",
             "chat_id": chatId
         ])
-        let resolved = try await resolveChatSendPermissions(chat)
-        return (resolved.canSend ?? true, resolved.reason)
+        async let sendResolved = resolveChatSendPermissions(chat)
+        async let canReact = resolveChatReactionPermissions(chat)
+        let (send, react) = try await (sendResolved, canReact)
+        let isChannel = (try? await resolveChatKind(chat)) == .channel
+        let canSend = send.canSend ?? (isChannel ? false : true)
+        return (canSend, react, send.reason)
+    }
+
+    func chatSendPermissions(chatId: Int64) async throws -> (canSend: Bool, reason: String?) {
+        let permissions = try await chatInteractionPermissions(chatId: chatId)
+        return (permissions.canSend, permissions.reason)
     }
 
     func pinChatMessage(chatId: Int64, messageId: Int64) async throws {
@@ -3592,7 +3615,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             if let status = userResp["status"] as? [String: Any] {
                 return mapUserStatus(status)
             }
-            return ("был(а) недавно", false)
+            return (AppText.tr("был(а) недавно", "last seen recently"), false)
         }
 
         if typeName == "chatTypeBasicGroup" {
@@ -3733,6 +3756,75 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
 
         return (true, nil)
+    }
+
+    private func resolveChatReactionPermissions(_ chat: [String: Any]) async throws -> Bool {
+        if
+            let type = chat["type"] as? [String: Any],
+            let typeName = type["@type"] as? String,
+            typeName == "chatTypePrivate",
+            let userId = int64Value(type["user_id"])
+        {
+            let blockState = try await resolvePrivateUserBlockState(userId: userId)
+            return !blockState.blockedByMe && !blockState.blockedByPeer
+        }
+
+        if let chatId = int64Value(chat["id"]),
+           let memberAccess = try await resolveMyMemberReactionAccess(chatId: chatId, chat: chat) {
+            return memberAccess
+        }
+
+        if let permissions = chat["permissions"] as? [String: Any],
+           let canAdd = permissions["can_add_reactions"] as? Bool {
+            return canAdd
+        }
+
+        // Channel subscribers can react even when only admins may post.
+        if (try? await resolveChatKind(chat)) == .channel {
+            return true
+        }
+
+        return true
+    }
+
+    private func resolveMyMemberReactionAccess(
+        chatId: Int64,
+        chat: [String: Any]
+    ) async throws -> Bool? {
+        guard let myId = cachedMyUserId else { return nil }
+
+        let member: [String: Any]
+        do {
+            member = try await sendRequest([
+                "@type": "getChatMember",
+                "chat_id": chatId,
+                "member_id": [
+                    "@type": "messageSenderUser",
+                    "user_id": myId
+                ]
+            ])
+        } catch {
+            return nil
+        }
+
+        guard let status = member["status"] as? [String: Any],
+              let statusType = status["@type"] as? String else {
+            return nil
+        }
+
+        switch statusType {
+        case "chatMemberStatusLeft", "chatMemberStatusBanned":
+            return false
+        case "chatMemberStatusRestricted":
+            if let permissions = status["permissions"] as? [String: Any] {
+                return (permissions["can_add_reactions"] as? Bool) ?? false
+            }
+            return false
+        case "chatMemberStatusMember", "chatMemberStatusAdministrator", "chatMemberStatusCreator":
+            return true
+        default:
+            return nil
+        }
     }
 
     private func resolveSupergroupSelfStatus(_ chat: [String: Any]) async throws -> [String: Any]? {
@@ -3889,20 +3981,26 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let statusType = status["@type"] as? String ?? ""
         switch statusType {
         case "userStatusOnline":
-            return ("в сети", true)
+            return (AppText.tr("в сети", "online"), true)
         case "userStatusOffline":
             if let wasOnline = int64Value(status["was_online"]), wasOnline > 0 {
-                return ("был(а) в сети \(relativeTimeText(fromUnix: wasOnline))", false)
+                return (
+                    AppText.tr(
+                        "был(а) в сети \(relativeTimeText(fromUnix: wasOnline))",
+                        "last seen \(relativeTimeText(fromUnix: wasOnline))"
+                    ),
+                    false
+                )
             }
-            return ("был(а) недавно", false)
+            return (AppText.tr("был(а) недавно", "last seen recently"), false)
         case "userStatusRecently":
-            return ("был(а) недавно", false)
+            return (AppText.tr("был(а) недавно", "last seen recently"), false)
         case "userStatusLastWeek":
-            return ("был(а) на этой неделе", false)
+            return (AppText.tr("был(а) на этой неделе", "last seen within a week"), false)
         case "userStatusLastMonth":
-            return ("был(а) в этом месяце", false)
+            return (AppText.tr("был(а) в этом месяце", "last seen within a month"), false)
         default:
-            return ("скрыт(а)", false)
+            return (AppText.tr("скрыт(а)", "hidden"), false)
         }
     }
 
@@ -3910,7 +4008,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let date = Date(timeIntervalSince1970: TimeInterval(value))
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
-        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.locale = Locale(identifier: AppText.isRussian ? "ru_RU" : "en_US_POSIX")
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 

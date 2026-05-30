@@ -4,6 +4,7 @@ import UIKit
 struct ChatProfileView: View {
     @ObservedObject var vm: AppViewModel
     @EnvironmentObject private var appSettings: AppSettingsStore
+    @Environment(\.dismiss) private var dismiss
     let profile: ChatProfile
     @Namespace private var avatarNamespace
     @State private var selectedTab: ProfileTab = .overview
@@ -78,7 +79,7 @@ struct ChatProfileView: View {
         }
         .navigationTitle("Профиль")
         .navigationBarTitleDisplayMode(.inline)
-        .handleTelegramLinks(vm)
+        .handleTelegramLinks(vm, onNavigate: dismissProfileForNavigation)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: selectedTab)
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: showAvatar)
         .fullScreenCover(item: $mediaSelection) { selection in
@@ -186,7 +187,9 @@ struct ChatProfileView: View {
                 UsernameLine(
                     username: username,
                     font: .subheadline,
-                    color: AppColors.accent
+                    color: AppColors.accent,
+                    vm: vm,
+                    onNavigate: dismissProfileForNavigation
                 )
             }
 
@@ -224,6 +227,10 @@ struct ChatProfileView: View {
         return ""
     }
 
+    private func dismissProfileForNavigation() {
+        dismiss()
+    }
+
     @ViewBuilder
     private var overviewSections: some View {
         if profile.kind == .private, profile.userId != nil {
@@ -258,7 +265,10 @@ struct ChatProfileView: View {
 
             if let channel = profile.personalChannel {
                 ProfileLinkedChannelRow(channel: channel) {
-                    Task { await vm.openChat(chatId: channel.chatId) }
+                    Task {
+                        await vm.openChat(chatId: channel.chatId)
+                        dismissProfileForNavigation()
+                    }
                 }
             }
 
@@ -295,7 +305,7 @@ struct ChatProfileView: View {
             Section(AppText.tr("Описание", "About")) {
                 LinkifiedText(text: description)
                     .font(.subheadline)
-                    .tint(AppColors.accent)
+                    .linkColor(AppColors.accent)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -360,7 +370,9 @@ struct ChatProfileView: View {
                     UsernameLine(
                         username: username,
                         font: .caption,
-                        color: .secondary
+                        color: AppColors.accent,
+                        vm: vm,
+                        onNavigate: dismissProfileForNavigation
                     )
                 } else {
                     Text(member.role ?? member.statusText ?? "member")

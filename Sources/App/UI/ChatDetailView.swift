@@ -75,7 +75,7 @@ struct ChatDetailView: View {
         case .supergroup, .basicGroup:
             return AppText.tr("группа", "group")
         default:
-            return AppText.tr("был(а) недавно", "last seen recently")
+            return ""
         }
     }
 
@@ -86,7 +86,37 @@ struct ChatDetailView: View {
     }
 
     private var canSend: Bool {
-        selectedChat?.canSendMessages ?? true
+        selectedChat?.canSendMessages == true
+    }
+
+    private var canReact: Bool {
+        if let value = selectedChat?.canAddReactions {
+            return value
+        }
+        if selectedChat?.isBlockedByMe == true || selectedChat?.isBlockedByPeer == true {
+            return false
+        }
+        switch selectedChat?.kind {
+        case .channel, .supergroup, .basicGroup:
+            return true
+        case .private:
+            return selectedChat?.canSendMessages != false
+        default:
+            return true
+        }
+    }
+
+    private var sendRestrictionBannerText: String {
+        if let reason = selectedChat?.sendRestrictionText, !reason.isEmpty {
+            return reason
+        }
+        if selectedChat?.kind == .channel {
+            return AppText.tr(
+                "Это канал — писать могут только администраторы",
+                "Only admins can post in this channel"
+            )
+        }
+        return AppText.tr("Запрещено отправлять сообщения", "Sending messages is not allowed")
     }
 
     var body: some View {
@@ -316,6 +346,7 @@ struct ChatDetailView: View {
                 peerTitle: selectedChat?.title,
                 replyPreviewText: target.message.replyToMessageId.flatMap { replyMap[$0] },
                 canSend: canSend,
+                canReact: canReact,
                 canEdit: target.message.outgoing
                     && !target.message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 captionText: captionForMessage(target.message),
@@ -543,13 +574,13 @@ struct ChatDetailView: View {
                     onLongPress: {
                         messageActionTarget = MessageActionTarget(message: message)
                     },
-                    onDoubleTap: canSend && appSettings.enableDoubleTapQuickReaction ? {
+                    onDoubleTap: canReact && appSettings.enableDoubleTapQuickReaction ? {
                         requestToggleReaction(
                             on: message,
                             emoji: appSettings.doubleTapQuickReactionEmoji
                         )
                     } : nil,
-                    onReactionTap: canSend ? { reaction in
+                    onReactionTap: canReact ? { reaction in
                         requestToggleReaction(on: message, reaction: reaction)
                     } : nil,
                     onForward: {
@@ -680,8 +711,8 @@ struct ChatDetailView: View {
         VStack(spacing: 0) {
             if showBotStartButton {
                 botStartButton
-            } else if !canSend, let reason = selectedChat?.sendRestrictionText {
-                Text(reason)
+            } else if !canSend {
+                Text(sendRestrictionBannerText)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)

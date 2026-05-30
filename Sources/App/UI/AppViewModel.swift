@@ -79,6 +79,8 @@ final class AppViewModel: ObservableObject {
     private var typingClearTasks: [Int64: Task<Void, Never>] = [:]
     private var typingUserClearTasks: [String: Task<Void, Never>] = [:]
     private var activeTypersByChat: [Int64: [Int64: TypingParticipant]] = [:]
+    private var ephemeralTypingByChat: [Int64: String] = [:]
+    private var chatFoldersByAccount: [String: [TgChatFolder]] = [:]
 
     private struct TypingParticipant: Equatable {
         var name: String
@@ -344,11 +346,17 @@ final class AppViewModel: ObservableObject {
         guard !isSwitchingAccount else { return }
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
+        clearAllTypingState()
+
+        let outgoingAccountId = accountSessions.activeAccountId
+        if !chatFolders.isEmpty {
+            chatFoldersByAccount[outgoingAccountId] = chatFolders
+        }
         accountSessions.setActiveAccount(id: accountId)
 
         // Reset volatile state before new repository bootstrap.
         chats = []
-        chatFolders = []
+        chatFolders = chatFoldersByAccount[accountId] ?? []
         selectedChatFolderId = nil
         archivedChats = []
         archiveSummary = nil
@@ -382,18 +390,11 @@ final class AppViewModel: ObservableObject {
             }
         }
 
-        let typingByChat = Dictionary(uniqueKeysWithValues: chats.compactMap { chat in
-            chat.typingText.map { (chat.id, $0) }
-        })
-
         if chats.isEmpty, selectedChatFolderId == nil {
             let cached = repository.cachedChats()
             if !cached.isEmpty {
-                chats = sortChats(cached).map { chat in
-                    var updated = chat
-                    updated.typingText = typingByChat[chat.id]
-                    return updated
-                }
+                chats = sortChats(cached)
+                applyResolvedTyping(to: &chats)
             }
         }
 
@@ -406,8 +407,7 @@ final class AppViewModel: ObservableObject {
             let listChats = try await repository.loadChats(list: mainListKind, limit: chatListLimit)
             chats = mergeChatsPreservingState(
                 sortChats(listChats),
-                previousById: previousById,
-                typingByChat: typingByChat
+                previousById: previousById
             )
             status = ""
             chatListInitialLoadComplete = true
@@ -537,7 +537,7 @@ final class AppViewModel: ObservableObject {
            !previousPath.isEmpty {
             updated.avatarPath = previousPath
         }
-        updated.typingText = previous?.typingText ?? chats.first(where: { $0.id == chat.id })?.typingText
+        updated.typingText = resolvedTypingText(for: chat.id)
         if updated.peerPremiumBadgePath == nil {
             updated.peerPremiumBadgePath = previous?.peerPremiumBadgePath
         }
@@ -545,20 +545,33 @@ final class AppViewModel: ObservableObject {
             updated.peerIsPremium = previous?.peerIsPremium ?? false
         }
         preserveMemberStatus(from: previous, into: &updated)
+        preserveInteractionPermissions(from: previous, into: &updated)
         return updated
     }
 
     func reloadChatFolders(force: Bool = false) async {
         guard let repository, authState == .ready else { return }
+        let accountId = activeAccountId
         do {
-            let loaded = try await repository.loadChatFolders(force: force)
-            // Avoid clearing already-visible folders when a non-forced reload
-            // momentarily returns nothing (e.g. cache invalidation race).
-            if !loaded.isEmpty || force {
+            var loaded = try await repository.loadChatFolders(force: force)
+            if loaded.isEmpty, force {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                loaded = (try? await repository.loadChatFolders(force: true)) ?? []
+            }
+            if !loaded.isEmpty {
                 chatFolders = loaded
+                chatFoldersByAccount[accountId] = loaded
+            } else if chatFolders.isEmpty,
+                      let cached = chatFoldersByAccount[accountId],
+                      !cached.isEmpty {
+                chatFolders = cached
             }
         } catch {
-            if chatFolders.isEmpty {
+            if chatFolders.isEmpty,
+               let cached = chatFoldersByAccount[accountId],
+               !cached.isEmpty {
+                chatFolders = cached
+            } else if chatFolders.isEmpty {
                 status = error.localizedDescription
             }
         }
@@ -651,16 +664,47 @@ final class AppViewModel: ObservableObject {
 
     private func mergeMemberStatus(from updated: TgChat?, into chat: TgChat) -> TgChat {
         guard let updated else { return chat }
-        guard TDLibClient.memberStatusLooksComplete(updated.statusText) else { return chat }
         var merged = chat
+        if updated.kind == .private {
+            if let text = updated.statusText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                merged.statusText = text
+            }
+            if let isOnline = updated.isOnline {
+                merged.isOnline = isOnline
+            }
+            return merged
+        }
+        guard TDLibClient.memberStatusLooksComplete(updated.statusText) else { return chat }
         merged.statusText = updated.statusText
         merged.isOnline = updated.isOnline
         merged.kind = updated.kind
         return merged
     }
 
+    private func preserveInteractionPermissions(from previous: TgChat?, into chat: inout TgChat) {
+        guard let previous else { return }
+        if chat.canSendMessages == nil {
+            chat.canSendMessages = previous.canSendMessages
+        }
+        if chat.canAddReactions == nil {
+            chat.canAddReactions = previous.canAddReactions
+        }
+        if chat.sendRestrictionText == nil {
+            chat.sendRestrictionText = previous.sendRestrictionText
+        }
+    }
+
     private func preserveMemberStatus(from previous: TgChat?, into chat: inout TgChat) {
         guard let previous else { return }
+        if chat.kind == .private {
+            let current = chat.statusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let prev = previous.statusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if current.isEmpty, !prev.isEmpty {
+                chat.statusText = previous.statusText
+                chat.isOnline = previous.isOnline ?? chat.isOnline
+            }
+            return
+        }
         guard TDLibClient.memberStatusLooksComplete(previous.statusText),
               !TDLibClient.memberStatusLooksComplete(chat.statusText) else { return }
         chat.statusText = previous.statusText
@@ -679,22 +723,17 @@ final class AppViewModel: ObservableObject {
             guard needsRefresh else { return }
             guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return }
             guard !Task.isCancelled else { return }
-            let typingByChat = Dictionary(uniqueKeysWithValues: self.chats.compactMap { chat in
-                chat.typingText.map { (chat.id, $0) }
-            })
             let previousById = Dictionary(uniqueKeysWithValues: self.chats.map { ($0.id, $0) })
             self.chats = self.mergeChatsPreservingState(
                 self.sortChats(enriched),
-                previousById: previousById,
-                typingByChat: typingByChat
+                previousById: previousById
             )
         }
     }
 
     private func mergeChatsPreservingState(
         _ loaded: [TgChat],
-        previousById: [Int64: TgChat],
-        typingByChat: [Int64: String]
+        previousById: [Int64: TgChat]
     ) -> [TgChat] {
         loaded.map { chat in
             var updated = chat
@@ -703,8 +742,9 @@ final class AppViewModel: ObservableObject {
                !previousPath.isEmpty {
                 updated.avatarPath = previousPath
             }
-            updated.typingText = typingByChat[chat.id] ?? previousById[chat.id]?.typingText
+            updated.typingText = resolvedTypingText(for: chat.id)
             preserveMemberStatus(from: previousById[chat.id], into: &updated)
+            preserveInteractionPermissions(from: previousById[chat.id], into: &updated)
             return updated
         }
     }
@@ -767,6 +807,9 @@ final class AppViewModel: ObservableObject {
             chat.statusText = updated.statusText
             chat.isOnline = updated.isOnline
             chat.kind = updated.kind
+            chat.canSendMessages = updated.canSendMessages
+            chat.canAddReactions = updated.canAddReactions
+            chat.sendRestrictionText = updated.sendRestrictionText
             chat.peerUsername = updated.peerUsername ?? chat.peerUsername
             chat.peerIsPremium = updated.peerIsPremium
             chat.isBlockedByMe = updated.isBlockedByMe
@@ -780,6 +823,7 @@ final class AppViewModel: ObservableObject {
             let permissions = try await repository.refreshChatSendPermissions(chatId: chatId)
             updateLocalChat(chatId) { chat in
                 chat.canSendMessages = permissions.canSend
+                chat.canAddReactions = permissions.canAddReactions
                 chat.sendRestrictionText = permissions.reason
             }
         } catch {
@@ -1092,6 +1136,7 @@ final class AppViewModel: ObservableObject {
 
     @Published var reactionPickerItems: [TgReactionPickerItem] = []
     @Published var reactionPickerMaxCount: Int = 1
+    private(set) var reactionPickerMessageId: Int64?
 
     var reactionPickerEmojis: [String] {
         reactionPickerItems.filter { !$0.isCustomEmoji }.map(\.emoji)
@@ -1102,6 +1147,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleReaction(on message: TgMessage, emoji: String) async {
+        if reactionPickerMessageId != message.id {
+            await loadReactionPicker(for: message)
+        }
         if let item = reactionPickerItems.first(where: { $0.key == emoji || $0.emoji == emoji }) {
             await toggleReaction(on: message, item: item)
             return
@@ -1152,7 +1200,14 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        if !reactionPickerItems.isEmpty, !reactionPickerItems.contains(where: { $0.key == reaction.key }) {
+        if reactionPickerMessageId != message.id {
+            await loadReactionPicker(for: message)
+        }
+
+        let alreadyOnMessage = message.reactions.contains { $0.key == reaction.key }
+        if !alreadyOnMessage,
+           !reactionPickerItems.isEmpty,
+           !reactionPickerItems.contains(where: { $0.key == reaction.key }) {
             status = AppText.tr(
                 "Эта реакция недоступна в этом чате",
                 "This reaction is not available in this chat"
@@ -1289,6 +1344,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadReactionPicker(for message: TgMessage) async {
+        reactionPickerMessageId = message.id
         guard let repository, let chatId = selectedChatId else {
             reactionPickerItems = defaultReactionPickerItems
             reactionPickerMaxCount = currentUserIsPremium ? 3 : 1
@@ -1673,6 +1729,7 @@ final class AppViewModel: ObservableObject {
                 if blocked {
                     chat.statusText = AppText.tr("Заблокирован вами", "Blocked by you")
                     chat.canSendMessages = false
+                    chat.canAddReactions = false
                     chat.sendRestrictionText = AppText.tr("Вы заблокировали этого пользователя", "You blocked this user")
                 }
             }
@@ -1970,6 +2027,12 @@ final class AppViewModel: ObservableObject {
         repository.onTypingChanged = { [weak self] update in
             Task { @MainActor in
                 self?.applyTypingUpdate(update)
+            }
+        }
+
+        repository.onUserStatusChanged = { [weak self] userId, statusText, isOnline in
+            Task { @MainActor in
+                self?.applyUserStatusUpdate(userId: userId, statusText: statusText, isOnline: isOnline)
             }
         }
 
@@ -2326,6 +2389,62 @@ final class AppViewModel: ObservableObject {
         await loadProfile(chatId: chatId)
     }
 
+    private func clearAllTypingState() {
+        typingClearTasks.values.forEach { $0.cancel() }
+        typingClearTasks.removeAll()
+        typingUserClearTasks.values.forEach { $0.cancel() }
+        typingUserClearTasks.removeAll()
+        activeTypersByChat.removeAll()
+        ephemeralTypingByChat.removeAll()
+    }
+
+    private func resolvedTypingText(for chatId: Int64) -> String? {
+        if let typers = activeTypersByChat[chatId], !typers.isEmpty {
+            let chatKind = chats.first(where: { $0.id == chatId })?.kind
+                ?? archivedChats.first(where: { $0.id == chatId })?.kind
+                ?? .unknown
+            let actionKey = typers.values.first?.actionKey ?? "typing"
+            let names = typers.values.map(\.name).sorted()
+            switch chatKind {
+            case .basicGroup, .supergroup, .channel:
+                return AppText.groupTypingStatus(names: names, actionKey: actionKey)
+            case .private, .savedMessages, .unknown:
+                if let only = names.first {
+                    return AppText.groupTypingStatus(names: [only], actionKey: actionKey)
+                }
+                return AppText.typingStatus(actionKey)
+            }
+        }
+        return ephemeralTypingByChat[chatId]
+    }
+
+    private func applyResolvedTyping(to chats: inout [TgChat]) {
+        for index in chats.indices {
+            chats[index].typingText = resolvedTypingText(for: chats[index].id)
+        }
+    }
+
+    private func applyUserStatusUpdate(userId: Int64, statusText: String, isOnline: Bool) {
+        func apply(to chat: inout TgChat) {
+            guard chat.privateUserId == userId else { return }
+            chat.statusText = statusText
+            chat.isOnline = isOnline
+        }
+
+        for index in chats.indices {
+            apply(to: &chats[index])
+        }
+        for index in archivedChats.indices {
+            apply(to: &archivedChats[index])
+        }
+
+        if var profile = userProfileDetail, profile.userId == userId {
+            profile.statusText = statusText
+            profile.isOnline = isOnline
+            userProfileDetail = profile
+        }
+    }
+
     private func applyTypingUpdate(_ update: ChatTypingUpdate) {
         let chatId = update.chatId
 
@@ -2381,8 +2500,10 @@ final class AppViewModel: ObservableObject {
         // Private chat / action without user id.
         typingClearTasks[chatId]?.cancel()
         if let actionKey = update.actionKey {
+            let text = AppText.typingStatus(actionKey)
+            ephemeralTypingByChat[chatId] = text
             updateLocalChat(chatId) { chat in
-                chat.typingText = AppText.typingStatus(actionKey)
+                chat.typingText = text
             }
             typingClearTasks[chatId] = Task { [weak self] in
                 do {
@@ -2391,13 +2512,18 @@ final class AppViewModel: ObservableObject {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                self?.updateLocalChat(chatId) { chat in
-                    chat.typingText = nil
+                await MainActor.run {
+                    self?.ephemeralTypingByChat.removeValue(forKey: chatId)
+                    self?.updateLocalChat(chatId) { chat in
+                        chat.typingText = nil
+                    }
+                    self?.typingClearTasks[chatId] = nil
                 }
-                self?.typingClearTasks[chatId] = nil
             }
         } else {
+            ephemeralTypingByChat.removeValue(forKey: chatId)
             activeTypersByChat[chatId] = nil
+            typingClearTasks[chatId] = nil
             updateLocalChat(chatId) { chat in
                 chat.typingText = nil
             }
@@ -2419,29 +2545,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func publishTypingSummary(for chatId: Int64) {
-        guard let typers = activeTypersByChat[chatId], !typers.isEmpty else {
-            updateLocalChat(chatId) { chat in
-                chat.typingText = nil
-            }
-            return
-        }
-
-        let chatKind = chats.first(where: { $0.id == chatId })?.kind ?? .unknown
-        let actionKey = typers.values.first?.actionKey ?? "typing"
-        let names = typers.values.map(\.name).sorted()
-
-        let summary: String?
-        switch chatKind {
-        case .basicGroup, .supergroup, .channel:
-            summary = AppText.groupTypingStatus(names: names, actionKey: actionKey)
-        case .private, .savedMessages, .unknown:
-            if let only = names.first {
-                summary = AppText.groupTypingStatus(names: [only], actionKey: actionKey)
-            } else {
-                summary = AppText.typingStatus(actionKey)
-            }
-        }
-
+        let summary = resolvedTypingText(for: chatId)
         updateLocalChat(chatId) { chat in
             chat.typingText = summary
         }
