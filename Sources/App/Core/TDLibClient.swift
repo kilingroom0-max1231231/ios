@@ -3329,9 +3329,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 "chat_id": chat.id
             ]) else { continue }
 
-            let statusInfo = (try? await resolveChatStatusInfo(chatResp)) ?? (nil, nil)
+            let (statusText, isOnline) = (try? await resolveChatStatusInfo(chatResp)) ?? (nil, nil)
             let resolvedKind = (try? await resolveChatKind(chatResp)) ?? chat.kind
-            updates[chat.id] = (statusInfo.text, statusInfo.isOnline, resolvedKind)
+            updates[chat.id] = (statusText, isOnline, resolvedKind)
         }
 
         return chats.map { chat in
