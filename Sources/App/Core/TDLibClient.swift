@@ -2608,6 +2608,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         var isDeleted = false
         var isService = false
         var text = ""
+        var textEntities: [TgMessageTextEntity] = []
         if let content = obj["content"] as? [String: Any],
            let contentType = content["@type"] as? String {
             if contentType == "messageDeleted" {
@@ -2616,12 +2617,14 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                let textObj = content["text"] as? [String: Any],
                let rawText = textObj["text"] as? String {
                 text = rawText
+                textEntities = parseMessageTextEntities(from: textObj, text: rawText)
             } else if let service = serviceMessageText(contentType: contentType, content: content) {
                 text = service
                 isService = true
             } else if let captionObj = content["caption"] as? [String: Any],
                       let caption = captionObj["text"] as? String {
                 text = caption
+                textEntities = parseMessageTextEntities(from: captionObj, text: caption)
             } else if isRenderableAttachmentContent(contentType) {
                 text = ""
             } else {
@@ -2649,6 +2652,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             id: id,
             chatId: chatId,
             text: text,
+            textEntities: textEntities,
             outgoing: isOutgoing,
             createdAt: Date(timeIntervalSince1970: dateUnix),
             isEdited: isEdited,
@@ -2675,6 +2679,67 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return Int(views)
         }
         return nil
+    }
+
+    private func parseMessageTextEntities(from textObj: [String: Any], text: String) -> [TgMessageTextEntity] {
+        let entities = (textObj["entities"] as? [[String: Any]] ?? [])
+            .sorted { (intValue($0["offset"]) ?? 0) < (intValue($1["offset"]) ?? 0) }
+
+        return entities.compactMap { entity -> TgMessageTextEntity? in
+            guard let offset = intValue(entity["offset"]),
+                  let length = intValue(entity["length"]),
+                  length > 0,
+                  let start = text.index(text.startIndex, offsetBy: max(0, offset), limitedBy: text.endIndex),
+                  let end = text.index(text.startIndex, offsetBy: min(text.count, offset + length), limitedBy: text.endIndex),
+                  start < end else { return nil }
+
+            let slice = String(text[start..<end])
+            let type = entity["@type"] as? String ?? ""
+
+            switch type {
+            case "textEntityUrl":
+                guard let url = urlFromTelegramText(slice) else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            case "textEntityTextUrl":
+                guard let raw = entity["url"] as? String, let url = urlFromTelegramText(raw) else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            case "textEntityMention":
+                let username = slice.hasPrefix("@") ? String(slice.dropFirst()) : slice
+                guard !username.isEmpty, let url = URL(string: "https://t.me/\(username)") else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            case "textEntityMentionName":
+                guard let userId = int64Value(entity["user_id"]),
+                      userId > 0,
+                      let url = URL(string: "tg://user?id=\(userId)") else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            case "textEntityEmail":
+                guard let url = URL(string: "mailto:\(slice)") else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            case "textEntityPhoneNumber":
+                let digits = slice.filter { $0.isNumber || $0 == "+" }
+                guard !digits.isEmpty, let url = URL(string: "tel:\(digits)") else { return nil }
+                return TgMessageTextEntity(offset: offset, length: length, url: url)
+            default:
+                return nil
+            }
+        }
+    }
+
+    private func urlFromTelegramText(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") || trimmed.hasPrefix("tg://") {
+            return URL(string: trimmed)
+        }
+        if trimmed.hasPrefix("t.me/") || trimmed.hasPrefix("telegram.me/") || trimmed.hasPrefix("telegram.dog/") {
+            return URL(string: "https://\(trimmed)")
+        }
+        if trimmed.hasPrefix("@") {
+            let username = String(trimmed.dropFirst())
+            guard !username.isEmpty else { return nil }
+            return URL(string: "https://t.me/\(username)")
+        }
+        return URL(string: trimmed)
     }
 
     private func parseMessageReactions(_ interaction: [String: Any]?) -> [TgMessageReaction] {

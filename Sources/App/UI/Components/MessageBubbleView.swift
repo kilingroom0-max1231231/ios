@@ -224,25 +224,17 @@ struct MessageBubbleView: View {
         .padding(.vertical, 2)
         .modifier(MessageBubbleInteractionModifier(
             enabled: interactionsEnabled,
-            longPress: longPressGesture,
-            doubleTap: doubleTapGesture
+            onLongPress: {
+                guard appSettings.enableLongPressMessagePanel else { return }
+                appSettings.reactionHaptic(.medium)
+                onLongPress?()
+            },
+            onDoubleTap: {
+                guard appSettings.enableDoubleTapQuickReaction else { return }
+                appSettings.reactionHaptic(.light)
+                onDoubleTap?()
+            }
         ))
-    }
-
-    private var longPressGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.38).onEnded { _ in
-            guard appSettings.enableLongPressMessagePanel else { return }
-            appSettings.reactionHaptic(.medium)
-            onLongPress?()
-        }
-    }
-
-    private var doubleTapGesture: some Gesture {
-        TapGesture(count: 2).onEnded {
-            guard appSettings.enableDoubleTapQuickReaction else { return }
-            appSettings.reactionHaptic(.light)
-            onDoubleTap?()
-        }
     }
 
     private var bubbleBody: some View {
@@ -273,12 +265,15 @@ struct MessageBubbleView: View {
             if let captionText {
                 LinkifiedText(
                     text: captionText,
+                    entities: message.textEntities,
                     linkColor: message.outgoing
                         ? appearance.outgoingText(colorScheme: colorScheme)
-                        : appearance.accentColor
+                        : appearance.accentColor,
+                    textColor: message.outgoing
+                        ? appearance.outgoingText(colorScheme: colorScheme)
+                        : .primary
                 )
                     .font(captionFont)
-                    .foregroundStyle(message.outgoing ? appearance.outgoingText(colorScheme: colorScheme) : .primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 11)
@@ -446,16 +441,18 @@ struct MessageBubbleView: View {
     }
 }
 
-private struct MessageBubbleInteractionModifier<G1: Gesture, G2: Gesture>: ViewModifier {
+private struct MessageBubbleInteractionModifier: ViewModifier {
     let enabled: Bool
-    let longPress: G1
-    let doubleTap: G2
+    let onLongPress: () -> Void
+    let onDoubleTap: () -> Void
 
     func body(content: Content) -> some View {
         if enabled {
             content
-                .highPriorityGesture(longPress)
-                .simultaneousGesture(doubleTap)
+                .onLongPressGesture(minimumDuration: 0.38, perform: onLongPress)
+                .simultaneousGesture(
+                    TapGesture(count: 2).onEnded { onDoubleTap() }
+                )
         } else {
             content
         }

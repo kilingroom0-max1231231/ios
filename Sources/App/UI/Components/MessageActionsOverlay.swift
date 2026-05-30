@@ -64,10 +64,10 @@ struct MessageActionsOverlay: View {
     @State private var panelsOpacity: Double = 0
     @State private var panelsOffset: CGFloat = 8
 
-    private let collapsedReactionsHeight: CGFloat = 56
+    private let collapsedReactionsHeight: CGFloat = 52
     private let expandedRowHeight: CGFloat = 42
     private let expandedMaxRowsVisible: CGFloat = 10
-    private let actionsMenuMaxHeight: CGFloat = 320
+    private let actionsScrollThreshold = 6
     private let overlayTopClearance: CGFloat = 16
     private let overlayBottomInset: CGFloat = 36
 
@@ -208,7 +208,7 @@ struct MessageActionsOverlay: View {
                 )
                 .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
 
-            actionsMenu(width: layout.actionsWidth, maxHeight: actionsMenuMaxHeight)
+            actionsMenu(width: layout.actionsWidth)
                 .scaleEffect(contentScale, anchor: .top)
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
@@ -240,7 +240,7 @@ struct MessageActionsOverlay: View {
                 .scaleEffect(contentScale)
                 .padding(.horizontal, 12)
 
-            actionsMenu(width: actionsWidth, maxHeight: actionsMenuMaxHeight)
+            actionsMenu(width: actionsWidth)
                 .scaleEffect(contentScale, anchor: .top)
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
@@ -275,7 +275,7 @@ struct MessageActionsOverlay: View {
         let reactionsWidth = min(availableWidth, 340)
         let actionsWidth = min(availableWidth, 250)
         let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
-        let actionsH = min(actionsMenuHeight, actionsMenuMaxHeight)
+        let actionsH = actionsMenuHeight
         let gap: CGFloat = 10
         let topMargin = overlayTopClearance
         let bottomMargin = safeBottom + overlayBottomInset
@@ -337,7 +337,7 @@ struct MessageActionsOverlay: View {
         return collapsedReactionsHeight
     }
 
-    private let actionRowHeight: CGFloat = 48
+    private let actionRowHeight: CGFloat = 44
 
     private var actionsMenuHeight: CGFloat {
         CGFloat(actionItems.count) * actionRowHeight
@@ -354,6 +354,7 @@ struct MessageActionsOverlay: View {
             interactionsEnabled: false
         )
         .shadow(color: .black.opacity(0.32), radius: 20, y: 10)
+        .handleTelegramLinks(vm, onNavigate: { dismiss() })
 
         if scrollable {
             ScrollView(.vertical, showsIndicators: true) {
@@ -599,35 +600,44 @@ struct MessageActionsOverlay: View {
         return items
     }
 
-    private func actionsMenu(width: CGFloat, maxHeight: CGFloat = 280) -> some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(spacing: 0) {
-                ForEach(Array(actionItems.enumerated()), id: \.offset) { index, item in
-                    Button(role: item.role, action: item.handler) {
-                        HStack(spacing: 12) {
-                            Text(item.title)
-                                .font(.body)
-                            Spacer(minLength: 8)
-                            Image(systemName: item.icon)
-                                .font(.body)
-                                .frame(width: 22)
-                        }
-                        .foregroundStyle(item.role == .destructive ? Color.red : Color.primary)
-                        .padding(.horizontal, 16)
-                        .frame(height: actionRowHeight)
-                        .contentShape(Rectangle())
+    private func actionsMenu(width: CGFloat) -> some View {
+        let rows = VStack(spacing: 0) {
+            ForEach(Array(actionItems.enumerated()), id: \.offset) { index, item in
+                Button(role: item.role, action: item.handler) {
+                    HStack(spacing: 12) {
+                        Text(item.title)
+                            .font(.body)
+                        Spacer(minLength: 8)
+                        Image(systemName: item.icon)
+                            .font(.body)
+                            .frame(width: 22)
                     }
-                    .buttonStyle(ActionRowButtonStyle())
+                    .foregroundStyle(item.role == .destructive ? Color.red : Color.primary)
+                    .padding(.horizontal, 16)
+                    .frame(height: actionRowHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(ActionRowButtonStyle())
 
-                    if index < actionItems.count - 1 {
-                        Divider().padding(.leading, 16)
-                    }
+                if index < actionItems.count - 1 {
+                    Divider().padding(.leading, 16)
                 }
             }
         }
+
+        Group {
+            if actionItems.count > actionsScrollThreshold {
+                ScrollView(.vertical, showsIndicators: true) {
+                    rows
+                }
+                .frame(maxHeight: CGFloat(actionsScrollThreshold) * actionRowHeight)
+            } else {
+                rows
+            }
+        }
         .frame(width: width)
-        .frame(maxHeight: maxHeight)
-        .glassSurface(cornerRadius: 22)
+        .fixedSize(horizontal: false, vertical: true)
+        .glassSurface(cornerRadius: 16)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
     }
 

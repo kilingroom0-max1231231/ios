@@ -245,10 +245,18 @@ struct TgActiveSession: Identifiable, Equatable {
     }
 }
 
+struct TgMessageTextEntity: Equatable {
+    let offset: Int
+    let length: Int
+    let url: URL
+}
+
 struct TgMessage: Identifiable, Equatable {
     let id: Int64
     let chatId: Int64
     let text: String
+    /// TDLib link / mention spans for tappable message text.
+    let textEntities: [TgMessageTextEntity]
     let outgoing: Bool
     let createdAt: Date
     let isEdited: Bool
@@ -272,6 +280,7 @@ struct TgMessage: Identifiable, Equatable {
         id: Int64,
         chatId: Int64,
         text: String,
+        textEntities: [TgMessageTextEntity] = [],
         outgoing: Bool,
         createdAt: Date,
         isEdited: Bool,
@@ -293,6 +302,7 @@ struct TgMessage: Identifiable, Equatable {
         self.id = id
         self.chatId = chatId
         self.text = text
+        self.textEntities = textEntities
         self.outgoing = outgoing
         self.createdAt = createdAt
         self.isEdited = isEdited
@@ -317,6 +327,7 @@ struct TgMessage: Identifiable, Equatable {
             id: id,
             chatId: chatId,
             text: text,
+            textEntities: textEntities,
             outgoing: outgoing,
             createdAt: createdAt,
             isEdited: isEdited,
@@ -342,6 +353,7 @@ struct TgMessage: Identifiable, Equatable {
             id: id,
             chatId: chatId,
             text: text,
+            textEntities: textEntities,
             outgoing: outgoing,
             createdAt: createdAt,
             isEdited: isEdited,
@@ -371,6 +383,7 @@ struct TgMessage: Identifiable, Equatable {
             id: id,
             chatId: chatId,
             text: text,
+            textEntities: textEntities.isEmpty ? previous.textEntities : textEntities,
             outgoing: outgoing,
             createdAt: createdAt,
             isEdited: isEdited || previous.isEdited,

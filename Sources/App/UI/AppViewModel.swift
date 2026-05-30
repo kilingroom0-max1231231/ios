@@ -1802,6 +1802,12 @@ final class AppViewModel: ObservableObject {
         // tg://resolve?domain=... and tg://join?invite=...
         if scheme == "tg" {
             if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                if url.host?.lowercased() == "user",
+                   let userIdString = comps.queryItems?.first(where: { $0.name == "id" })?.value,
+                   let userId = Int64(userIdString) {
+                    await openUserLink(userId)
+                    return
+                }
                 if let domain = comps.queryItems?.first(where: { $0.name == "domain" })?.value {
                     await openUsernameLink(domain)
                     return
@@ -1842,6 +1848,16 @@ final class AppViewModel: ObservableObject {
             await openChat(chatId: chatId)
         } catch {
             status = AppText.tr("Не удалось открыть @\(clean)", "Couldn't open @\(clean)")
+        }
+    }
+
+    private func openUserLink(_ userId: Int64) async {
+        guard let repository else { return }
+        do {
+            let chatId = try await repository.openPrivateChat(userId: userId)
+            await openChat(chatId: chatId)
+        } catch {
+            status = AppText.tr("Не удалось открыть профиль", "Couldn't open profile")
         }
     }
 
