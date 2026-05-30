@@ -2898,7 +2898,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         // Regular users expose `bio`; bots expose their description via `bot_info`.
         var about = formattedText(from: full?["bio"] as? [String: Any])
-        if (about?.isEmpty ?? true), let botInfo = full?["bot_info"] as? [String: Any] {
+        if about.isEmpty, let botInfo = full?["bot_info"] as? [String: Any] {
             let desc = (botInfo["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let shortDesc = (botInfo["short_description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let desc, !desc.isEmpty {
@@ -2916,7 +2916,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             premiumBadgePath: premiumBadgePath,
             hasActiveStories: (user["has_active_stories"] as? Bool) ?? false,
             giftCount: max(0, giftCount),
-            bio: about,
+            bio: about.isEmpty ? nil : about,
             isBot: isBot
         )
     }
