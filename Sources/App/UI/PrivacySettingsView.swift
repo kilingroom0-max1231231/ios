@@ -1,173 +1,164 @@
-import PhotosUI
 import SwiftUI
-import UIKit
 
+/// Telegram-style hub: account fields + privacy drill-down screens.
 struct PrivacySettingsView: View {
     @ObservedObject var vm: AppViewModel
-    @State private var firstName = ""
-    @State private var lastName = ""
-    @State private var username = ""
-    @State private var isSavingProfile = false
-    @State private var avatarPickerItem: PhotosPickerItem?
-    @State private var isUploadingAvatar = false
 
     var body: some View {
         List {
-            Section(AppText.tr("Аватар", "Avatar")) {
-                HStack(spacing: 14) {
+            profileHeaderSection
+
+            Section(AppText.tr("Аккаунт", "Account")) {
+                NavigationLink {
+                    EditProfileNameView(vm: vm)
+                } label: {
+                    ProfileSettingsValueRow(
+                        title: AppText.tr("Имя", "Name"),
+                        value: vm.me?.displayName ?? "—"
+                    )
+                }
+
+                NavigationLink {
+                    EditProfileBioView(vm: vm)
+                } label: {
+                    ProfileSettingsValueRow(
+                        title: AppText.tr("О себе", "Bio"),
+                        value: bioSummary,
+                        placeholder: vm.me?.bio?.isEmpty != false
+                    )
+                }
+
+                if let phone = vm.me?.phoneNumber, !phone.isEmpty {
+                    ProfileSettingsValueRow(
+                        title: AppText.tr("Номер телефона", "Phone number"),
+                        value: phone
+                    )
+                }
+
+                NavigationLink {
+                    EditProfileUsernameView(vm: vm)
+                } label: {
+                    ProfileSettingsValueRow(
+                        title: AppText.tr("Имя пользователя", "Username"),
+                        value: usernameSummary,
+                        placeholder: vm.me?.username?.isEmpty != false
+                    )
+                }
+            }
+
+            Section {
+                ForEach(UserPrivacySettingKind.privacySection) { kind in
+                    NavigationLink {
+                        PrivacySettingPickerView(vm: vm, kind: kind)
+                    } label: {
+                        ProfileSettingsValueRow(
+                            title: kind.title,
+                            value: vm.privacyVisibility(for: kind).title
+                        )
+                    }
+                }
+            } header: {
+                Text(AppText.tr("Приватность", "Privacy"))
+            } footer: {
+                privacyFooter
+            }
+
+            Section {
+                ForEach(UserPrivacySettingKind.discoverySection) { kind in
+                    NavigationLink {
+                        PrivacySettingPickerView(vm: vm, kind: kind)
+                    } label: {
+                        ProfileSettingsValueRow(
+                            title: kind.title,
+                            value: vm.privacyVisibility(for: kind).title
+                        )
+                    }
+                }
+            } header: {
+                Text(AppText.tr("Поиск", "Discovery"))
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(ChatListScreenBackground().ignoresSafeArea())
+        .navigationTitle(AppText.tr("Профиль и приватность", "Profile & privacy"))
+        .navigationBarTitleDisplayMode(.inline)
+        .transparentNavigationBar()
+        .task {
+            await vm.refreshMe()
+            await vm.loadPrivacySettings()
+        }
+    }
+
+    private var profileHeaderSection: some View {
+        Section {
+            NavigationLink {
+                EditProfilePhotoView(vm: vm)
+            } label: {
+                HStack(spacing: 16) {
                     if let me = vm.me {
                         AvatarView(
                             title: me.displayName,
                             identifier: me.id,
                             imagePath: me.avatarPath,
-                            size: 64
+                            size: 72
                         )
                     } else {
                         Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 52))
+                            .font(.system(size: 56))
                             .foregroundStyle(AppColors.accent)
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        PhotosPicker(selection: $avatarPickerItem, matching: .images, photoLibrary: .shared()) {
-                            Label(
-                                AppText.tr("Изменить фото", "Change photo"),
-                                systemImage: "photo.on.rectangle.angled"
-                            )
-                        }
-                        .disabled(isUploadingAvatar)
-
-                        if isUploadingAvatar {
-                            ProgressView()
-                                .controlSize(.small)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(AppText.tr("Изменить фото профиля", "Change profile photo"))
+                            .font(.body)
+                            .foregroundStyle(AppColors.accent)
+                        if let me = vm.me {
+                            Text(me.displayName)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
                     }
+
+                    Spacer(minLength: 0)
                 }
-                .padding(.vertical, 4)
-            }
-
-            Section(AppText.tr("Профиль", "Profile")) {
-                TextField(AppText.tr("Имя", "First name"), text: $firstName)
-                TextField(AppText.tr("Фамилия", "Last name"), text: $lastName)
-                TextField(AppText.tr("Имя пользователя", "Username"), text: $username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                Button {
-                    Task { await saveProfile() }
-                } label: {
-                    if isSavingProfile {
-                        ProgressView()
-                    } else {
-                        Text(AppText.tr("Сохранить профиль", "Save profile"))
-                    }
-                }
-                .disabled(isSavingProfile)
-            }
-
-            Section(AppText.tr("Профиль", "Profile")) {
-                privacyPicker(for: .profilePhoto)
-                privacyPicker(for: .bio)
-                privacyPicker(for: .phoneNumber)
-                privacyPicker(for: .status)
-            }
-
-            Section(AppText.tr("Поиск и ссылки", "Discovery")) {
-                privacyPicker(for: .findByPhone)
-                privacyPicker(for: .showLink)
-            }
-
-            Section {
-                privacyPicker(for: .forwards)
-            } header: {
-                Text(AppText.tr("Сообщения", "Messages"))
-            } footer: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(AppText.tr(
-                        "Кто видит аватар, имя, @username, номер и другие данные профиля.",
-                        "Who can see your avatar, name, @username, phone number, and other profile details."
-                    ))
-                    if vm.isPrivacyLoading {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(AppText.tr("Загрузка настроек…", "Loading settings…"))
-                        }
-                    }
-                    if !vm.status.isEmpty {
-                        Text(vm.status)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                .padding(.vertical, 6)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .navigationTitle(AppText.tr("Приватность", "Privacy"))
-        .navigationBarTitleDisplayMode(.inline)
-        .scrollContentBackground(.hidden)
-        .background(ChatListScreenBackground().ignoresSafeArea())
-        .transparentNavigationBar()
-        .task {
-            syncProfileFields()
-            await vm.loadPrivacySettings()
+    }
+
+    private var bioSummary: String {
+        guard let bio = vm.me?.bio?.trimmingCharacters(in: .whitespacesAndNewlines), !bio.isEmpty else {
+            return AppText.tr("Добавить", "Add")
         }
-        .onChange(of: vm.me?.id) { _ in
-            syncProfileFields()
+        return bio
+    }
+
+    private var usernameSummary: String {
+        guard let username = vm.me?.username, !username.isEmpty else {
+            return AppText.tr("Задать", "Set")
         }
-        .onChange(of: avatarPickerItem) { newItem in
-            guard let newItem else { return }
-            Task {
-                isUploadingAvatar = true
-                defer {
-                    isUploadingAvatar = false
-                    avatarPickerItem = nil
-                }
-                if let data = try? await newItem.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
-                    await vm.uploadMyProfilePhoto(from: image)
-                }
-            }
-        }
+        return "@\(username)"
     }
 
     @ViewBuilder
-    private func privacyPicker(for kind: UserPrivacySettingKind) -> some View {
-        Picker(kind.title, selection: binding(for: kind)) {
-            ForEach(PrivacyVisibility.allCases) { level in
-                Text(level.title).tag(level)
+    private var privacyFooter: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(AppText.tr(
+                "Настройте, кто может видеть ваши данные и связываться с вами.",
+                "Control who can see your information and contact you."
+            ))
+            if vm.isPrivacyLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(AppText.tr("Загрузка…", "Loading…"))
+                }
+            }
+            if !vm.status.isEmpty {
+                Text(vm.status)
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func binding(for kind: UserPrivacySettingKind) -> Binding<PrivacyVisibility> {
-        Binding(
-            get: {
-                vm.privacySettings.first(where: { $0.kind == kind })?.visibility ?? .contacts
-            },
-            set: { newValue in
-                if let index = vm.privacySettings.firstIndex(where: { $0.kind == kind }) {
-                    vm.privacySettings[index].visibility = newValue
-                }
-                Task { await vm.updatePrivacySetting(kind, visibility: newValue) }
-            }
-        )
-    }
-
-    private func syncProfileFields() {
-        guard let me = vm.me else { return }
-        firstName = me.firstName
-        lastName = me.lastName
-        username = me.username ?? ""
-    }
-
-    private func saveProfile() async {
-        isSavingProfile = true
-        defer { isSavingProfile = false }
-        await vm.updateMyProfile(
-            firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines),
-            lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines),
-            username: username.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
     }
 }

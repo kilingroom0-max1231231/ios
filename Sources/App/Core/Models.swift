@@ -417,9 +417,32 @@ struct TgUser: Identifiable, Equatable {
     let lastName: String
     let username: String?
     let phoneNumber: String?
+    let bio: String?
     let avatarPath: String?
     let isPremium: Bool
     let premiumBadgePath: String?
+
+    init(
+        id: Int64,
+        firstName: String,
+        lastName: String,
+        username: String?,
+        phoneNumber: String?,
+        bio: String? = nil,
+        avatarPath: String?,
+        isPremium: Bool,
+        premiumBadgePath: String?
+    ) {
+        self.id = id
+        self.firstName = firstName
+        self.lastName = lastName
+        self.username = username
+        self.phoneNumber = phoneNumber
+        self.bio = bio
+        self.avatarPath = avatarPath
+        self.isPremium = isPremium
+        self.premiumBadgePath = premiumBadgePath
+    }
 
     var displayName: String {
         let name = [firstName, lastName]

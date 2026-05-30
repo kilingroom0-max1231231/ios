@@ -17,46 +17,142 @@ enum PrivacyVisibility: String, CaseIterable, Identifiable {
 }
 
 enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
-    case profilePhoto
-    case status
     case phoneNumber
+    case status
+    case profilePhoto
     case bio
     case forwards
+    case groupInvites
+    case calls
     case findByPhone
-    case showLink
 
     var id: String { rawValue }
+
+    /// Settings shown under the Privacy section (Telegram order).
+    static let privacySection: [UserPrivacySettingKind] = [
+        .phoneNumber, .status, .profilePhoto, .bio, .forwards, .groupInvites, .calls
+    ]
+
+    static let discoverySection: [UserPrivacySettingKind] = [.findByPhone]
 
     var tdlibType: String {
         switch self {
         case .profilePhoto: return "userPrivacySettingShowProfilePhoto"
         case .status: return "userPrivacySettingShowStatus"
-        case .phoneNumber: return "userPrivacySettingPhoneNumber"
+        case .phoneNumber: return "userPrivacySettingShowPhoneNumber"
         case .bio: return "userPrivacySettingShowBio"
         case .forwards: return "userPrivacySettingShowLinkInForwardedMessages"
+        case .groupInvites: return "userPrivacySettingAllowChatInvites"
+        case .calls: return "userPrivacySettingAllowCalls"
         case .findByPhone: return "userPrivacySettingAllowFindingByPhoneNumber"
-        case .showLink: return "userPrivacySettingShowLinkInForwardedMessages"
         }
     }
 
     var title: String {
         switch self {
-        case .profilePhoto: return AppText.tr("Фото профиля", "Profile photo")
-        case .status: return AppText.tr("Время захода", "Last seen")
+        case .profilePhoto: return AppText.tr("Фото профиля", "Profile photos")
+        case .status: return AppText.tr("Время захода", "Last seen & online")
         case .phoneNumber: return AppText.tr("Номер телефона", "Phone number")
         case .bio: return AppText.tr("О себе", "Bio")
         case .forwards: return AppText.tr("Пересылка сообщений", "Forwarded messages")
-        case .findByPhone: return AppText.tr("Найти по номеру", "Find by phone")
-        case .showLink: return AppText.tr("Ссылка t.me / @username", "t.me link / @username")
+        case .groupInvites: return AppText.tr("Группы и каналы", "Groups & channels")
+        case .calls: return AppText.tr("Звонки", "Calls")
+        case .findByPhone: return AppText.tr("Найти по номеру", "Find by phone number")
+        }
+    }
+
+    /// Base visibility options available for this setting in Telegram.
+    var availableBaseOptions: [PrivacyVisibility] {
+        switch self {
+        case .findByPhone:
+            return [.everybody, .contacts]
+        default:
+            return PrivacyVisibility.allCases
+        }
+    }
+
+    var footer: String? {
+        switch self {
+        case .phoneNumber:
+            return AppText.tr(
+                "Укажите, кто может видеть ваш номер телефона.",
+                "Choose who can see your phone number."
+            )
+        case .status:
+            return AppText.tr(
+                "Укажите, кто может видеть время вашего последнего захода.",
+                "Choose who can see when you were last online."
+            )
+        case .profilePhoto:
+            return AppText.tr(
+                "Укажите, кто может видеть фото вашего профиля.",
+                "Choose who can see your profile photos."
+            )
+        case .bio:
+            return AppText.tr(
+                "Укажите, кто может видеть текст «О себе».",
+                "Choose who can see your bio."
+            )
+        case .forwards:
+            return AppText.tr(
+                "Укажите, кому будет видна ссылка на ваш аккаунт при пересылке сообщений.",
+                "Choose who can see a link to your account when your messages are forwarded."
+            )
+        case .groupInvites:
+            return AppText.tr(
+                "Укажите, кто может добавлять вас в группы и каналы.",
+                "Choose who can add you to groups and channels."
+            )
+        case .calls:
+            return AppText.tr(
+                "Укажите, кто может звонить вам в Telegram.",
+                "Choose who can call you on Telegram."
+            )
+        case .findByPhone:
+            return AppText.tr(
+                "Если вы выключите эту опцию, пользователи не смогут найти вас по номеру телефона.",
+                "If you turn this off, users won't find you by your phone number."
+            )
         }
     }
 }
 
-struct UserPrivacySettingValue: Identifiable, Equatable {
+struct UserPrivacyRules: Identifiable, Equatable {
     let kind: UserPrivacySettingKind
-    var visibility: PrivacyVisibility
+    var baseVisibility: PrivacyVisibility
+    var allowUserIds: [Int64]
+    var restrictUserIds: [Int64]
 
     var id: String { kind.id }
+
+    static func `default`(for kind: UserPrivacySettingKind) -> UserPrivacyRules {
+        UserPrivacyRules(
+            kind: kind,
+            baseVisibility: .contacts,
+            allowUserIds: [],
+            restrictUserIds: []
+        )
+    }
+
+    /// Whether the Always Allow exceptions row is shown (Telegram-style).
+    func showsAlwaysAllowSection -> Bool {
+        baseVisibility == .nobody || baseVisibility == .contacts
+    }
+
+    /// Whether the Never Allow exceptions row is shown.
+    func showsNeverAllowSection -> Bool {
+        baseVisibility == .everybody || baseVisibility == .contacts
+    }
+}
+
+/// @deprecated name kept for minimal churn — use UserPrivacyRules.
+typealias UserPrivacySettingValue = UserPrivacyRules
+
+extension UserPrivacyRules {
+    var visibility: PrivacyVisibility {
+        get { baseVisibility }
+        set { baseVisibility = newValue }
+    }
 }
 
 enum GlobalSearchScope: String, CaseIterable, Identifiable {

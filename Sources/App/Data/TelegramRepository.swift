@@ -443,8 +443,12 @@ final class TelegramRepository {
         try await client.setProfilePhoto(localPath: localPath)
     }
 
-    func loadPrivacySettings() async throws -> [UserPrivacySettingValue] {
+    func loadPrivacySettings() async throws -> [UserPrivacyRules] {
         try await client.fetchUserPrivacySettings()
+    }
+
+    func updatePrivacyRules(_ rules: UserPrivacyRules) async throws {
+        try await client.setUserPrivacyRules(rules)
     }
 
     func updatePrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
@@ -477,6 +481,10 @@ final class TelegramRepository {
 
     func updateProfileName(firstName: String, lastName: String) async throws {
         try await client.setName(firstName: firstName, lastName: lastName)
+    }
+
+    func updateBio(_ bio: String) async throws {
+        try await client.setBio(bio)
     }
 
     static let mediaDownloadRecentMessageLimit = 24

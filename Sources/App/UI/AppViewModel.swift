@@ -32,9 +32,10 @@ final class AppViewModel: ObservableObject {
     @Published var messages: [TgMessage] = []
     @Published var selectedChatPeerIsBot = false
     @Published var incomingToast: IncomingMessageToast?
-    @Published var privacySettings: [UserPrivacySettingValue] = UserPrivacySettingKind.allCases.map {
-        UserPrivacySettingValue(kind: $0, visibility: .contacts)
+    @Published var privacySettings: [UserPrivacyRules] = UserPrivacySettingKind.allCases.map {
+        UserPrivacyRules.default(for: $0)
     }
+    @Published var privacyUserLabels: [Int64: String] = [:]
     @Published var isPrivacyLoading = false
     @Published var globalSearchScope: GlobalSearchScope = .myChats
     @Published var globalSearchQuery = ""
@@ -3095,6 +3096,56 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func updateMyBio(_ bio: String) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await repository.updateBio(bio)
+            await refreshMe()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updateMyUsername(_ username: String) async {
+        guard let repository else { return }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let normalized = username
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "@", with: "")
+            try await repository.updateUsername(normalized)
+            await refreshMe()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func privacyRules(for kind: UserPrivacySettingKind) -> UserPrivacyRules {
+        privacySettings.first(where: { $0.kind == kind }) ?? .default(for: kind)
+    }
+
+    func privacyVisibility(for kind: UserPrivacySettingKind) -> PrivacyVisibility {
+        privacyRules(for: kind).baseVisibility
+    }
+
+    func privacyUserDisplayName(_ userId: Int64) -> String {
+        if userId == me?.id {
+            return me?.displayName ?? AppText.tr("Вы", "You")
+        }
+        if let label = privacyUserLabels[userId] {
+            return label
+        }
+        if let contact = contacts.first(where: { $0.userId == userId }) {
+            return contact.displayName
+        }
+        return AppText.tr("Пользователь", "User")
+    }
+
     func uploadMyProfilePhoto(from image: UIImage) async {
         guard let repository else { return }
         guard let data = image.jpegData(compressionQuality: 0.9) else { return }
@@ -3120,6 +3171,21 @@ final class AppViewModel: ObservableObject {
         defer { isPrivacyLoading = false }
         do {
             privacySettings = try await repository.loadPrivacySettings()
+            await resolvePrivacyUserLabels()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updatePrivacyRules(_ rules: UserPrivacyRules) async {
+        guard let repository else { return }
+        do {
+            try await repository.updatePrivacyRules(rules)
+            if let index = privacySettings.firstIndex(where: { $0.kind == rules.kind }) {
+                privacySettings[index] = rules
+            }
+            await resolvePrivacyUserLabels(for: rules)
             status = ""
         } catch {
             status = error.localizedDescription
@@ -3127,15 +3193,54 @@ final class AppViewModel: ObservableObject {
     }
 
     func updatePrivacySetting(_ kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async {
-        guard let repository else { return }
-        do {
-            try await repository.updatePrivacySetting(kind: kind, visibility: visibility)
-            if let index = privacySettings.firstIndex(where: { $0.kind == kind }) {
-                privacySettings[index].visibility = visibility
+        var rules = privacyRules(for: kind)
+        rules.baseVisibility = visibility
+        await updatePrivacyRules(rules)
+    }
+
+    func addPrivacyException(kind: UserPrivacySettingKind, userId: Int64, allow: Bool) async {
+        var rules = privacyRules(for: kind)
+        if allow {
+            if !rules.allowUserIds.contains(userId) {
+                rules.allowUserIds.append(userId)
             }
-            status = ""
-        } catch {
-            status = error.localizedDescription
+            rules.restrictUserIds.removeAll { $0 == userId }
+        } else {
+            if !rules.restrictUserIds.contains(userId) {
+                rules.restrictUserIds.append(userId)
+            }
+            rules.allowUserIds.removeAll { $0 == userId }
+        }
+        await updatePrivacyRules(rules)
+    }
+
+    func removePrivacyException(kind: UserPrivacySettingKind, userId: Int64, allow: Bool) async {
+        var rules = privacyRules(for: kind)
+        if allow {
+            rules.allowUserIds.removeAll { $0 == userId }
+        } else {
+            rules.restrictUserIds.removeAll { $0 == userId }
+        }
+        await updatePrivacyRules(rules)
+    }
+
+    func resolvePrivacyUserLabels(for rules: UserPrivacyRules? = nil) async {
+        guard let repository else { return }
+        let ids: [Int64]
+        if let rules {
+            ids = rules.allowUserIds + rules.restrictUserIds
+        } else {
+            ids = privacySettings.flatMap { $0.allowUserIds + $0.restrictUserIds }
+        }
+        for userId in Set(ids) {
+            if privacyUserLabels[userId] != nil { continue }
+            if let contact = contacts.first(where: { $0.userId == userId }) {
+                privacyUserLabels[userId] = contact.displayName
+                continue
+            }
+            if let name = try? await repository.fetchUserDisplayName(userId: userId), !name.isEmpty {
+                privacyUserLabels[userId] = name
+            }
         }
     }
 

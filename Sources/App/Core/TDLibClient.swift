@@ -1654,41 +1654,35 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         ])
     }
 
-    func fetchUserPrivacySettings() async throws -> [UserPrivacySettingValue] {
-        var values: [UserPrivacySettingValue] = []
+    func fetchUserPrivacySettings() async throws -> [UserPrivacyRules] {
+        var values: [UserPrivacyRules] = []
         for kind in UserPrivacySettingKind.allCases {
             do {
-                let visibility = try await fetchPrivacyVisibility(kind: kind)
-                values.append(UserPrivacySettingValue(kind: kind, visibility: visibility))
+                values.append(try await fetchPrivacyRules(kind: kind))
             } catch {
-                values.append(UserPrivacySettingValue(kind: kind, visibility: .contacts))
+                values.append(.default(for: kind))
             }
         }
         return values
     }
 
-    func setUserPrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
-        let ruleType: String
-        switch visibility {
-        case .everybody:
-            ruleType = "userPrivacySettingRuleAllowAll"
-        case .contacts:
-            ruleType = "userPrivacySettingRuleAllowContacts"
-        case .nobody:
-            ruleType = "userPrivacySettingRuleRestrictAll"
-        }
-
+    func setUserPrivacyRules(_ rules: UserPrivacyRules) async throws {
         _ = try await sendRequest([
             "@type": "setUserPrivacySettingRules",
             "setting": [
-                "@type": kind.tdlibType
+                "@type": rules.kind.tdlibType
             ],
-            "rules": [
-                [
-                    "@type": ruleType
-                ]
-            ]
+            "rules": buildPrivacyRulePayloads(from: rules)
         ])
+    }
+
+    func setUserPrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws {
+        try await setUserPrivacyRules(UserPrivacyRules(
+            kind: kind,
+            baseVisibility: visibility,
+            allowUserIds: [],
+            restrictUserIds: []
+        ))
     }
 
     func searchMessagesGlobally(query: String, limit: Int = 20) async throws -> [GlobalSearchMessageHit] {
@@ -1734,7 +1728,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return hits
     }
 
-    private func fetchPrivacyVisibility(kind: UserPrivacySettingKind) async throws -> PrivacyVisibility {
+    private func fetchPrivacyRules(kind: UserPrivacySettingKind) async throws -> UserPrivacyRules {
         let response = try await sendRequest([
             "@type": "getUserPrivacySettingRules",
             "setting": [
@@ -1742,24 +1736,86 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             ]
         ])
         let rules = response["rules"] as? [[String: Any]] ?? []
-        return parsePrivacyVisibility(from: rules)
+        return parsePrivacyRules(kind: kind, from: rules)
     }
 
-    private func parsePrivacyVisibility(from rules: [[String: Any]]) -> PrivacyVisibility {
+    private func parsePrivacyRules(kind: UserPrivacySettingKind, from rules: [[String: Any]]) -> UserPrivacyRules {
+        var base: PrivacyVisibility = .contacts
+        var allowUserIds: [Int64] = []
+        var restrictUserIds: [Int64] = []
+
         for rule in rules {
             guard let type = rule["@type"] as? String else { continue }
             switch type {
             case "userPrivacySettingRuleAllowAll":
-                return .everybody
+                base = .everybody
             case "userPrivacySettingRuleAllowContacts":
-                return .contacts
+                base = .contacts
             case "userPrivacySettingRuleRestrictAll":
-                return .nobody
+                base = .nobody
+            case "userPrivacySettingRuleAllowUsers":
+                allowUserIds.append(contentsOf: int64Array(rule["user_ids"]))
+            case "userPrivacySettingRuleRestrictUsers":
+                restrictUserIds.append(contentsOf: int64Array(rule["user_ids"]))
             default:
-                continue
+                break
             }
         }
-        return .contacts
+
+        return UserPrivacyRules(
+            kind: kind,
+            baseVisibility: base,
+            allowUserIds: dedupePreservingOrder(allowUserIds),
+            restrictUserIds: dedupePreservingOrder(restrictUserIds)
+        )
+    }
+
+    private func buildPrivacyRulePayloads(from rules: UserPrivacyRules) -> [[String: Any]] {
+        var payloads: [[String: Any]] = []
+        switch rules.baseVisibility {
+        case .everybody:
+            payloads.append(["@type": "userPrivacySettingRuleAllowAll"])
+        case .contacts:
+            payloads.append(["@type": "userPrivacySettingRuleAllowContacts"])
+        case .nobody:
+            payloads.append(["@type": "userPrivacySettingRuleRestrictAll"])
+        }
+
+        if !rules.allowUserIds.isEmpty {
+            payloads.append([
+                "@type": "userPrivacySettingRuleAllowUsers",
+                "user_ids": rules.allowUserIds.map { NSNumber(value: $0) }
+            ])
+        }
+        if !rules.restrictUserIds.isEmpty {
+            payloads.append([
+                "@type": "userPrivacySettingRuleRestrictUsers",
+                "user_ids": rules.restrictUserIds.map { NSNumber(value: $0) }
+            ])
+        }
+        return payloads
+    }
+
+    private func int64Array(_ value: Any?) -> [Int64] {
+        guard let raw = value as? [Any] else { return [] }
+        return raw.compactMap(int64Value)
+    }
+
+    private func dedupePreservingOrder(_ ids: [Int64]) -> [Int64] {
+        var seen = Set<Int64>()
+        var out: [Int64] = []
+        for id in ids where seen.insert(id).inserted {
+            out.append(id)
+        }
+        return out
+    }
+
+    private func fetchPrivacyVisibility(kind: UserPrivacySettingKind) async throws -> PrivacyVisibility {
+        try await fetchPrivacyRules(kind: kind).baseVisibility
+    }
+
+    private func parsePrivacyVisibility(from rules: [[String: Any]]) -> PrivacyVisibility {
+        parsePrivacyRules(kind: .phoneNumber, from: rules).baseVisibility
     }
 
     private func resolveProfilePhotoFilePath(_ photo: [String: Any]) async throws -> String? {
@@ -1830,16 +1886,26 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             premiumBadgePath: premiumBadgePath
         )
 
+        let meta = try await loadUserMeta(userId: id)
+
         return TgUser(
             id: id,
             firstName: firstName,
             lastName: lastName,
             username: username,
             phoneNumber: phoneNumber,
+            bio: meta.bio,
             avatarPath: avatarPath,
             isPremium: isPremium,
             premiumBadgePath: premiumBadgePath
         )
+    }
+
+    func setBio(_ bio: String) async throws {
+        _ = try await sendRequest([
+            "@type": "setBio",
+            "bio": formattedTextDict(bio)
+        ])
     }
 
     func fetchActiveSessions() async throws -> [TgActiveSession] {

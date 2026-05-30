@@ -66,8 +66,10 @@ protocol TelegramClientProtocol {
     func searchPublicChats(query: String) async throws -> [TgChat]
     func setName(firstName: String, lastName: String) async throws
     func setUsername(_ username: String) async throws
+    func setBio(_ bio: String) async throws
     func setProfilePhoto(localPath: String) async throws
-    func fetchUserPrivacySettings() async throws -> [UserPrivacySettingValue]
+    func fetchUserPrivacySettings() async throws -> [UserPrivacyRules]
+    func setUserPrivacyRules(_ rules: UserPrivacyRules) async throws
     func setUserPrivacySetting(kind: UserPrivacySettingKind, visibility: PrivacyVisibility) async throws
     func searchMessagesGlobally(query: String, limit: Int) async throws -> [GlobalSearchMessageHit]
     func fetchUserDisplayName(userId: Int64) async throws -> String
