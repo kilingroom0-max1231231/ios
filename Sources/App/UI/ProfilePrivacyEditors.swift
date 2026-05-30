@@ -101,10 +101,16 @@ struct EditProfileBioView: View {
                     }
                 }
             } footer: {
-                Text(AppText.tr(
-                    "Любые подробности, например: возраст, род занятий или город.",
-                    "Any details, such as age, occupation or city."
-                ))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AppText.tr(
+                        "Любые подробности, например: возраст, род занятий или город.",
+                        "Any details, such as age, occupation or city."
+                    ))
+                    if !vm.status.isEmpty {
+                        Text(vm.status)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -130,13 +136,20 @@ struct EditProfileBioView: View {
                 .background(.ultraThinMaterial)
         }
         .onAppear {
+            Task { await vm.refreshMe() }
             bio = vm.me?.bio ?? ""
+        }
+        .onChange(of: vm.me?.bio) { newValue in
+            if !isSaving {
+                bio = newValue ?? ""
+            }
         }
     }
 
     private func save() async {
         isSaving = true
         defer { isSaving = false }
+        vm.status = ""
         await vm.updateMyBio(bio.trimmingCharacters(in: .whitespacesAndNewlines))
         if vm.status.isEmpty {
             dismiss()
@@ -163,10 +176,16 @@ struct EditProfileUsernameView: View {
                         .autocorrectionDisabled()
                 }
             } footer: {
-                Text(AppText.tr(
-                    "Вы можете выбрать имя пользователя в Telegram. Другие смогут найти вас по @username без номера телефона.",
-                    "You can choose a username on Telegram. People can find you by @username without knowing your phone number."
-                ))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AppText.tr(
+                        "Вы можете выбрать имя пользователя в Telegram. Другие смогут найти вас по @username без номера телефона.",
+                        "You can choose a username on Telegram. People can find you by @username without knowing your phone number."
+                    ))
+                    if !vm.status.isEmpty {
+                        Text(vm.status)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -184,13 +203,20 @@ struct EditProfileUsernameView: View {
             }
         }
         .onAppear {
+            Task { await vm.refreshMe() }
             username = vm.me?.username ?? ""
+        }
+        .onChange(of: vm.me?.username) { newValue in
+            if !isSaving {
+                username = newValue ?? ""
+            }
         }
     }
 
     private func save() async {
         isSaving = true
         defer { isSaving = false }
+        vm.status = ""
         await vm.updateMyUsername(username)
         if vm.status.isEmpty {
             dismiss()
@@ -513,6 +539,7 @@ struct EditProfilePhotoView: View {
                                 title: me.displayName,
                                 identifier: me.id,
                                 imagePath: me.avatarPath,
+                                reloadToken: vm.avatarReloadToken,
                                 size: 120
                             )
                         }

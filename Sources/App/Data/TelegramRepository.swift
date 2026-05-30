@@ -214,7 +214,7 @@ final class TelegramRepository {
         }
 
         var stored = try store.read(chatId: chatId, limit: 500).sorted { $0.createdAt < $1.createdAt }
-        let needsEnrichment = stored.suffix(60).filter(Self.needsDisplayEnrichment)
+        let needsEnrichment = stored.filter(Self.needsDisplayEnrichment)
         if !needsEnrichment.isEmpty {
             let enriched = try await client.enrichMessages(Array(needsEnrichment))
             try store.upsert(messages: enriched)
@@ -471,6 +471,18 @@ final class TelegramRepository {
         try await client.terminateAllOtherSessions()
     }
 
+    func loadAccountSecuritySnapshot() async throws -> AccountSecuritySnapshot {
+        try await client.fetchAccountSecuritySnapshot()
+    }
+
+    func loadBlockedMessageSenders(offset: Int = 0, limit: Int = 100) async throws -> (totalCount: Int, senders: [TgBlockedSender]) {
+        try await client.fetchBlockedMessageSenders(offset: offset, limit: limit)
+    }
+
+    func setMessageSenderBlocked(userId: Int64?, chatId: Int64?, isBlocked: Bool) async throws {
+        try await client.setMessageSenderBlocked(userId: userId, chatId: chatId, isBlocked: isBlocked)
+    }
+
     func searchChats(query: String) async throws -> [TgChat] {
         try await client.searchChats(query: query, limit: 30)
     }
@@ -606,8 +618,20 @@ final class TelegramRepository {
         try await client.leaveChat(chatId: chatId)
     }
 
-    func loadMe() async throws -> TgUser {
-        try await client.getMe()
+    func loadMe(forceRefreshAvatar: Bool = false) async throws -> TgUser {
+        try await client.getMe(forceRefreshAvatar: forceRefreshAvatar)
+    }
+
+    func sendInlineCallbackQuery(chatId: Int64, messageId: Int64, data: String) async throws -> (text: String?, url: URL?, showAlert: Bool) {
+        try await client.sendInlineCallbackQuery(chatId: chatId, messageId: messageId, data: data)
+    }
+
+    func updateAccountTtlDays(_ days: Int) async throws {
+        try await client.setAccountTtlDays(days)
+    }
+
+    func updateDefaultMessageAutoDeleteTime(seconds: Int) async throws {
+        try await client.setDefaultMessageAutoDeleteTime(seconds: seconds)
     }
 
     func setUserBlocked(userId: Int64, isBlocked: Bool) async throws {

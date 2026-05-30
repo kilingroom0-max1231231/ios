@@ -102,21 +102,10 @@ struct SettingsView: View {
                     PrivacySettingsView(vm: vm)
                 } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: "person.crop.circle")
+                        Image(systemName: "lock.shield")
                             .foregroundStyle(AppColors.accent)
                             .frame(width: 28)
-                        Text(AppText.tr("Профиль и приватность", "Profile & privacy"))
-                    }
-                }
-
-                NavigationLink {
-                    ActiveSessionsView(vm: vm)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "desktopcomputer.and.arrow.down")
-                            .foregroundStyle(AppColors.accent)
-                            .frame(width: 28)
-                        Text(AppText.tr("Устройства", "Devices"))
+                        Text(AppText.tr("Конфиденциальность", "Privacy"))
                     }
                 }
             }

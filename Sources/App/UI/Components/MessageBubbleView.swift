@@ -21,6 +21,7 @@ struct MessageBubbleView: View {
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
+    var onInlineButton: ((TgInlineKeyboardButton) -> Void)?
     /// When false, long-press / double-tap are disabled (e.g. highlighted copy in action overlay).
     var interactionsEnabled: Bool = true
 
@@ -46,9 +47,19 @@ struct MessageBubbleView: View {
     }
 
     private var showPrivatePeerAvatar: Bool {
-        !message.outgoing
-            && chatKind == .private
-            && peerAvatarPath != nil
+        !message.outgoing && chatKind == .private
+    }
+
+    private var privateIncomingAvatarPath: String? {
+        peerAvatarPath ?? message.senderAvatarPath
+    }
+
+    private var privateIncomingAvatarTitle: String {
+        peerTitle ?? message.senderName ?? "?"
+    }
+
+    private var privateIncomingAvatarId: Int64 {
+        message.senderUserId ?? message.chatId
     }
 
     private var messageFont: Font {
@@ -62,7 +73,7 @@ struct MessageBubbleView: View {
     private var showGroupSender: Bool {
         !message.outgoing
             && (chatKind == .basicGroup || chatKind == .supergroup)
-            && message.senderName != nil
+            && (message.senderName != nil || message.senderUserId != nil)
     }
 
     private var isIncomingChannel: Bool {
@@ -154,16 +165,16 @@ struct MessageBubbleView: View {
             } else if showGroupSender {
                 AvatarView(
                     title: message.senderName ?? "?",
-                    identifier: message.senderUserId ?? message.chatId,
+                    identifier: message.senderUserId ?? message.id,
                     imagePath: message.senderAvatarPath,
                     size: 30
                 )
                 .frame(width: 30, height: 30)
             } else if showPrivatePeerAvatar {
                 AvatarView(
-                    title: peerTitle ?? "?",
-                    identifier: message.chatId,
-                    imagePath: peerAvatarPath,
+                    title: privateIncomingAvatarTitle,
+                    identifier: privateIncomingAvatarId,
+                    imagePath: privateIncomingAvatarPath,
                     size: 28
                 )
                 .frame(width: 28, height: 28)
@@ -197,6 +208,17 @@ struct MessageBubbleView: View {
                 }
 
                 bubbleBody
+
+                if case .inline(let rows) = message.replyMarkup {
+                    MessageInlineKeyboardView(
+                        rows: rows,
+                        outgoing: message.outgoing,
+                        onTap: { button in
+                            onInlineButton?(button)
+                        }
+                    )
+                    .padding(.top, 2)
+                }
 
                 if !message.reactions.isEmpty {
                     MessageReactionsView(

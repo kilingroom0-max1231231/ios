@@ -435,7 +435,17 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                         ]) else {
                             return (chat.id, nil)
                         }
-                        let path = try? await self.resolveChatAvatarPath(chatResp, downloadIfMissing: true)
+                        var path = try? await self.resolveChatAvatarPath(chatResp, downloadIfMissing: true)
+                        if path == nil,
+                           let chatType = chatResp["type"] as? [String: Any],
+                           (chatType["@type"] as? String) == "chatTypePrivate",
+                           let userId = self.int64Value(chatType["user_id"]),
+                           let user = try? await self.sendRequest([
+                               "@type": "getUser",
+                               "user_id": userId
+                           ]) {
+                            path = try? await self.resolveUserAvatarPath(user, downloadIfMissing: true)
+                        }
                         return (chat.id, path)
                     }
                 }
@@ -1053,7 +1063,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     }
 
     private func formattedTextDict(_ text: String) -> [String: Any] {
-        ["@type": "formattedText", "text": text]
+        ["@type": "formattedText", "text": text, "entities": []]
     }
 
     private func parseStickerForPicker(_ sticker: [String: Any]) async -> TgSticker? {
@@ -1652,6 +1662,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 ]
             ]
         ])
+        if let myId = cachedMyUserId {
+            userInfoCache.removeValue(forKey: myId)
+        }
     }
 
     func fetchUserPrivacySettings() async throws -> [UserPrivacyRules] {
@@ -1861,7 +1874,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
-    func getMe() async throws -> TgUser {
+    func getMe(forceRefreshAvatar: Bool = false) async throws -> TgUser {
         let user = try await sendRequest([
             "@type": "getMe"
         ])
@@ -1869,9 +1882,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let id = int64Value(user["id"]) ?? 0
         let firstName = user["first_name"] as? String ?? ""
         let lastName = user["last_name"] as? String ?? ""
-        let username = user["username"] as? String
+        let username = activeUsername(from: user)
         let phoneNumber = user["phone_number"] as? String
-        let avatarPath = try await resolveUserAvatarPath(user)
+        let avatarPath = try await resolveUserAvatarPath(user, downloadIfMissing: true, forceRefresh: forceRefreshAvatar)
 
         let isPremium = (user["is_premium"] as? Bool) ?? false
         cachedMyUserId = id
@@ -1923,6 +1936,105 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
     func terminateAllOtherSessions() async throws {
         _ = try await sendRequest(["@type": "terminateAllOtherSessions"])
+    }
+
+    func fetchAccountSecuritySnapshot() async throws -> AccountSecuritySnapshot {
+        var snapshot = AccountSecuritySnapshot()
+
+        if let passwordState = try? await sendRequest(["@type": "getPasswordState"]) {
+            snapshot.hasCloudPassword = (passwordState["has_password"] as? Bool) ?? false
+            let pattern = passwordState["login_email_address_pattern"] as? String
+            if let pattern, !pattern.isEmpty {
+                snapshot.loginEmailPattern = pattern
+            }
+        }
+
+        if let ttl = try? await sendRequest(["@type": "getAccountTtl"]) {
+            snapshot.accountDeleteDays = ttl["days"] as? Int ?? 0
+        }
+
+        if let autoDelete = try? await sendRequest(["@type": "getDefaultMessageAutoDeleteTime"]) {
+            snapshot.messageAutoDeleteSeconds = autoDelete["time"] as? Int ?? 0
+        }
+
+        if let blocked = try? await sendRequest([
+            "@type": "getBlockedMessageSenders",
+            "block_list": ["@type": "blockListMain"],
+            "offset": 0,
+            "limit": 1
+        ]) {
+            snapshot.blockedUsersCount = blocked["total_count"] as? Int ?? 0
+        }
+
+        return snapshot
+    }
+
+    func fetchBlockedMessageSenders(offset: Int = 0, limit: Int = 100) async throws -> (totalCount: Int, senders: [TgBlockedSender]) {
+        let response = try await sendRequest([
+            "@type": "getBlockedMessageSenders",
+            "block_list": ["@type": "blockListMain"],
+            "offset": offset,
+            "limit": limit
+        ])
+        let totalCount = response["total_count"] as? Int ?? 0
+        let rawSenders = response["senders"] as? [[String: Any]] ?? []
+        var senders: [TgBlockedSender] = []
+        senders.reserveCapacity(rawSenders.count)
+
+        for sender in rawSenders {
+            guard let type = sender["@type"] as? String else { continue }
+            switch type {
+            case "messageSenderUser":
+                guard let userId = int64Value(sender["user_id"]) else { continue }
+                let title = (try? await fetchUserDisplayName(userId: userId)) ?? AppText.tr("Пользователь", "User")
+                senders.append(TgBlockedSender(
+                    id: "user-\(userId)",
+                    userId: userId,
+                    chatId: nil,
+                    title: title
+                ))
+            case "messageSenderChat":
+                guard let chatId = int64Value(sender["chat_id"]) else { continue }
+                let chat = try? await sendRequest([
+                    "@type": "getChat",
+                    "chat_id": chatId
+                ])
+                let title = (chat?["title"] as? String) ?? AppText.tr("Чат", "Chat")
+                senders.append(TgBlockedSender(
+                    id: "chat-\(chatId)",
+                    userId: nil,
+                    chatId: chatId,
+                    title: title
+                ))
+            default:
+                break
+            }
+        }
+
+        return (totalCount, senders)
+    }
+
+    func setMessageSenderBlocked(userId: Int64?, chatId: Int64?, isBlocked: Bool) async throws {
+        let sender: [String: Any]
+        if let userId {
+            sender = [
+                "@type": "messageSenderUser",
+                "user_id": NSNumber(value: userId)
+            ]
+        } else if let chatId {
+            sender = [
+                "@type": "messageSenderChat",
+                "chat_id": NSNumber(value: chatId)
+            ]
+        } else {
+            return
+        }
+
+        _ = try await sendRequest([
+            "@type": "toggleMessageSenderIsBlocked",
+            "sender_id": sender,
+            "is_blocked": isBlocked
+        ])
     }
 
     private func parseActiveSession(_ obj: [String: Any]) -> TgActiveSession? {
@@ -2713,6 +2825,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let signature = (authorSignature?.isEmpty == false) ? authorSignature : nil
 
         let forwardParsed = parseForwardInfo(obj["forward_info"] as? [String: Any])
+        let replyMarkup = parseReplyMarkup(obj["reply_markup"] as? [String: Any])
 
         return TgMessage(
             id: id,
@@ -2732,8 +2845,114 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             authorSignature: signature,
             viewCount: viewCount,
             reactions: reactions,
-            isService: isService
+            isService: isService,
+            replyMarkup: replyMarkup
         )
+    }
+
+    private func parseReplyMarkup(_ markup: [String: Any]?) -> TgMessageReplyMarkup? {
+        guard let markup, let type = markup["@type"] as? String else { return nil }
+        switch type {
+        case "replyMarkupInlineKeyboard":
+            let rows = (markup["rows"] as? [[String: Any]] ?? []).enumerated().compactMap { index, row -> TgInlineKeyboardRow? in
+                let buttons = (row["buttons"] as? [[String: Any]] ?? []).enumerated().compactMap { buttonIndex, button -> TgInlineKeyboardButton? in
+                    guard let text = button["text"] as? String, !text.isEmpty else { return nil }
+                    guard let action = parseInlineKeyboardButtonType(button["type"] as? [String: Any]) else { return nil }
+                    return TgInlineKeyboardButton(
+                        id: "\(index)-\(buttonIndex)-\(text)",
+                        text: text,
+                        action: action
+                    )
+                }
+                guard !buttons.isEmpty else { return nil }
+                return TgInlineKeyboardRow(id: "inline-\(index)", buttons: buttons)
+            }
+            return rows.isEmpty ? nil : .inline(rows)
+        case "replyMarkupShowKeyboard":
+            let rows = parseReplyKeyboardRows(markup["rows"] as? [[String: Any]])
+            guard !rows.isEmpty else { return nil }
+            return .reply(TgReplyKeyboardMarkup(
+                rows: rows,
+                isPersistent: (markup["is_persistent"] as? Bool) ?? false,
+                resizeKeyboard: (markup["resize_keyboard"] as? Bool) ?? true,
+                oneTime: (markup["one_time"] as? Bool) ?? false,
+                placeholder: (markup["input_field_placeholder"] as? String).flatMap {
+                    let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+            ))
+        case "replyMarkupRemoveKeyboard":
+            return .removeKeyboard
+        default:
+            return nil
+        }
+    }
+
+    private func parseReplyKeyboardRows(_ rawRows: [[String: Any]]?) -> [TgReplyKeyboardRow] {
+        (rawRows ?? []).enumerated().compactMap { index, row in
+            let buttons = (row["buttons"] as? [[String: Any]] ?? []).enumerated().compactMap { buttonIndex, button -> TgReplyKeyboardButton? in
+                guard let text = button["text"] as? String, !text.isEmpty else { return nil }
+                return TgReplyKeyboardButton(id: "\(index)-\(buttonIndex)-\(text)", text: text)
+            }
+            guard !buttons.isEmpty else { return nil }
+            return TgReplyKeyboardRow(id: "reply-\(index)", buttons: buttons)
+        }
+    }
+
+    private func parseInlineKeyboardButtonType(_ type: [String: Any]?) -> TgInlineKeyboardAction? {
+        guard let type, let kind = type["@type"] as? String else { return nil }
+        switch kind {
+        case "inlineKeyboardButtonTypeUrl":
+            guard let raw = type["url"] as? String, let url = URL(string: raw) else { return nil }
+            return .url(url)
+        case "inlineKeyboardButtonTypeCallback", "inlineKeyboardButtonTypeCallbackWithPassword":
+            return .callback(data: type["data"] as? String ?? "")
+        case "inlineKeyboardButtonTypeSwitchInline":
+            return .switchInline(
+                query: type["query"] as? String ?? "",
+                chooseChatTypes: (type["choose_chat_types"] as? [[String: Any]])?.isEmpty == false
+            )
+        case "inlineKeyboardButtonTypeCopyText":
+            return .copyText(type["text"] as? String ?? "")
+        case "inlineKeyboardButtonTypeWebApp":
+            guard let raw = type["url"] as? String, let url = URL(string: raw) else { return nil }
+            return .webApp(url)
+        default:
+            return nil
+        }
+    }
+
+    func sendInlineCallbackQuery(chatId: Int64, messageId: Int64, data: String) async throws -> (text: String?, url: URL?, showAlert: Bool) {
+        let response = try await sendRequest([
+            "@type": "getCallbackQueryAnswer",
+            "chat_id": chatId,
+            "message_id": messageId,
+            "payload": [
+                "@type": "callbackQueryPayloadData",
+                "data": data
+            ]
+        ])
+        let text = response["text"] as? String
+        let url = (response["url"] as? String).flatMap(URL.init(string:))
+        let showAlert = (response["show_alert"] as? Bool) ?? false
+        return (text, url, showAlert)
+    }
+
+    func setAccountTtlDays(_ days: Int) async throws {
+        _ = try await sendRequest([
+            "@type": "setAccountTtl",
+            "ttl": [
+                "@type": "accountTtl",
+                "days": days
+            ]
+        ])
+    }
+
+    func setDefaultMessageAutoDeleteTime(seconds: Int) async throws {
+        _ = try await sendRequest([
+            "@type": "setDefaultMessageAutoDeleteTime",
+            "time": seconds
+        ])
     }
 
     private func parseInteractionViewCount(_ interaction: [String: Any]?) -> Int? {
@@ -2855,7 +3074,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private func enrichMessagesWithSenderInfo(_ messages: [TgMessage]) async throws -> [TgMessage] {
         var missingUserIds = Set<Int64>()
         for message in messages where !message.outgoing {
-            if let userId = message.senderUserId, userInfoCache[userId] == nil {
+            guard let userId = message.senderUserId else { continue }
+            if userInfoCache[userId] == nil || (userInfoCache[userId]?.avatarPath?.isEmpty ?? true) {
                 missingUserIds.insert(userId)
             }
         }
@@ -2871,9 +3091,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
-            let username = (user["username"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
+            let username = activeUsername(from: user).map { "@\($0)" }
             let displayName = name.isEmpty ? (username ?? "User") : name
-            let avatarPath = try await resolveUserAvatarPath(user, downloadIfMissing: false)
+            let avatarPath = try await resolveUserAvatarPath(user, downloadIfMissing: true)
             let premiumBadgePath = await resolvePremiumBadgeImagePath(user: user)
             userInfoCache[userId] = (
                 name: displayName,
@@ -2888,26 +3108,9 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                   let cached = userInfoCache[userId] else {
                 return message
             }
-            return TgMessage(
-                id: message.id,
-                chatId: message.chatId,
-                text: message.text,
-                outgoing: message.outgoing,
-                createdAt: message.createdAt,
-                isEdited: message.isEdited,
-                replyToMessageId: message.replyToMessageId,
-                isDeleted: message.isDeleted,
-                isReadByPeer: message.isReadByPeer,
-                attachments: message.attachments,
-                mediaAlbumId: message.mediaAlbumId,
-                forwardedFrom: message.forwardedFrom,
-                forwardOrigin: message.forwardOrigin,
-                senderUserId: message.senderUserId,
-                senderName: message.senderName ?? cached.name,
-                senderAvatarPath: message.senderAvatarPath ?? cached.avatarPath,
-                authorSignature: message.authorSignature,
-                viewCount: message.viewCount,
-                reactions: message.reactions
+            return message.withSenderDisplay(
+                name: message.senderName ?? cached.name,
+                avatarPath: message.senderAvatarPath ?? cached.avatarPath
             )
         }
     }
@@ -3346,7 +3549,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
     private func resolveUserAvatarPath(
         _ user: [String: Any],
-        downloadIfMissing: Bool = true
+        downloadIfMissing: Bool = true,
+        forceRefresh: Bool = false
     ) async throws -> String? {
         guard
             let profilePhoto = user["profile_photo"] as? [String: Any],
@@ -3355,7 +3559,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             return nil
         }
 
-        if let path = localCompletedFilePath(from: file) {
+        if !forceRefresh, let path = localCompletedFilePath(from: file) {
             return path
         }
 
@@ -3474,7 +3678,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let effectiveTitle = (kind == .savedMessages) ? AppText.tr("Избранное", "Saved Messages") : title
         let avatarPath: String? = (kind == .savedMessages)
             ? nil
-            : (try await resolveChatAvatarPath(chat, downloadIfMissing: false))
+            : (try await resolveChatAvatarPath(chat, downloadIfMissing: mode == .full))
 
         var finalSendInfo = sendInfo
         if isBlockedByMe {

@@ -99,6 +99,9 @@ struct AppShellView: View {
                 .onChange(of: vm.me?.avatarPath) { _ in
                     TabBarProfileIconRenderer.invalidate()
                 }
+                .onChange(of: vm.avatarReloadToken) { _ in
+                    TabBarProfileIconRenderer.invalidate()
+                }
                 .onChange(of: vm.me?.id) { _ in
                     TabBarProfileIconRenderer.invalidate()
                 }

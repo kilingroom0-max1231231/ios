@@ -20,17 +20,27 @@ enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
     case phoneNumber
     case status
     case profilePhoto
-    case bio
     case forwards
-    case groupInvites
     case calls
+    case voiceMessages
+    case messages
+    case birthday
+    case gifts
+    case bio
+    case savedMusic
+    case groupInvites
     case findByPhone
 
     var id: String { rawValue }
 
-    /// Settings shown under the Privacy section (Telegram order).
-    static let privacySection: [UserPrivacySettingKind] = [
-        .phoneNumber, .status, .profilePhoto, .bio, .forwards, .groupInvites, .calls
+    /// First privacy block — matches Telegram «Конфиденциальность» (top).
+    static let primaryPrivacySection: [UserPrivacySettingKind] = [
+        .phoneNumber, .status, .profilePhoto, .forwards, .calls, .voiceMessages
+    ]
+
+    /// Extended privacy rows (scroll below the fold in official app).
+    static let extendedPrivacySection: [UserPrivacySettingKind] = [
+        .messages, .birthday, .gifts, .bio, .savedMusic, .groupInvites
     ]
 
     static let discoverySection: [UserPrivacySettingKind] = [.findByPhone]
@@ -44,24 +54,33 @@ enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
         case .forwards: return "userPrivacySettingShowLinkInForwardedMessages"
         case .groupInvites: return "userPrivacySettingAllowChatInvites"
         case .calls: return "userPrivacySettingAllowCalls"
+        case .voiceMessages: return "userPrivacySettingAllowPrivateVoiceAndVideoNoteMessages"
+        case .messages: return "userPrivacySettingAllowUnpaidMessages"
+        case .birthday: return "userPrivacySettingShowBirthdate"
+        case .gifts: return "userPrivacySettingAutosaveGifts"
+        case .savedMusic: return "userPrivacySettingShowProfileAudio"
         case .findByPhone: return "userPrivacySettingAllowFindingByPhoneNumber"
         }
     }
 
     var title: String {
         switch self {
-        case .profilePhoto: return AppText.tr("Фото профиля", "Profile photos")
+        case .profilePhoto: return AppText.tr("Фотографии профиля", "Profile photos")
         case .status: return AppText.tr("Время захода", "Last seen & online")
         case .phoneNumber: return AppText.tr("Номер телефона", "Phone number")
-        case .bio: return AppText.tr("О себе", "Bio")
+        case .bio: return AppText.tr("О себе", "About me")
         case .forwards: return AppText.tr("Пересылка сообщений", "Forwarded messages")
-        case .groupInvites: return AppText.tr("Группы и каналы", "Groups & channels")
+        case .groupInvites: return AppText.tr("Приглашения", "Invitations")
         case .calls: return AppText.tr("Звонки", "Calls")
+        case .voiceMessages: return AppText.tr("Голосовые сообщения", "Voice messages")
+        case .messages: return AppText.tr("Сообщения", "Messages")
+        case .birthday: return AppText.tr("День рождения", "Birthday")
+        case .gifts: return AppText.tr("Подарки", "Gifts")
+        case .savedMusic: return AppText.tr("Сохранённая музыка", "Saved music")
         case .findByPhone: return AppText.tr("Найти по номеру", "Find by phone number")
         }
     }
 
-    /// Base visibility options available for this setting in Telegram.
     var availableBaseOptions: [PrivacyVisibility] {
         switch self {
         case .findByPhone:
@@ -108,6 +127,31 @@ enum UserPrivacySettingKind: String, CaseIterable, Identifiable {
                 "Укажите, кто может звонить вам в Telegram.",
                 "Choose who can call you on Telegram."
             )
+        case .voiceMessages:
+            return AppText.tr(
+                "Укажите, кто может отправлять вам голосовые и видеосообщения.",
+                "Choose who can send you voice and video messages."
+            )
+        case .messages:
+            return AppText.tr(
+                "Укажите, кто может писать вам без дополнительной оплаты.",
+                "Choose who can message you without additional payment."
+            )
+        case .birthday:
+            return AppText.tr(
+                "Укажите, кто может видеть ваш день рождения.",
+                "Choose who can see your birthday."
+            )
+        case .gifts:
+            return AppText.tr(
+                "Укажите, будут ли полученные подарки автоматически показываться в профиле.",
+                "Choose whether received gifts are shown on your profile."
+            )
+        case .savedMusic:
+            return AppText.tr(
+                "Укажите, кто может видеть сохранённую музыку в вашем профиле.",
+                "Choose who can see saved music on your profile."
+            )
         case .findByPhone:
             return AppText.tr(
                 "Если вы выключите эту опцию, пользователи не смогут найти вас по номеру телефона.",
@@ -134,18 +178,31 @@ struct UserPrivacyRules: Identifiable, Equatable {
         )
     }
 
-    /// Whether the Always Allow exceptions row is shown (Telegram-style).
     var showsAlwaysAllowSection: Bool {
         baseVisibility == .nobody || baseVisibility == .contacts
     }
 
-    /// Whether the Never Allow exceptions row is shown.
     var showsNeverAllowSection: Bool {
         baseVisibility == .everybody || baseVisibility == .contacts
     }
+
+    /// Telegram-style hub label, e.g. «Никто (+3)».
+    var hubSummary: String {
+        let base = baseVisibility.title
+        let exceptionCount: Int
+        switch baseVisibility {
+        case .nobody:
+            exceptionCount = allowUserIds.count
+        case .everybody:
+            exceptionCount = restrictUserIds.count
+        case .contacts:
+            exceptionCount = allowUserIds.count + restrictUserIds.count
+        }
+        guard exceptionCount > 0 else { return base }
+        return "\(base) (+\(exceptionCount))"
+    }
 }
 
-/// @deprecated name kept for minimal churn — use UserPrivacyRules.
 typealias UserPrivacySettingValue = UserPrivacyRules
 
 extension UserPrivacyRules {
@@ -153,6 +210,14 @@ extension UserPrivacyRules {
         get { baseVisibility }
         set { baseVisibility = newValue }
     }
+}
+
+struct AccountSecuritySnapshot: Equatable {
+    var hasCloudPassword = false
+    var loginEmailPattern: String?
+    var messageAutoDeleteSeconds = 0
+    var accountDeleteDays = 0
+    var blockedUsersCount = 0
 }
 
 enum GlobalSearchScope: String, CaseIterable, Identifiable {

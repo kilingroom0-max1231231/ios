@@ -597,6 +597,9 @@ struct ChatDetailView: View {
                     },
                     onDelete: { revoke in
                         Task { await vm.deleteMyMessage(message, revoke: revoke) }
+                    },
+                    onInlineButton: { button in
+                        Task { await vm.handleInlineKeyboardButton(button, message: message) }
                     }
                 )
 
@@ -712,6 +715,21 @@ struct ChatDetailView: View {
             && canSend
     }
 
+    private var activeBotReplyKeyboard: TgReplyKeyboardMarkup? {
+        for message in vm.messages.reversed() {
+            if message.outgoing { continue }
+            switch message.replyMarkup {
+            case .reply(let markup):
+                return markup
+            case .removeKeyboard:
+                return nil
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
     private var bottomBar: some View {
         VStack(spacing: 0) {
             if showBotStartButton {
@@ -724,6 +742,11 @@ struct ChatDetailView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
             } else {
+                if let keyboard = activeBotReplyKeyboard {
+                    BotReplyKeyboardView(markup: keyboard) { button in
+                        Task { await vm.sendBotReplyKeyboardText(button.text) }
+                    }
+                }
                 composerBar
             }
         }

@@ -5,6 +5,7 @@ struct AvatarView: View {
     let title: String
     let identifier: Int64
     let imagePath: String?
+    var reloadToken: UUID = UUID()
     var size: CGFloat = 50
     var isSavedMessages: Bool = false
 
@@ -41,7 +42,7 @@ struct AvatarView: View {
                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
-        .task(id: imagePath) {
+        .task(id: "\(imagePath ?? "")-\(reloadToken.uuidString)") {
             guard let imagePath, !imagePath.isEmpty else {
                 avatarImage = nil
                 return

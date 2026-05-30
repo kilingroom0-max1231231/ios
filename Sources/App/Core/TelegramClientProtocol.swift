@@ -59,7 +59,7 @@ protocol TelegramClientProtocol {
     func deleteChat(chatId: Int64) async throws
     func leaveChat(chatId: Int64) async throws
 
-    func getMe() async throws -> TgUser
+    func getMe(forceRefreshAvatar: Bool) async throws -> TgUser
     func setUserBlocked(userId: Int64, isBlocked: Bool) async throws
     func fetchUserProfilePhotoPaths(userId: Int64, limit: Int) async throws -> [String]
     func searchChats(query: String, limit: Int) async throws -> [TgChat]
@@ -82,6 +82,12 @@ protocol TelegramClientProtocol {
     func fetchActiveSessions() async throws -> [TgActiveSession]
     func terminateSession(sessionId: Int64) async throws
     func terminateAllOtherSessions() async throws
+    func fetchAccountSecuritySnapshot() async throws -> AccountSecuritySnapshot
+    func fetchBlockedMessageSenders(offset: Int, limit: Int) async throws -> (totalCount: Int, senders: [TgBlockedSender])
+    func setMessageSenderBlocked(userId: Int64?, chatId: Int64?, isBlocked: Bool) async throws
+    func sendInlineCallbackQuery(chatId: Int64, messageId: Int64, data: String) async throws -> (text: String?, url: URL?, showAlert: Bool)
+    func setAccountTtlDays(_ days: Int) async throws
+    func setDefaultMessageAutoDeleteTime(seconds: Int) async throws
     func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
     func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat]
     func enrichChatsWithPremiumBadges(_ chats: [TgChat]) async throws -> [TgChat]

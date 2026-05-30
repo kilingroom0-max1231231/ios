@@ -940,6 +940,13 @@ final class LocalImageCache {
         cache.totalCostLimit = 32 * 1024 * 1024
     }
 
+    func invalidate(path: String) {
+        cache.removeObject(forKey: path as NSString)
+        for size in [84, 96, 120, 156, 168, 360, 640] {
+            cache.removeObject(forKey: "\(path)|\(size)" as NSString)
+        }
+    }
+
     func image(path: String, maxPixelSize: CGFloat? = nil) -> UIImage? {
         let cacheKey = maxPixelSize.map { "\(path)|\(Int($0))" } ?? path
         let key = cacheKey as NSString

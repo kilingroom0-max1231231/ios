@@ -251,6 +251,49 @@ struct TgMessageTextEntity: Equatable {
     let url: URL
 }
 
+struct TgInlineKeyboardButton: Identifiable, Equatable {
+    let id: String
+    let text: String
+    let action: TgInlineKeyboardAction
+}
+
+struct TgInlineKeyboardRow: Identifiable, Equatable {
+    let id: String
+    let buttons: [TgInlineKeyboardButton]
+}
+
+enum TgInlineKeyboardAction: Equatable {
+    case url(URL)
+    case callback(data: String)
+    case switchInline(query: String, chooseChatTypes: Bool)
+    case copyText(String)
+    case webApp(URL)
+}
+
+struct TgReplyKeyboardButton: Identifiable, Equatable {
+    let id: String
+    let text: String
+}
+
+struct TgReplyKeyboardRow: Identifiable, Equatable {
+    let id: String
+    let buttons: [TgReplyKeyboardButton]
+}
+
+struct TgReplyKeyboardMarkup: Equatable {
+    let rows: [TgReplyKeyboardRow]
+    let isPersistent: Bool
+    let resizeKeyboard: Bool
+    let oneTime: Bool
+    let placeholder: String?
+}
+
+enum TgMessageReplyMarkup: Equatable {
+    case inline([TgInlineKeyboardRow])
+    case reply(TgReplyKeyboardMarkup)
+    case removeKeyboard
+}
+
 struct TgMessage: Identifiable, Equatable {
     let id: Int64
     let chatId: Int64
@@ -275,6 +318,7 @@ struct TgMessage: Identifiable, Equatable {
     let reactions: [TgMessageReaction]
     /// True for chat service/system events (joins, pins, title changes, etc.).
     let isService: Bool
+    let replyMarkup: TgMessageReplyMarkup?
 
     init(
         id: Int64,
@@ -297,7 +341,8 @@ struct TgMessage: Identifiable, Equatable {
         authorSignature: String? = nil,
         viewCount: Int? = nil,
         reactions: [TgMessageReaction] = [],
-        isService: Bool = false
+        isService: Bool = false,
+        replyMarkup: TgMessageReplyMarkup? = nil
     ) {
         self.id = id
         self.chatId = chatId
@@ -320,6 +365,34 @@ struct TgMessage: Identifiable, Equatable {
         self.viewCount = viewCount
         self.reactions = reactions
         self.isService = isService
+        self.replyMarkup = replyMarkup
+    }
+
+    func withSenderDisplay(name: String?, avatarPath: String?) -> TgMessage {
+        TgMessage(
+            id: id,
+            chatId: chatId,
+            text: text,
+            textEntities: textEntities,
+            outgoing: outgoing,
+            createdAt: createdAt,
+            isEdited: isEdited,
+            replyToMessageId: replyToMessageId,
+            isDeleted: isDeleted,
+            isReadByPeer: isReadByPeer,
+            attachments: attachments,
+            mediaAlbumId: mediaAlbumId,
+            forwardedFrom: forwardedFrom,
+            forwardOrigin: forwardOrigin,
+            senderUserId: senderUserId,
+            senderName: name ?? senderName,
+            senderAvatarPath: avatarPath ?? senderAvatarPath,
+            authorSignature: authorSignature,
+            viewCount: viewCount,
+            reactions: reactions,
+            isService: isService,
+            replyMarkup: replyMarkup
+        )
     }
 
     func withReactions(_ newReactions: [TgMessageReaction]) -> TgMessage {
@@ -344,7 +417,8 @@ struct TgMessage: Identifiable, Equatable {
             authorSignature: authorSignature,
             viewCount: viewCount,
             reactions: newReactions,
-            isService: isService
+            isService: isService,
+            replyMarkup: replyMarkup
         )
     }
 
@@ -370,7 +444,8 @@ struct TgMessage: Identifiable, Equatable {
             authorSignature: authorSignature,
             viewCount: viewCount,
             reactions: reactions,
-            isService: isService
+            isService: isService,
+            replyMarkup: replyMarkup
         )
     }
 
@@ -400,7 +475,8 @@ struct TgMessage: Identifiable, Equatable {
             authorSignature: authorSignature ?? previous.authorSignature,
             viewCount: viewCount ?? previous.viewCount,
             reactions: reactions,
-            isService: isService
+            isService: isService,
+            replyMarkup: replyMarkup ?? previous.replyMarkup
         )
     }
 
@@ -771,6 +847,13 @@ enum ChatMediaCategory: String, CaseIterable, Identifiable {
         case .links: return "Links"
         }
     }
+}
+
+struct TgBlockedSender: Identifiable, Equatable {
+    let id: String
+    let userId: Int64?
+    let chatId: Int64?
+    let title: String
 }
 
 enum AuthState: Equatable {

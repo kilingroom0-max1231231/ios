@@ -37,12 +37,17 @@ final class AppViewModel: ObservableObject {
     }
     @Published var privacyUserLabels: [Int64: String] = [:]
     @Published var isPrivacyLoading = false
+    @Published var securitySnapshot = AccountSecuritySnapshot()
+    @Published var isSecurityLoading = false
+    @Published var blockedSenders: [TgBlockedSender] = []
+    @Published var isBlockedUsersLoading = false
     @Published var globalSearchScope: GlobalSearchScope = .myChats
     @Published var globalSearchQuery = ""
     @Published var globalSearchChats: [TgChat] = []
     @Published var globalSearchMessageHits: [GlobalSearchMessageHit] = []
     @Published var isGlobalSearching = false
     @Published var me: TgUser?
+    @Published var avatarReloadToken = UUID()
     @Published var composeText = ""
     @Published var editingMessageId: Int64?
     @Published var replyingToMessageId: Int64?
@@ -637,6 +642,7 @@ final class AppViewModel: ObservableObject {
             )
             status = ""
             chatListInitialLoadComplete = true
+            Task { await self.enrichVisibleChatAvatars() }
             scheduleChatAvatarRefresh()
             scheduleChatMemberStatusRefresh()
             scheduleArchiveSummaryRefresh()
@@ -782,6 +788,21 @@ final class AppViewModel: ObservableObject {
             updateOutgoingReadReceipts(for: chatId)
             if visibleChatId == chatId {
                 await markChatRead(chatId)
+            }
+        }
+
+        let patchTargets = ids.compactMap { id in
+            chats.first(where: { $0.id == id }) ?? archivedChats.first(where: { $0.id == id })
+        }
+        if !patchTargets.isEmpty, let enriched = try? await repository.enrichChatAvatars(Array(patchTargets)) {
+            for chat in enriched {
+                guard let path = chat.avatarPath, !path.isEmpty else { continue }
+                if let index = chats.firstIndex(where: { $0.id == chat.id }) {
+                    chats[index].avatarPath = path
+                }
+                if let index = archivedChats.firstIndex(where: { $0.id == chat.id }) {
+                    archivedChats[index].avatarPath = path
+                }
             }
         }
     }
@@ -1004,6 +1025,17 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func enrichVisibleChatAvatars() async {
+        guard let repository else { return }
+        let snapshot = chats
+        guard let enriched = await refreshMissingAvatars(
+            in: snapshot,
+            repository: repository,
+            mergeInto: snapshot
+        ) else { return }
+        chats = enriched
+    }
+
     private func scheduleChatAvatarRefresh(includeArchive: Bool = false) {
         chatAvatarRefreshTask?.cancel()
         chatAvatarRefreshTask = Task { @MainActor [weak self] in
@@ -1119,6 +1151,7 @@ final class AppViewModel: ObservableObject {
                 group.addTask { await self.refreshSelectedChatSummary(chatId: chatId) }
                 group.addTask { await self.refreshChatSendPermissions(chatId: chatId) }
                 group.addTask { await self.refreshMessages(force: shouldForceRefresh) }
+                group.addTask { await self.ensureSelectedChatAvatarLoaded(chatId: chatId) }
             }
             guard self.selectedChatId == chatId else { return }
             if self.visibleChatId == chatId {
@@ -1157,6 +1190,32 @@ final class AppViewModel: ObservableObject {
         guard let updated = try? await repository.loadChatDetails(chatId: chatId, listKind: listKind) else { return }
         guard selectedChatId == chatId else { return }
         applyLoadedChatSummary(updated)
+    }
+
+    private func ensureSelectedChatAvatarLoaded(chatId: Int64) async {
+        guard let repository else { return }
+        guard selectedChatId == chatId else { return }
+        guard let chat = chat(for: chatId), chat.kind != .savedMessages else { return }
+        guard chat.avatarPath?.isEmpty != false else { return }
+
+        guard let enriched = try? await repository.enrichChatAvatars([chat]).first else { return }
+        guard selectedChatId == chatId else { return }
+        applyLoadedChatSummary(enriched)
+    }
+
+    private func enrichVisibleMessageAvatars() async {
+        guard let repository else { return }
+        let needs = messages.filter {
+            !$0.outgoing
+                && ($0.senderAvatarPath?.isEmpty ?? true)
+                && $0.senderUserId != nil
+        }
+        guard !needs.isEmpty else { return }
+
+        guard let enriched = try? await repository.enrichMessages(needs) else { return }
+        let enrichedById = Dictionary(uniqueKeysWithValues: enriched.map { ($0.id, $0) })
+        messages = messages.map { enrichedById[$0.id] ?? $0 }
+        repository.upsertMessages(messages.filter { enrichedById[$0.id] != nil })
     }
 
     func refreshChatSendPermissions(chatId: Int64) async {
@@ -1215,6 +1274,7 @@ final class AppViewModel: ObservableObject {
                 replaceMessagesPreservingDisplay(syncedMessages, chatId: chatId)
             }
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
+            await enrichVisibleMessageAvatars()
         } catch {
             if messages.isEmpty {
                 status = error.localizedDescription
@@ -1261,6 +1321,7 @@ final class AppViewModel: ObservableObject {
                 chatId: chatId
             )
             scheduleMediaDownloadIfNeeded(chatId: chatId, messages: messages)
+            await enrichVisibleMessageAvatars()
         } catch {
             status = error.localizedDescription
         }
@@ -2539,7 +2600,8 @@ final class AppViewModel: ObservableObject {
             senderAvatarPath: current.senderAvatarPath,
             authorSignature: current.authorSignature,
             viewCount: viewCount ?? current.viewCount,
-            reactions: dedupeMessageReactions(reactions)
+            reactions: dedupeMessageReactions(reactions),
+            replyMarkup: current.replyMarkup
         )
         repository?.upsertMessages([messages[index]])
     }
@@ -2605,10 +2667,15 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func refreshMe() async {
+    func refreshMe(forceRefreshAvatar: Bool = false) async {
         guard let repository, authState == .ready else { return }
         do {
-            me = try await repository.loadMe()
+            let previousPath = me?.avatarPath
+            me = try await repository.loadMe(forceRefreshAvatar: forceRefreshAvatar)
+            if forceRefreshAvatar, let previousPath, !previousPath.isEmpty {
+                LocalImageCache.shared.invalidate(path: previousPath)
+            }
+            avatarReloadToken = UUID()
             if let me {
                 accountSessions.updateActiveAccount(
                     title: me.displayName,
@@ -2626,8 +2693,7 @@ final class AppViewModel: ObservableObject {
                 await prepareContactsOnLaunch()
             }
         } catch {
-            // Non-critical for core UX; keep Settings usable even if this fails.
-            me = nil
+            status = error.localizedDescription
         }
     }
 
@@ -3098,8 +3164,7 @@ final class AppViewModel: ObservableObject {
 
     func updateMyBio(_ bio: String) async {
         guard let repository else { return }
-        isBusy = true
-        defer { isBusy = false }
+        status = ""
         do {
             try await repository.updateBio(bio)
             await refreshMe()
@@ -3111,8 +3176,7 @@ final class AppViewModel: ObservableObject {
 
     func updateMyUsername(_ username: String) async {
         guard let repository else { return }
-        isBusy = true
-        defer { isBusy = false }
+        status = ""
         do {
             let normalized = username
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3131,6 +3195,10 @@ final class AppViewModel: ObservableObject {
 
     func privacyVisibility(for kind: UserPrivacySettingKind) -> PrivacyVisibility {
         privacyRules(for: kind).baseVisibility
+    }
+
+    func privacySummary(for kind: UserPrivacySettingKind) -> String {
+        privacyRules(for: kind).hubSummary
     }
 
     func privacyUserDisplayName(_ userId: Int64) -> String {
@@ -3158,7 +3226,65 @@ final class AppViewModel: ObservableObject {
             try data.write(to: url)
             try await repository.uploadProfilePhoto(localPath: url.path)
             try? FileManager.default.removeItem(at: url)
-            await refreshMe()
+            await refreshMe(forceRefreshAvatar: true)
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func handleInlineKeyboardButton(_ button: TgInlineKeyboardButton, message: TgMessage) async {
+        switch button.action {
+        case .url(let url), .webApp(let url):
+            await MainActor.run {
+                UIApplication.shared.open(url)
+            }
+        case .callback(let data):
+            guard let repository else { return }
+            do {
+                let answer = try await repository.sendInlineCallbackQuery(
+                    chatId: message.chatId,
+                    messageId: message.id,
+                    data: data
+                )
+                if let url = answer.url {
+                    await MainActor.run { UIApplication.shared.open(url) }
+                } else if let text = answer.text, !text.isEmpty {
+                    status = text
+                }
+            } catch {
+                status = error.localizedDescription
+            }
+        case .switchInline(let query, _):
+            composeText = query
+        case .copyText(let text):
+            UIPasteboard.general.string = text
+            status = AppText.tr("Скопировано", "Copied")
+        }
+    }
+
+    func sendBotReplyKeyboardText(_ text: String) async {
+        guard selectedChatId != nil else { return }
+        composeText = text
+        await sendMessage()
+    }
+
+    func updateAccountDeletionPeriod(days: Int) async {
+        guard let repository else { return }
+        do {
+            try await repository.updateAccountTtlDays(days)
+            securitySnapshot.accountDeleteDays = days
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func updateMessageAutoDelete(seconds: Int) async {
+        guard let repository else { return }
+        do {
+            try await repository.updateDefaultMessageAutoDeleteTime(seconds: seconds)
+            securitySnapshot.messageAutoDeleteSeconds = seconds
             status = ""
         } catch {
             status = error.localizedDescription
@@ -3172,6 +3298,50 @@ final class AppViewModel: ObservableObject {
         do {
             privacySettings = try await repository.loadPrivacySettings()
             await resolvePrivacyUserLabels()
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func refreshSecuritySnapshot() async {
+        guard let repository else { return }
+        isSecurityLoading = true
+        defer { isSecurityLoading = false }
+        do {
+            securitySnapshot = try await repository.loadAccountSecuritySnapshot()
+        } catch {
+            status = error.localizedDescription
+        }
+        await refreshActiveSessions()
+    }
+
+    func refreshBlockedUsers() async {
+        guard let repository else { return }
+        isBlockedUsersLoading = true
+        defer { isBlockedUsersLoading = false }
+        do {
+            let result = try await repository.loadBlockedMessageSenders()
+            blockedSenders = result.senders
+            securitySnapshot.blockedUsersCount = result.totalCount
+            status = ""
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func unblockSender(_ sender: TgBlockedSender) async {
+        guard let repository else { return }
+        do {
+            try await repository.setMessageSenderBlocked(
+                userId: sender.userId,
+                chatId: sender.chatId,
+                isBlocked: false
+            )
+            blockedSenders.removeAll { $0.id == sender.id }
+            if securitySnapshot.blockedUsersCount > 0 {
+                securitySnapshot.blockedUsersCount -= 1
+            }
             status = ""
         } catch {
             status = error.localizedDescription
