@@ -109,14 +109,14 @@ struct ChatListView: View {
         }
         .task {
             if isArchiveMode {
-                await vm.refreshArchivedChatsIfNeeded()
+                await vm.refreshArchivedChats(force: true)
             } else {
                 await vm.ensureChatFoldersVisible()
             }
         }
         .refreshable {
             if isArchiveMode {
-                await vm.refreshArchivedChatsIfNeeded()
+                await vm.refreshArchivedChats(force: true)
             } else {
                 await vm.refreshChats()
             }
@@ -341,7 +341,7 @@ struct ChatListView: View {
             }
         }
 
-        if chat.kind == .private, chat.privateUserId != nil {
+        if chat.kind == .private {
             Button(role: .destructive) {
                 Task { await vm.setUserBlocked(chatId: chat.id, blocked: !chat.isBlockedByMe) }
             } label: {

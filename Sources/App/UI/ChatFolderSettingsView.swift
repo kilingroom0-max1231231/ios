@@ -8,10 +8,11 @@ struct ChatFolderSettingsView: View {
     @State private var title: String = ""
     @State private var includedChats: [TgChat] = []
     @State private var isLoading = true
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
-            Form {
+            List {
                 Section(AppText.tr("Название", "Name")) {
                     TextField(AppText.tr("Название папки", "Folder name"), text: $title)
                 }
@@ -33,24 +34,32 @@ struct ChatFolderSettingsView: View {
                                 )
                                 Text(chat.title)
                                     .lineLimit(1)
-                                Spacer()
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
-                                    Task {
-                                        await vm.removeChat(chat, fromFolder: folder.id)
-                                        includedChats.removeAll { $0.id == chat.id }
-                                    }
+                                    Task { await removeChat(chat) }
                                 } label: {
-                                    Image(systemName: "minus.circle.fill")
+                                    Label(AppText.tr("Убрать", "Remove"), systemImage: "folder.badge.minus")
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
                 }
             }
-            .navigationTitle(folder.title)
+            .listStyle(.insetGrouped)
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        FolderIconView(
+                            emoji: folder.iconEmoji,
+                            customEmojiPath: folder.iconImagePath,
+                            size: 18
+                        )
+                        FolderTitleLabel(segments: folder.titleSegments, font: .headline)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button(AppText.tr("Закрыть", "Close")) { dismiss() }
                 }
@@ -68,6 +77,17 @@ struct ChatFolderSettingsView: View {
                 title = folder.title
                 await loadIncludedChats()
             }
+            .alert(
+                AppText.tr("Ошибка", "Error"),
+                isPresented: Binding(
+                    get: { errorMessage != nil },
+                    set: { if !$0 { errorMessage = nil } }
+                )
+            ) {
+                Button(AppText.tr("OK", "OK"), role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
         }
     }
 
@@ -75,6 +95,16 @@ struct ChatFolderSettingsView: View {
         isLoading = true
         defer { isLoading = false }
         includedChats = await vm.loadIncludedChats(for: folder.id)
+    }
+
+    private func removeChat(_ chat: TgChat) async {
+        let before = includedChats.count
+        await vm.removeChat(chat, fromFolder: folder.id)
+        includedChats.removeAll { $0.id == chat.id }
+        if includedChats.count == before, !vm.status.isEmpty {
+            errorMessage = vm.status
+        }
+        await loadIncludedChats()
     }
 }
 
@@ -98,13 +128,12 @@ struct MoveChatToFolderSheet: View {
                             }
                         } label: {
                             HStack(spacing: 10) {
-                                if let emoji = folder.iconEmoji, !emoji.isEmpty {
-                                    Text(emoji)
-                                } else {
-                                    Image(systemName: "folder.fill")
-                                        .foregroundStyle(AppColors.accent)
-                                }
-                                Text(folder.title)
+                                FolderIconView(
+                                    emoji: folder.iconEmoji,
+                                    customEmojiPath: folder.iconImagePath,
+                                    size: 18
+                                )
+                                FolderTitleLabel(segments: folder.titleSegments, font: .body)
                                     .foregroundStyle(.primary)
                             }
                         }

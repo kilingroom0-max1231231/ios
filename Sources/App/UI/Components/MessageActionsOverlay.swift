@@ -86,7 +86,7 @@ struct MessageActionsOverlay: View {
     }
 
     private var canExpandReactions: Bool {
-        pickerItems.count > 10
+        pickerItems.count > 7
     }
 
     var body: some View {
@@ -183,36 +183,37 @@ struct MessageActionsOverlay: View {
             safeBottom: safeBottom,
             maxExpandedReactionsHeight: maxExpandedReactionsHeight
         )
-
         let needsScroll = messageFrame.height > layout.bubbleHeight + 1
 
-        return LiquidGlassGroup(spacing: 18) {
-            ZStack {
-                reactionsPanel(
-                    width: layout.reactionsWidth,
-                    maxExpandedHeight: maxExpandedReactionsHeight
+        return VStack(spacing: 10) {
+            reactionsPanel(
+                width: layout.reactionsWidth,
+                maxExpandedHeight: maxExpandedReactionsHeight
+            )
+            .scaleEffect(contentScale, anchor: .bottom)
+            .opacity(panelsOpacity)
+            .offset(y: panelsOffset)
+            .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
+
+            highlightedBubble(maxHeight: layout.bubbleHeight, scrollable: needsScroll)
+                .scaleEffect(contentScale)
+                .frame(
+                    width: messageFrame.width,
+                    height: layout.bubbleHeight,
+                    alignment: message.outgoing ? .trailing : .leading
                 )
-                .scaleEffect(contentScale, anchor: .bottom)
+                .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
+
+            actionsMenu(width: layout.actionsWidth, maxHeight: actionsMenuMaxHeight)
+                .scaleEffect(contentScale, anchor: .top)
                 .opacity(panelsOpacity)
-                .offset(y: panelsOffset)
-                .position(x: layout.reactionsCenterX, y: layout.reactionsCenterY)
-
-                highlightedBubble(maxHeight: layout.bubbleHeight, scrollable: needsScroll)
-                    .scaleEffect(contentScale)
-                    .frame(
-                        width: messageFrame.width,
-                        height: layout.bubbleHeight,
-                        alignment: message.outgoing ? .trailing : .leading
-                    )
-                    .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
-
-                actionsMenu(width: layout.actionsWidth, maxHeight: actionsMenuMaxHeight)
-                    .scaleEffect(contentScale, anchor: .top)
-                    .opacity(panelsOpacity)
-                    .offset(y: -panelsOffset)
-                    .position(x: layout.actionsCenterX, y: layout.actionsCenterY)
-            }
+                .offset(y: -panelsOffset)
+                .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
         }
+        .padding(.horizontal, 12)
+        .padding(.top, safeTop + 8)
+        .padding(.bottom, safeBottom + 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .animation(panelSpring, value: reactionsExpanded)
     }
 
@@ -385,10 +386,10 @@ struct MessageActionsOverlay: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 6)
             .frame(width: collapsedReactionsWidth(maxWidth: maxWidth))
+            .fixedSize(horizontal: true, vertical: true)
             .glassSurface(cornerRadius: collapsedReactionsHeight / 2)
             .contentShape(Capsule())
             .shadow(color: .black.opacity(0.18), radius: 8, y: 6)
-            .frame(maxWidth: maxWidth, alignment: message.outgoing ? .trailing : .leading)
     }
 
     private func expandedReactionsPanel(
@@ -413,7 +414,8 @@ struct MessageActionsOverlay: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: width, height: expandedHeight)
+        .frame(width: width, height: expandedHeight, alignment: .top)
+        .fixedSize(horizontal: true, vertical: true)
         .glassSurface(cornerRadius: 24)
         .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 6)

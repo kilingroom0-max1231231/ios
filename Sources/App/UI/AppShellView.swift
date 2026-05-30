@@ -34,11 +34,12 @@ struct AppShellView: View {
                                 }
                         }
                     }
-                    .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)|\(tabBar.layoutFingerprint)")
+                    .id("\(language.preferredLanguage)|\(tabBar.layoutFingerprint)")
                     .tint(appearance.accentColor)
+                    .preferredColorScheme(appearance.resolvedColorScheme)
                     .animation(.spring(response: 0.3, dampingFraction: 0.88), value: tabBar.selectedTab)
                     .tabBarLongPressLifecycle(
-                        refreshToken: "\(language.preferredLanguage)|\(appearance.paletteFingerprint)|\(tabBar.layoutFingerprint)|\(tabBar.selectedTab.rawValue)"
+                        refreshToken: "\(language.preferredLanguage)|\(tabBar.layoutFingerprint)|\(tabBar.selectedTab.rawValue)"
                     )
 
                     if let toast = vm.incomingToast {

@@ -280,20 +280,47 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
     private func enrichChatFoldersWithDetails(_ folders: [TgChatFolder]) async -> [TgChatFolder] {
         var result: [TgChatFolder] = []
         for folder in folders {
-            if !isGenericFolderTitle(folder.title) {
-                result.append(folder)
-                continue
+            var next = folder
+            if isGenericFolderTitle(folder.title),
+               let full = try? await sendRequest([
+                   "@type": "getChatFolder",
+                   "chat_folder_id": NSNumber(value: folder.id)
+               ]), let detailed = parseChatFolder(full, folderId: folder.id) {
+                next = detailed
             }
-            if let full = try? await sendRequest([
-                "@type": "getChatFolder",
-                "chat_folder_id": NSNumber(value: folder.id)
-            ]), let detailed = parseChatFolder(full, folderId: folder.id) {
-                result.append(detailed)
-            } else {
-                result.append(folder)
-            }
+            next = await resolveFolderEmojiAssets(next)
+            result.append(next)
         }
         return result
+    }
+
+    private func resolveFolderEmojiAssets(_ folder: TgChatFolder) async -> TgChatFolder {
+        var iconPath = folder.iconImagePath
+        if iconPath == nil, let iconId = folder.iconCustomEmojiId {
+            iconPath = await customEmojiImagePath(customEmojiId: iconId)
+        }
+
+        var titleSegments: [TextSegment] = []
+        titleSegments.reserveCapacity(folder.titleSegments.count)
+        for segment in folder.titleSegments {
+            switch segment.content {
+            case .text(let value):
+                titleSegments.append(TextSegment(content: .text(value)))
+            case .customEmoji(let id, let path):
+                let resolved = path ?? await customEmojiImagePath(customEmojiId: id)
+                titleSegments.append(TextSegment(content: .customEmoji(id: id, path: resolved)))
+            }
+        }
+
+        return TgChatFolder(
+            id: folder.id,
+            title: folder.title,
+            titleSegments: titleSegments,
+            iconEmoji: folder.iconEmoji,
+            iconCustomEmojiId: folder.iconCustomEmojiId,
+            iconImagePath: iconPath,
+            colorId: folder.colorId
+        )
     }
 
     private func isGenericFolderTitle(_ title: String) -> Bool {
@@ -3409,21 +3436,104 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         let titleRaw = parseFolderTitle(from: json)
         let title = titleRaw?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = (title?.isEmpty == false) ? title! : AppText.tr("Папка", "Folder")
+        let titleSegments = parseFolderTitleSegments(from: json, fallbackTitle: resolvedTitle)
         var iconEmoji: String?
+        var iconCustomEmojiId: Int64?
         if let icon = json["icon"] as? [String: Any] {
             let iconType = icon["@type"] as? String
-            if iconType == "chatFolderIconEmoji", let emoji = icon["emoji"] as? String {
-                let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { iconEmoji = trimmed }
-            } else if let emoji = icon["emoji"] as? String {
-                let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty, trimmed.count <= 4 {
-                    iconEmoji = trimmed
+            switch iconType {
+            case "chatFolderIconEmoji":
+                if let emoji = icon["emoji"] as? String {
+                    let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { iconEmoji = trimmed }
+                }
+            case "chatFolderIconCustomEmoji":
+                iconCustomEmojiId = int64Value(icon["custom_emoji_id"])
+            default:
+                if let emoji = icon["emoji"] as? String {
+                    let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty, trimmed.count <= 4 {
+                        iconEmoji = trimmed
+                    }
                 }
             }
         }
         let colorId = (json["color_id"] as? Int) ?? Int(int32Value(json["color_id"]) ?? 0)
-        return TgChatFolder(id: id, title: resolvedTitle, iconEmoji: iconEmoji, colorId: colorId)
+        return TgChatFolder(
+            id: id,
+            title: resolvedTitle,
+            titleSegments: titleSegments,
+            iconEmoji: iconEmoji,
+            iconCustomEmojiId: iconCustomEmojiId,
+            iconImagePath: nil,
+            colorId: colorId
+        )
+    }
+
+    private func parseFolderTitleSegments(from json: [String: Any], fallbackTitle: String) -> [TextSegment] {
+        if let nameWrapper = json["name"] as? [String: Any],
+           (nameWrapper["@type"] as? String) == "chatFolderName",
+           let textObject = nameWrapper["text"] as? [String: Any] {
+            let segments = parseTextSegments(from: textObject)
+            if !segments.isEmpty { return segments }
+        }
+        return [TextSegment(content: .text(fallbackTitle))]
+    }
+
+    private func parseTextSegments(from obj: [String: Any]?) -> [TextSegment] {
+        guard let obj, let text = obj["text"] as? String, !text.isEmpty else { return [] }
+        let entities = (obj["entities"] as? [[String: Any]] ?? [])
+            .sorted { (intValue($0["offset"]) ?? 0) < (intValue($1["offset"]) ?? 0) }
+
+        guard !entities.isEmpty else {
+            return [TextSegment(content: .text(text))]
+        }
+
+        var segments: [TextSegment] = []
+        var cursor = text.startIndex
+
+        for entity in entities {
+            guard let offset = intValue(entity["offset"]),
+                  let length = intValue(entity["length"]),
+                  length > 0 else { continue }
+            let startOffset = max(0, offset)
+            let endOffset = min(text.count, startOffset + length)
+            guard let start = text.index(text.startIndex, offsetBy: startOffset, limitedBy: text.endIndex),
+                  let end = text.index(text.startIndex, offsetBy: endOffset, limitedBy: text.endIndex),
+                  start <= end else { continue }
+
+            if start > cursor {
+                segments.append(TextSegment(content: .text(String(text[cursor..<start]))))
+            }
+
+            let slice = String(text[start..<end])
+            if (entity["@type"] as? String) == "textEntityCustomEmoji",
+               let customId = int64Value(entity["custom_emoji_id"]) {
+                segments.append(TextSegment(content: .customEmoji(id: customId, path: nil)))
+            } else if !slice.isEmpty {
+                segments.append(TextSegment(content: .text(slice)))
+            }
+            cursor = end
+        }
+
+        if cursor < text.endIndex {
+            segments.append(TextSegment(content: .text(String(text[cursor...]))))
+        }
+
+        return segments.filter {
+            switch $0.content {
+            case .text(let value): return !value.isEmpty
+            case .customEmoji: return true
+            }
+        }
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let int32 = value as? Int32 { return Int(int32) }
+        if let int64 = value as? Int64 { return Int(int64) }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
     }
 
     private func parseFolderTitle(from json: [String: Any]) -> String? {

@@ -27,17 +27,17 @@ struct MessageBubbleView: View {
         UIScreen.main.bounds.width
     }
 
-    private var horizontalRowPadding: CGFloat { 10 }
+    private var horizontalRowPadding: CGFloat { 6 }
 
     private var outgoingBubbleMaxWidth: CGFloat {
-        let ratio = appearance.compactBubbles ? 0.72 : 0.78
-        return max(120, screenWidth * ratio - 28)
+        let ratio = appearance.compactBubbles ? 0.82 : 0.88
+        return max(140, screenWidth * ratio - 12)
     }
 
     private var incomingBubbleMaxWidth: CGFloat {
-        let avatarSpace: CGFloat = showsIncomingLeadingAvatar ? 38 : 0
-        let ratio = appearance.compactBubbles ? 0.68 : 0.74
-        return max(120, screenWidth * ratio - avatarSpace - 36)
+        let avatarSpace: CGFloat = showsIncomingLeadingAvatar ? 36 : 0
+        let ratio = appearance.compactBubbles ? 0.80 : 0.86
+        return max(140, screenWidth * ratio - avatarSpace - 10)
     }
 
     private var mediaBubbleMaxWidth: CGFloat {
@@ -149,7 +149,7 @@ struct MessageBubbleView: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
             if message.outgoing {
-                Spacer(minLength: 12)
+                Spacer(minLength: 6)
             } else if showGroupSender {
                 AvatarView(
                     title: message.senderName ?? "?",
@@ -215,7 +215,7 @@ struct MessageBubbleView: View {
             .layoutPriority(1)
 
             if !message.outgoing {
-                Spacer(minLength: 12)
+                Spacer(minLength: 6)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)

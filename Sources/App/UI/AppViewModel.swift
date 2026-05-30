@@ -605,17 +605,23 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshArchivedChatsIfNeeded() async {
-        guard !archiveFullyLoaded else { return }
+        await refreshArchivedChats(force: false)
+    }
+
+    func refreshArchivedChats(force: Bool = false) async {
+        if !force, archiveFullyLoaded { return }
         guard let repository, authState == .ready else { return }
         do {
             let archived = try await repository.loadArchivedChats(limit: chatListLimit)
             archivedChats = applyKnownChatMetadata(to: sortChats(archived))
             archiveSummary = Self.makeArchiveSummary(from: archivedChats)
-            archiveFullyLoaded = true
-            scheduleChatAvatarRefresh()
+            archiveFullyLoaded = archived.count < chatListLimit
+            scheduleChatAvatarRefresh(includeArchive: true)
             scheduleChatMemberStatusRefresh()
         } catch {
-            status = error.localizedDescription
+            if force || archivedChats.isEmpty {
+                status = error.localizedDescription
+            }
         }
     }
 
@@ -630,15 +636,32 @@ final class AppViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
             }
             do {
-                let archived = try await repository.loadArchivedChats(limit: self.archiveSummaryLimit)
+                let preview = try await repository.loadArchivedChats(limit: self.archiveSummaryLimit)
                 guard !Task.isCancelled else { return }
-                self.archivedChats = self.applyKnownChatMetadata(to: self.sortChats(archived))
-                self.archiveSummary = Self.makeArchiveSummary(from: archivedChats)
-                self.archiveFullyLoaded = archived.count < self.archiveSummaryLimit
-                self.scheduleChatAvatarRefresh()
+                let enrichedPreview = self.applyKnownChatMetadata(to: self.sortChats(preview))
+                if self.archiveFullyLoaded, !self.archivedChats.isEmpty {
+                    self.mergeArchiveListMetadata(from: enrichedPreview)
+                    self.archiveSummary = Self.makeArchiveSummary(from: self.archivedChats)
+                } else {
+                    self.archiveSummary = Self.makeArchiveSummary(from: enrichedPreview)
+                }
             } catch {
                 // Archive preview is optional; keep the main list responsive.
             }
+        }
+    }
+
+    private func mergeArchiveListMetadata(from preview: [TgChat]) {
+        let previewById = chatsById(preview)
+        archivedChats = archivedChats.map { chat in
+            guard let update = previewById[chat.id] else { return chat }
+            var merged = mergePatchedChat(update, previous: chat)
+            if (merged.avatarPath?.isEmpty ?? true),
+               let path = chat.avatarPath,
+               !path.isEmpty {
+                merged.avatarPath = path
+            }
+            return merged
         }
     }
 
@@ -932,7 +955,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func scheduleChatAvatarRefresh() {
+    private func scheduleChatAvatarRefresh(includeArchive: Bool = false) {
         chatAvatarRefreshTask?.cancel()
         chatAvatarRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -946,15 +969,17 @@ final class AppViewModel: ObservableObject {
             ) {
                 self.chats = refreshed
             }
+            guard includeArchive || !self.archivedChats.isEmpty else { return }
             guard !Task.isCancelled else { return }
-            let archiveTargets = Array(self.archivedChats.prefix(20))
             if let refreshed = await self.refreshMissingAvatars(
-                in: archiveTargets,
+                in: self.archivedChats,
                 repository: repository,
                 mergeInto: self.archivedChats
             ) {
                 self.archivedChats = refreshed
-                self.archiveSummary = Self.makeArchiveSummary(from: refreshed)
+                if self.archiveFullyLoaded {
+                    self.archiveSummary = Self.makeArchiveSummary(from: refreshed)
+                }
             }
         }
     }
@@ -1992,8 +2017,17 @@ final class AppViewModel: ObservableObject {
 
     func setUserBlocked(chatId: Int64, blocked: Bool) async {
         guard let repository else { return }
-        let userId = chats.first(where: { $0.id == chatId })?.privateUserId
-            ?? chatProfile?.userId
+        var userId = chat(for: chatId)?.privateUserId
+        if userId == nil {
+            let listKinds: [TgChatListKind] = [.main, .archive]
+            for listKind in listKinds {
+                if let details = try? await repository.loadChatDetails(chatId: chatId, listKind: listKind),
+                   let resolved = details.privateUserId {
+                    userId = resolved
+                    break
+                }
+            }
+        }
         guard let userId else {
             status = AppText.tr("Не удалось определить пользователя", "Could not resolve user")
             return
@@ -2012,7 +2046,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
             if var profile = chatProfile, profile.chatId == chatId {
-                profile = ChatProfile(
+                chatProfile = ChatProfile(
                     chatId: profile.chatId,
                     title: profile.title,
                     kind: profile.kind,
@@ -2031,7 +2065,30 @@ final class AppViewModel: ObservableObject {
                     isBlockedByMe: blocked,
                     isBlockedByPeer: profile.isBlockedByPeer
                 )
-                chatProfile = profile
+            }
+            if var profile = userProfileDetail, profile.privateChatId == chatId || profile.userId == userId {
+                profile = UserProfileDetail(
+                    userId: profile.userId,
+                    privateChatId: profile.privateChatId,
+                    displayName: profile.displayName,
+                    username: profile.username,
+                    phoneNumber: profile.phoneNumber,
+                    bio: profile.bio,
+                    avatarPath: profile.avatarPath,
+                    personalChannel: profile.personalChannel,
+                    statusText: blocked
+                        ? AppText.tr("Заблокирован вами", "Blocked by you")
+                        : profile.statusText,
+                    isOnline: blocked ? false : profile.isOnline,
+                    isPremium: profile.isPremium,
+                    premiumBadgePath: profile.premiumBadgePath,
+                    hasActiveStories: profile.hasActiveStories,
+                    giftCount: profile.giftCount,
+                    isBlockedByMe: blocked,
+                    isBlockedByPeer: blocked ? false : profile.isBlockedByPeer,
+                    isSelf: profile.isSelf
+                )
+                userProfileDetail = profile
             }
             await refreshChats()
             if selectedChatId == chatId {

@@ -313,7 +313,7 @@ final class AppAppearanceStore: ObservableObject {
         chatStyle = ChatBackgroundStyle(rawValue: defaults.string(forKey: Keys.chatStyle) ?? "") ?? .default
         accentStyle = AccentColorStyle(rawValue: defaults.string(forKey: Keys.accentStyle) ?? "") ?? .telegramBlue
         bubbleStyle = BubbleColorStyle(rawValue: defaults.string(forKey: Keys.bubbleStyle) ?? "") ?? .classic
-        messageFontScale = MessageFontScale(rawValue: defaults.string(forKey: Keys.messageFontScale) ?? "") ?? .normal
+        messageFontScale = MessageFontScale(rawValue: defaults.string(forKey: Keys.messageFontScale) ?? "") ?? .small
         chatWallpaperPath = defaults.string(forKey: Keys.chatWallpaper)
         let opacity = defaults.object(forKey: Keys.wallpaperOpacity) as? Double
         wallpaperOpacity = opacity ?? 0.55
@@ -340,7 +340,7 @@ final class AppAppearanceStore: ObservableObject {
         chatStyle = .default
         accentStyle = .telegramBlue
         bubbleStyle = .classic
-        messageFontScale = .normal
+        messageFontScale = .small
         wallpaperOpacity = 0.55
         compactBubbles = false
         clearWallpaper()

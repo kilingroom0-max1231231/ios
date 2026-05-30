@@ -93,6 +93,7 @@ struct AppearanceSettingsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(AppText.tr("Оформление", "Appearance"))
         .navigationBarTitleDisplayMode(.inline)
+        .preferredColorScheme(appearance.resolvedColorScheme)
         .background(ChatListScreenBackground().ignoresSafeArea())
         .onChange(of: wallpaperItem) { newItem in
             guard let newItem else { return }

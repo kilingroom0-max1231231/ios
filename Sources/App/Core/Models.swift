@@ -392,11 +392,41 @@ enum TgChatListKind: Equatable {
     }
 }
 
+struct TextSegment: Equatable {
+    enum Content: Equatable {
+        case text(String)
+        case customEmoji(id: Int64, path: String?)
+    }
+
+    let content: Content
+}
+
 struct TgChatFolder: Identifiable, Equatable {
     let id: Int32
     let title: String
+    let titleSegments: [TextSegment]
     let iconEmoji: String?
+    let iconCustomEmojiId: Int64?
+    let iconImagePath: String?
     let colorId: Int
+
+    init(
+        id: Int32,
+        title: String,
+        titleSegments: [TextSegment]? = nil,
+        iconEmoji: String? = nil,
+        iconCustomEmojiId: Int64? = nil,
+        iconImagePath: String? = nil,
+        colorId: Int = 0
+    ) {
+        self.id = id
+        self.title = title
+        self.titleSegments = titleSegments ?? [.init(content: .text(title))]
+        self.iconEmoji = iconEmoji
+        self.iconCustomEmojiId = iconCustomEmojiId
+        self.iconImagePath = iconImagePath
+        self.colorId = colorId
+    }
 }
 
 struct ArchiveChatSummary: Equatable {

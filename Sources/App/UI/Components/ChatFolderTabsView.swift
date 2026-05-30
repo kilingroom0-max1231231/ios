@@ -17,8 +17,9 @@ struct ChatFolderTabsView: View {
 
                 ForEach(vm.chatFolders) { folder in
                     folderChip(
-                        title: folder.title,
+                        titleSegments: folder.titleSegments,
                         emoji: folder.iconEmoji,
+                        customEmojiPath: folder.iconImagePath,
                         color: folderAccentColor(folder.colorId),
                         isSelected: vm.selectedChatFolderId == folder.id
                     ) {
@@ -37,22 +38,25 @@ struct ChatFolderTabsView: View {
     }
 
     private func folderChip(
-        title: String,
+        title: String? = nil,
+        titleSegments: [TextSegment]? = nil,
         emoji: String?,
+        customEmojiPath: String? = nil,
         color: Color,
         isSelected: Bool,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let emoji, !emoji.isEmpty {
-                    Text(emoji)
-                        .font(.subheadline)
+                FolderIconView(emoji: emoji, customEmojiPath: customEmojiPath, size: 16)
+                if let titleSegments, !titleSegments.isEmpty {
+                    FolderTitleLabel(segments: titleSegments, font: .subheadline.weight(.semibold))
+                } else if let title {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundStyle(isSelected ? Color.white : color)
             .padding(.horizontal, 14)

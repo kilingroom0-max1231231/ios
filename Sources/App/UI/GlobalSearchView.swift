@@ -2,29 +2,31 @@ import SwiftUI
 
 struct GlobalSearchView: View {
     @ObservedObject var vm: AppViewModel
-    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                VStack(spacing: 12) {
-                    Picker("", selection: $vm.globalSearchScope) {
-                        ForEach(GlobalSearchScope.allCases) { scope in
-                            Text(scope.title).tag(scope)
-                        }
+                Picker("", selection: $vm.globalSearchScope) {
+                    ForEach(GlobalSearchScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
                     }
-                    .pickerStyle(.segmented)
-
-                    searchField
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
 
                 resultsList
             }
             .background(ChatListScreenBackground().ignoresSafeArea())
             .mainTabNavigationBar(title: AppText.tr("Поиск", "Search"))
+            .searchable(
+                text: $vm.globalSearchQuery,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: vm.globalSearchScope == .myChats
+                    ? AppText.tr("Поиск по чатам", "Search chats")
+                    : AppText.tr("Поиск пользователей и каналов", "Search users and channels")
+            )
         }
         .onChange(of: vm.globalSearchScope) { _ in
             Task { await vm.runGlobalSearch() }
@@ -34,127 +36,82 @@ struct GlobalSearchView: View {
         }
     }
 
-    private var searchField: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-
-            TextField(
-                vm.globalSearchScope == .myChats
-                    ? AppText.tr("Чаты", "Chats")
-                    : AppText.tr("Пользователи и каналы", "Users and channels"),
-                text: $vm.globalSearchQuery
-            )
-            .focused($isSearchFocused)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .submitLabel(.search)
-            .onSubmit {
-                Task { await vm.runGlobalSearch() }
-            }
-
-            if !vm.globalSearchQuery.isEmpty {
-                Button {
-                    vm.globalSearchQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if vm.isGlobalSearching {
-                ProgressView()
-                    .controlSize(.small)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .glassContainer(cornerRadius: 18)
-    }
-
     @ViewBuilder
     private var resultsList: some View {
         List {
             if vm.globalSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 {
                 Text(AppText.tr("Введите минимум 2 символа", "Enter at least 2 characters"))
-                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+            } else if vm.isGlobalSearching {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .listRowBackground(Color.clear)
+            } else if vm.globalSearchScope == .myChats {
+                if vm.globalSearchChats.isEmpty {
+                    Text(AppText.tr("Ничего не найдено", "Nothing found"))
+                        .foregroundStyle(.secondary)
+                        .listRowBackground(Color.clear)
+                } else {
+                    ForEach(vm.globalSearchChats) { chat in
+                        Button {
+                            Task { await vm.openChat(chatId: chat.id) }
+                        } label: {
+                            chatRow(chat)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                    }
+                }
+            } else if vm.globalSearchMessageHits.isEmpty && vm.globalSearchChats.isEmpty {
+                Text(AppText.tr("Ничего не найдено", "Nothing found"))
+                    .foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
             } else {
                 if !vm.globalSearchChats.isEmpty {
                     Section(AppText.tr("Чаты", "Chats")) {
                         ForEach(vm.globalSearchChats) { chat in
                             Button {
-                                Task { await vm.openChatFromSearch(chat.id) }
+                                Task { await vm.openChat(chatId: chat.id) }
                             } label: {
-                                ChatSearchRow(chat: chat)
+                                chatRow(chat)
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
                         }
                     }
                 }
-
-                if vm.globalSearchScope == .telegram, !vm.globalSearchMessageHits.isEmpty {
+                if !vm.globalSearchMessageHits.isEmpty {
                     Section(AppText.tr("Сообщения", "Messages")) {
                         ForEach(vm.globalSearchMessageHits) { hit in
                             Button {
-                                Task { await vm.openChatFromSearch(hit.message.chatId) }
+                                Task { await vm.openChat(chatId: hit.message.chatId) }
                             } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(hit.chatTitle)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                    Text(hit.message.text)
-                                        .font(.subheadline)
-                                        .lineLimit(3)
-                                        .multilineTextAlignment(.leading)
-                                        .foregroundStyle(.primary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                messageHitRow(hit)
                             }
                             .buttonStyle(.plain)
                             .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
                         }
                     }
-                }
-
-                if vm.globalSearchChats.isEmpty,
-                   vm.globalSearchMessageHits.isEmpty,
-                   !vm.isGlobalSearching {
-                    Text(AppText.tr("Ничего не найдено", "Nothing found"))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
                 }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
     }
-}
 
-private struct ChatSearchRow: View {
-    let chat: TgChat
-
-    var body: some View {
+    private func chatRow(_ chat: TgChat) -> some View {
         HStack(spacing: 12) {
             AvatarView(
                 title: chat.title,
                 identifier: chat.id,
                 imagePath: chat.avatarPath,
-                size: 44,
-                isSavedMessages: chat.kind == .savedMessages
+                size: 44
             )
-            .frame(width: 44, height: 44)
-
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(chat.title)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -166,11 +123,20 @@ private struct ChatSearchRow: View {
                         .lineLimit(1)
                 }
             }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
+        .padding(.vertical, 4)
+    }
+
+    private func messageHitRow(_ hit: GlobalSearchMessageHit) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(hit.chatTitle)
+                .font(.subheadline.weight(.semibold))
+            Text(hit.message.text)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 4)
     }
 }

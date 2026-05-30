@@ -90,6 +90,7 @@ struct ContactsListView: View {
         }
         .searchable(
             text: $vm.contactsSearch,
+            placement: .navigationBarDrawer(displayMode: .always),
             prompt: AppText.tr("Поиск контактов", "Search contacts")
         )
         .refreshable {
