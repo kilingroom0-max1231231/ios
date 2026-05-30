@@ -2045,7 +2045,7 @@ final class AppViewModel: ObservableObject {
                     chat.sendRestrictionText = AppText.tr("Вы заблокировали этого пользователя", "You blocked this user")
                 }
             }
-            if var profile = chatProfile, profile.chatId == chatId {
+            if let profile = chatProfile, profile.chatId == chatId {
                 chatProfile = ChatProfile(
                     chatId: profile.chatId,
                     title: profile.title,

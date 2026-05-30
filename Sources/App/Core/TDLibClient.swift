@@ -307,7 +307,12 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             case .text(let value):
                 titleSegments.append(TextSegment(content: .text(value)))
             case .customEmoji(let id, let path):
-                let resolved = path ?? await customEmojiImagePath(customEmojiId: id)
+                let resolved: String?
+                if let path {
+                    resolved = path
+                } else {
+                    resolved = await customEmojiImagePath(customEmojiId: id)
+                }
                 titleSegments.append(TextSegment(content: .customEmoji(id: id, path: resolved)))
             }
         }
