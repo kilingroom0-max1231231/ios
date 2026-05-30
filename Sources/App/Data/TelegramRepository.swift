@@ -95,6 +95,22 @@ final class TelegramRepository {
         try await client.configure(apiId: apiId, apiHash: apiHash)
     }
 
+    func shutdown() async {
+        onAuthStateChanged = nil
+        onMessagesChanged = nil
+        onChatsChanged = nil
+        onChatFoldersChanged = nil
+        onChatChanged = nil
+        onTypingChanged = nil
+        onUserStatusChanged = nil
+        onIncomingMessage = nil
+        onMessageUpserted = nil
+        onMessagesDeleted = nil
+        onMessageReplaced = nil
+        onMessageInteractionUpdated = nil
+        await client.shutdown()
+    }
+
     func authState() -> AuthState {
         client.currentAuthState()
     }
@@ -437,6 +453,18 @@ final class TelegramRepository {
 
     func searchMessagesGlobally(query: String) async throws -> [GlobalSearchMessageHit] {
         try await client.searchMessagesGlobally(query: query, limit: 40)
+    }
+
+    func loadActiveSessions() async throws -> [TgActiveSession] {
+        try await client.fetchActiveSessions()
+    }
+
+    func terminateActiveSession(sessionId: Int64) async throws {
+        try await client.terminateSession(sessionId: sessionId)
+    }
+
+    func terminateAllOtherActiveSessions() async throws {
+        try await client.terminateAllOtherSessions()
     }
 
     func searchChats(query: String) async throws -> [TgChat] {

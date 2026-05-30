@@ -575,11 +575,3 @@ private struct ChatCardView: View {
         return ""
     }
 }
-
-private struct ChatRowPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.spring(response: 0.26, dampingFraction: 0.72), value: configuration.isPressed)
-    }
-}

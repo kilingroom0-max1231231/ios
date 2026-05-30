@@ -68,6 +68,8 @@ struct MessageActionsOverlay: View {
     private let expandedRowHeight: CGFloat = 42
     private let expandedMaxRowsVisible: CGFloat = 10
     private let actionsMenuMaxHeight: CGFloat = 320
+    private let overlayTopClearance: CGFloat = 16
+    private let overlayBottomInset: CGFloat = 36
 
     private var reactionGridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
@@ -157,9 +159,11 @@ struct MessageActionsOverlay: View {
         safeTop: CGFloat,
         safeBottom: CGFloat
     ) -> CGFloat {
-        let available = containerHeight - safeTop - safeBottom
+        let topLimit = overlayTopClearance
+        let bottomLimit = safeBottom + overlayBottomInset
+        let available = containerHeight - topLimit - bottomLimit
         let preferred = expandedMaxRowsVisible * expandedRowHeight + 36
-        return max(140, min(preferred, available * 0.78, 520))
+        return max(120, min(preferred, available * 0.55, 480))
     }
 
     private var backdrop: some View {
@@ -211,9 +215,9 @@ struct MessageActionsOverlay: View {
                 .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
         }
         .padding(.horizontal, 12)
-        .padding(.top, safeTop + 8)
-        .padding(.bottom, safeBottom + 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.top, overlayTopClearance)
+        .padding(.bottom, safeBottom + overlayBottomInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(panelSpring, value: reactionsExpanded)
     }
 
@@ -241,9 +245,9 @@ struct MessageActionsOverlay: View {
                 .opacity(panelsOpacity)
                 .offset(y: -panelsOffset)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .padding(.top, safeTop + 8)
-        .padding(.bottom, safeBottom + 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .padding(.top, overlayTopClearance)
+        .padding(.bottom, safeBottom + overlayBottomInset)
         .animation(panelSpring, value: reactionsExpanded)
     }
 
@@ -273,17 +277,18 @@ struct MessageActionsOverlay: View {
         let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
         let actionsH = min(actionsMenuHeight, actionsMenuMaxHeight)
         let gap: CGFloat = 10
-        let topMargin = safeTop + 8
-        let bottomMargin = safeBottom + 8
+        let topMargin = overlayTopClearance
+        let bottomMargin = safeBottom + overlayBottomInset
 
         // The bubble may only occupy the vertical space left between both panels;
         // longer messages are capped and become scrollable so nothing leaves the screen.
         let availableForBubble = containerSize.height - topMargin - bottomMargin - reactionsH - actionsH - gap * 2
         let bubbleHeight = max(72, min(messageFrame.height, max(72, availableForBubble)))
 
-        // Center the whole reaction + bubble + actions stack vertically and clamp on screen.
+        // Anchor the stack toward the lower part of the screen (Telegram-style).
         let stackHeight = reactionsH + gap + bubbleHeight + gap + actionsH
-        var startY = (containerSize.height - stackHeight) / 2
+        let freeVertical = max(0, containerSize.height - topMargin - bottomMargin - stackHeight)
+        var startY = topMargin + freeVertical * 0.72
         startY = max(topMargin, min(startY, containerSize.height - bottomMargin - stackHeight))
 
         let reactionsCenterY = startY + reactionsH / 2

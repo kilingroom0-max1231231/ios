@@ -191,6 +191,60 @@ struct TgAvailableReactions: Equatable {
     }
 }
 
+struct TgForwardOrigin: Equatable {
+    enum Kind: Equatable {
+        case user(userId: Int64)
+        case hiddenUser
+        case chat(chatId: Int64)
+        case channel(chatId: Int64)
+    }
+
+    let kind: Kind
+    let displayName: String
+
+    var isNavigable: Bool {
+        switch kind {
+        case .hiddenUser: return false
+        default: return true
+        }
+    }
+}
+
+struct TgActiveSession: Identifiable, Equatable {
+    let id: Int64
+    let isCurrent: Bool
+    let platform: String
+    let systemVersion: String
+    let applicationName: String
+    let applicationVersion: String
+    let deviceModel: String
+    let ip: String
+    let country: String
+    let region: String
+    let logInDate: Date
+    let lastActiveDate: Date
+
+    var title: String {
+        let model = deviceModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !model.isEmpty { return model }
+        let app = applicationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return app.isEmpty ? AppText.tr("Неизвестное устройство", "Unknown device") : app
+    }
+
+    var subtitle: String {
+        let app = applicationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let platformLabel = platform.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [app, platformLabel].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    var locationText: String {
+        let parts = [region, country].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if parts.isEmpty { return ip }
+        let location = parts.joined(separator: ", ")
+        return ip.isEmpty ? location : "\(location) · \(ip)"
+    }
+}
+
 struct TgMessage: Identifiable, Equatable {
     let id: Int64
     let chatId: Int64
@@ -204,6 +258,7 @@ struct TgMessage: Identifiable, Equatable {
     let attachments: [TgAttachment]
     let mediaAlbumId: Int64?
     let forwardedFrom: String?
+    let forwardOrigin: TgForwardOrigin?
     let senderUserId: Int64?
     let senderName: String?
     let senderAvatarPath: String?
@@ -226,6 +281,7 @@ struct TgMessage: Identifiable, Equatable {
         attachments: [TgAttachment],
         mediaAlbumId: Int64?,
         forwardedFrom: String?,
+        forwardOrigin: TgForwardOrigin? = nil,
         senderUserId: Int64? = nil,
         senderName: String? = nil,
         senderAvatarPath: String? = nil,
@@ -246,6 +302,7 @@ struct TgMessage: Identifiable, Equatable {
         self.attachments = attachments
         self.mediaAlbumId = mediaAlbumId
         self.forwardedFrom = forwardedFrom
+        self.forwardOrigin = forwardOrigin
         self.senderUserId = senderUserId
         self.senderName = senderName
         self.senderAvatarPath = senderAvatarPath
@@ -269,6 +326,7 @@ struct TgMessage: Identifiable, Equatable {
             attachments: attachments,
             mediaAlbumId: mediaAlbumId,
             forwardedFrom: forwardedFrom,
+            forwardOrigin: forwardOrigin,
             senderUserId: senderUserId,
             senderName: senderName,
             senderAvatarPath: senderAvatarPath,
@@ -293,6 +351,7 @@ struct TgMessage: Identifiable, Equatable {
             attachments: attachments,
             mediaAlbumId: mediaAlbumId,
             forwardedFrom: forwardedFrom,
+            forwardOrigin: forwardOrigin,
             senderUserId: senderUserId,
             senderName: senderName,
             senderAvatarPath: senderAvatarPath,
@@ -307,6 +366,7 @@ struct TgMessage: Identifiable, Equatable {
     func mergingPreservingDisplayFields(from previous: TgMessage?) -> TgMessage {
         guard let previous else { return self }
         let mergedForward = Self.nonEmpty(forwardedFrom) ?? Self.nonEmpty(previous.forwardedFrom)
+        let mergedOrigin = forwardOrigin ?? previous.forwardOrigin
         return TgMessage(
             id: id,
             chatId: chatId,
@@ -320,6 +380,7 @@ struct TgMessage: Identifiable, Equatable {
             attachments: attachments.isEmpty ? previous.attachments : attachments,
             mediaAlbumId: mediaAlbumId ?? previous.mediaAlbumId,
             forwardedFrom: mergedForward,
+            forwardOrigin: mergedOrigin,
             senderUserId: senderUserId ?? previous.senderUserId,
             senderName: senderName ?? previous.senderName,
             senderAvatarPath: senderAvatarPath ?? previous.senderAvatarPath,

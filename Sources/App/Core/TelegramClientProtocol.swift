@@ -76,6 +76,9 @@ protocol TelegramClientProtocol {
     func fetchActiveStories(chatId: Int64) async throws -> [TgStoryItem]
     func fetchReceivedGifts(userId: Int64, limit: Int) async throws -> [TgGiftItem]
     func fetchContacts() async throws -> [TgContact]
+    func fetchActiveSessions() async throws -> [TgActiveSession]
+    func terminateSession(sessionId: Int64) async throws
+    func terminateAllOtherSessions() async throws
     func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
     func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat]
     func enrichChatsWithPremiumBadges(_ chats: [TgChat]) async throws -> [TgChat]

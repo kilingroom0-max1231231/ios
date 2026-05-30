@@ -132,11 +132,13 @@ struct ChatDetailView: View {
         messageList
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 bottomBar
+                    .opacity(messageActionTarget == nil ? 1 : 0)
                     .allowsHitTesting(messageActionTarget == nil)
             }
         .background(ChatScreenBackground().ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .toolbar(messageActionTarget == nil ? .visible : .hidden, for: .navigationBar)
         .transparentNavigationBar()
         .task(id: chatId) {
             didInitialScrollToBottom = false
@@ -583,6 +585,9 @@ struct ChatDetailView: View {
                     onReactionTap: canReact ? { reaction in
                         requestToggleReaction(on: message, reaction: reaction)
                     } : nil,
+                    onForwardOriginTap: { origin in
+                        Task { await vm.openForwardOrigin(origin) }
+                    },
                     onForward: {
                         forwardingMessage = message
                     },
@@ -990,6 +995,7 @@ struct ChatDetailView: View {
                         attachments: attachments,
                         mediaAlbumId: albumId,
                         forwardedFrom: merged.forwardedFrom ?? next.forwardedFrom,
+                        forwardOrigin: merged.forwardOrigin ?? next.forwardOrigin,
                         senderUserId: merged.senderUserId ?? next.senderUserId,
                         senderName: merged.senderName ?? next.senderName,
                         senderAvatarPath: merged.senderAvatarPath ?? next.senderAvatarPath,
@@ -1015,6 +1021,7 @@ struct ChatDetailView: View {
                     attachments: attachments,
                     mediaAlbumId: albumId,
                     forwardedFrom: merged.forwardedFrom,
+                    forwardOrigin: merged.forwardOrigin,
                     senderUserId: merged.senderUserId,
                     senderName: merged.senderName,
                     senderAvatarPath: merged.senderAvatarPath,

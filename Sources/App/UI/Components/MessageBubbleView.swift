@@ -17,6 +17,7 @@ struct MessageBubbleView: View {
     var onLongPress: (() -> Void)?
     var onDoubleTap: (() -> Void)?
     var onReactionTap: ((TgMessageReaction) -> Void)?
+    var onForwardOriginTap: ((TgForwardOrigin) -> Void)?
     var onForward: (() -> Void)?
     var onEdit: (() -> Void)?
     var onDelete: ((_ revoke: Bool) -> Void)?
@@ -249,9 +250,7 @@ struct MessageBubbleView: View {
             if hasHeaderContent {
                 VStack(alignment: .leading, spacing: 6) {
                     if let forwardedFrom = message.forwardedFrom, !forwardedFrom.isEmpty {
-                        Text(AppText.tr("Переслано от \(forwardedFrom)", "Forwarded from \(forwardedFrom)"))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        forwardHeader(name: forwardedFrom, origin: message.forwardOrigin)
                     }
 
                     if let replyId = message.replyToMessageId {
@@ -408,6 +407,30 @@ struct MessageBubbleView: View {
             Color(red: 0.35, green: 0.72, blue: 0.68)
         ]
         return palette[Int(abs(id) % Int64(palette.count))]
+    }
+
+    @ViewBuilder
+    private func forwardHeader(name: String, origin: TgForwardOrigin?) -> some View {
+        let prefix = AppText.tr("Переслано от", "Forwarded from")
+        let accent = message.outgoing
+            ? appearance.outgoingText(colorScheme: colorScheme)
+            : appearance.accentColor
+
+        if let origin, origin.isNavigable, onForwardOriginTap != nil {
+            (Text(prefix + " ")
+                .foregroundStyle(.secondary)
+            + Text(name)
+                .foregroundStyle(accent)
+                .fontWeight(.semibold))
+            .font(.caption2)
+            .onTapGesture {
+                onForwardOriginTap?(origin)
+            }
+        } else {
+            Text("\(prefix) \(name)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func formatViewCount(_ count: Int) -> String {

@@ -34,6 +34,39 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         self.bridge = try TDLibBridge()
     }
 
+    deinit {
+        receiveLoopTask?.cancel()
+        receiveLoopTask = nil
+    }
+
+    func shutdown() async {
+        eventHandler = nil
+        let shouldClose = syncQueue.sync {
+            !lastAuthorizationStateType.isEmpty
+                && lastAuthorizationStateType != "authorizationStateClosed"
+        }
+        if shouldClose {
+            do {
+                _ = try await sendRequest(["@type": "close"])
+                try await waitForAuthorizationState("authorizationStateClosed", timeout: 8)
+            } catch {
+                // Best-effort shutdown while switching accounts.
+            }
+        }
+        receiveLoopTask?.cancel()
+        receiveLoopTask = nil
+        syncQueue.sync {
+            for (_, continuation) in pendingResponses {
+                continuation.resume(throwing: TDLibClientError.deallocated)
+            }
+            pendingResponses.removeAll()
+            for waiter in authorizationWaiters {
+                waiter.continuation.resume(throwing: TDLibClientError.deallocated)
+            }
+            authorizationWaiters.removeAll()
+        }
+    }
+
     func configure(apiId: Int, apiHash: String) async throws {
         guard apiId > 0, apiId <= Int(Int32.max), apiHash.count == 32 else {
             throw TDLibClientError.invalidApiCredentials
@@ -1537,6 +1570,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 attachments: message.attachments,
                 mediaAlbumId: message.mediaAlbumId,
                 forwardedFrom: message.forwardedFrom,
+                forwardOrigin: message.forwardOrigin,
                 senderUserId: message.senderUserId,
                 senderName: message.senderName,
                 senderAvatarPath: message.senderAvatarPath,
@@ -1805,6 +1839,43 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             avatarPath: avatarPath,
             isPremium: isPremium,
             premiumBadgePath: premiumBadgePath
+        )
+    }
+
+    func fetchActiveSessions() async throws -> [TgActiveSession] {
+        let response = try await sendRequest(["@type": "getActiveSessions"])
+        guard let sessions = response["sessions"] as? [[String: Any]] else { return [] }
+        return sessions.compactMap(parseActiveSession)
+    }
+
+    func terminateSession(sessionId: Int64) async throws {
+        _ = try await sendRequest([
+            "@type": "terminateSession",
+            "session_id": NSNumber(value: sessionId)
+        ])
+    }
+
+    func terminateAllOtherSessions() async throws {
+        _ = try await sendRequest(["@type": "terminateAllOtherSessions"])
+    }
+
+    private func parseActiveSession(_ obj: [String: Any]) -> TgActiveSession? {
+        guard let id = int64Value(obj["id"]) else { return nil }
+        let logInDate = Date(timeIntervalSince1970: TimeInterval(int64Value(obj["log_in_date"]) ?? 0))
+        let lastActiveDate = Date(timeIntervalSince1970: TimeInterval(int64Value(obj["last_active_date"]) ?? 0))
+        return TgActiveSession(
+            id: id,
+            isCurrent: (obj["is_current"] as? Bool) ?? false,
+            platform: obj["platform"] as? String ?? "",
+            systemVersion: obj["system_version"] as? String ?? "",
+            applicationName: obj["application_name"] as? String ?? "",
+            applicationVersion: obj["application_version"] as? String ?? "",
+            deviceModel: obj["device_model"] as? String ?? "",
+            ip: obj["ip"] as? String ?? "",
+            country: obj["country"] as? String ?? "",
+            region: obj["region"] as? String ?? "",
+            logInDate: logInDate,
+            lastActiveDate: lastActiveDate
         )
     }
 
@@ -2572,6 +2643,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let signature = (authorSignature?.isEmpty == false) ? authorSignature : nil
 
+        let forwardParsed = parseForwardInfo(obj["forward_info"] as? [String: Any])
+
         return TgMessage(
             id: id,
             chatId: chatId,
@@ -2583,7 +2656,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             isDeleted: isDeleted,
             attachments: parseAttachments(obj["content"] as? [String: Any]),
             mediaAlbumId: mediaAlbumId,
-            forwardedFrom: forwardedFromText(obj["forward_info"] as? [String: Any]),
+            forwardedFrom: forwardParsed.displayName,
+            forwardOrigin: forwardParsed.origin,
             senderUserId: senderUserId,
             authorSignature: signature,
             viewCount: viewCount,
@@ -2696,6 +2770,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 attachments: message.attachments,
                 mediaAlbumId: message.mediaAlbumId,
                 forwardedFrom: message.forwardedFrom,
+                forwardOrigin: message.forwardOrigin,
                 senderUserId: message.senderUserId,
                 senderName: message.senderName ?? cached.name,
                 senderAvatarPath: message.senderAvatarPath ?? cached.avatarPath,
@@ -2706,24 +2781,35 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
-    private func forwardedFromText(_ forwardInfo: [String: Any]?) -> String? {
+    private func parseForwardInfo(_ forwardInfo: [String: Any]?) -> (displayName: String?, origin: TgForwardOrigin?) {
         guard
             let origin = forwardInfo?["origin"] as? [String: Any],
             let type = origin["@type"] as? String
-        else { return nil }
+        else { return (nil, nil) }
 
         switch type {
         case "messageOriginUser":
-            return origin["sender_name"] as? String ?? "пользователь"
+            let name = origin["sender_name"] as? String ?? AppText.tr("пользователь", "user")
+            guard let userId = int64Value(origin["sender_user_id"]) else { return (name, nil) }
+            return (name, TgForwardOrigin(kind: .user(userId: userId), displayName: name))
         case "messageOriginHiddenUser":
-            return origin["sender_name"] as? String ?? "скрытый пользователь"
+            let name = origin["sender_name"] as? String ?? AppText.tr("скрытый пользователь", "hidden user")
+            return (name, TgForwardOrigin(kind: .hiddenUser, displayName: name))
         case "messageOriginChat":
-            return origin["sender_chat_title"] as? String ?? "чат"
+            let title = origin["sender_chat_title"] as? String ?? AppText.tr("чат", "chat")
+            guard let chatId = int64Value(origin["sender_chat_id"]) else { return (title, nil) }
+            return (title, TgForwardOrigin(kind: .chat(chatId: chatId), displayName: title))
         case "messageOriginChannel":
-            return origin["chat_title"] as? String ?? "канал"
+            let title = origin["chat_title"] as? String ?? AppText.tr("канал", "channel")
+            guard let chatId = int64Value(origin["chat_id"]) else { return (title, nil) }
+            return (title, TgForwardOrigin(kind: .channel(chatId: chatId), displayName: title))
         default:
-            return nil
+            return (nil, nil)
         }
+    }
+
+    private func forwardedFromText(_ forwardInfo: [String: Any]?) -> String? {
+        parseForwardInfo(forwardInfo).displayName
     }
 
     private func parseAttachments(_ content: [String: Any]?) -> [TgAttachment] {

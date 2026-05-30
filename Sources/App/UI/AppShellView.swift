@@ -30,7 +30,19 @@ struct AppShellView: View {
                             tabRoot(for: tab)
                                 .tag(tab)
                                 .tabItem {
-                                    Label(tab.title, systemImage: tab.systemImage)
+                                    if tab == .settings {
+                                        Label {
+                                            Text(tab.title)
+                                        } icon: {
+                                            TabBarProfileTabIcon(
+                                                title: vm.me?.displayName ?? AppText.tr("Настройки", "Settings"),
+                                                identifier: vm.me?.id ?? 0,
+                                                imagePath: vm.me?.avatarPath
+                                            )
+                                        }
+                                    } else {
+                                        Label(tab.title, systemImage: tab.systemImage)
+                                    }
                                 }
                         }
                     }
@@ -78,10 +90,17 @@ struct AppShellView: View {
                     }
                 }
                 .onChange(of: tabBar.selectedTab) { tab in
+                    TabBarSelectionAnimator.shared.animate(tab: tab, visibleTabs: tabBar.visibleTabs)
                     TabBarLongPressInstaller.shared.refresh()
                     if tab == .chats {
                         Task { await vm.ensureChatFoldersVisible() }
                     }
+                }
+                .onChange(of: vm.me?.avatarPath) { _ in
+                    TabBarProfileIconRenderer.invalidate()
+                }
+                .onChange(of: vm.me?.id) { _ in
+                    TabBarProfileIconRenderer.invalidate()
                 }
             }
         }

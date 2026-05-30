@@ -3,6 +3,7 @@ import UIKit
 
 struct ContactsListView: View {
     @ObservedObject var vm: AppViewModel
+    @State private var showNewConversation = false
 
     var body: some View {
         NavigationStack {
@@ -38,14 +39,11 @@ struct ContactsListView: View {
                         Text(AppText.tr("Синхронизация контактов…", "Syncing contacts…"))
                             .foregroundStyle(.secondary)
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.vertical, 8)
                 }
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
             }
 
             if vm.filteredContacts.isEmpty && !vm.isContactsLoading {
@@ -58,46 +56,53 @@ struct ContactsListView: View {
                             "Sync your phone book or add contacts in Telegram."
                         )
                     )
-                    .padding(14)
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
             } else {
-                Section {
-                    ForEach(vm.filteredContacts) { contact in
-                        contactRow(contact)
+                ForEach(vm.groupedFilteredContacts, id: \.letter) { section in
+                    Section(section.letter) {
+                        ForEach(section.contacts) { contact in
+                            contactRow(contact)
+                        }
                     }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                 }
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            contactsHeader
-        }
+        .transparentNavigationBar()
+        .navigationTitle(AppText.tr("Контакты", "Contacts"))
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $vm.contactsSearch,
+            placement: .navigationBarDrawer(displayMode: .automatic),
+            prompt: AppText.tr("Поиск", "Search")
+        )
         .overlay {
             if vm.isContactsLoading && vm.contacts.isEmpty {
                 ProgressView()
             }
         }
-        .searchable(
-            text: $vm.contactsSearch,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: AppText.tr("Поиск контактов", "Search contacts")
-        )
         .refreshable {
             await vm.refreshContacts(force: true)
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showNewConversation = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel(AppText.tr("Новый чат", "New chat"))
+            }
+
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button {
                     Task { await vm.syncDeviceContactsWithTelegram() }
                 } label: {
@@ -111,25 +116,9 @@ struct ContactsListView: View {
                 .accessibilityLabel(AppText.tr("Синхронизировать", "Sync"))
             }
         }
-        .mainTabNavigationBar(title: AppText.tr("Контакты", "Contacts"))
-    }
-
-    private var contactsHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(AppText.tr("Контакты Telegram", "Telegram contacts"))
-                    .font(.subheadline.weight(.semibold))
-                Text(AppText.tr(
-                    "\(vm.filteredContacts.count) из \(vm.contacts.count)",
-                    "\(vm.filteredContacts.count) of \(vm.contacts.count)"
-                ))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
+        .sheet(isPresented: $showNewConversation) {
+            NewConversationView(vm: vm)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
     }
 
     private var permissionCard: some View {
@@ -187,7 +176,9 @@ struct ContactsListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ChatListScreenBackground())
-        .mainTabNavigationBar(title: AppText.tr("Контакты", "Contacts"))
+        .transparentNavigationBar()
+        .navigationTitle(AppText.tr("Контакты", "Contacts"))
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func emptyStateView(icon: String, title: String, message: String) -> some View {
@@ -211,7 +202,7 @@ struct ContactsListView: View {
             vm.prepareChatFromContact(contact)
             Task { await vm.openChat(chatId: contact.privateChatId) }
         } label: {
-            ContactCardView(
+            ContactRowView(
                 contact: contact,
                 vm: vm,
                 onPremiumBadgeTap: contact.isPremium
@@ -219,11 +210,11 @@ struct ContactsListView: View {
                     : nil
             )
         }
-        .buttonStyle(ContactRowPressStyle())
+        .buttonStyle(ChatRowPressStyle())
     }
 }
 
-private struct ContactCardView: View {
+private struct ContactRowView: View {
     let contact: TgContact
     var vm: AppViewModel? = nil
     var onPremiumBadgeTap: (() -> Void)?
@@ -260,7 +251,7 @@ private struct ContactCardView: View {
                         vm: vm
                     )
                 } else {
-                    Text(AppText.tr("Контакт Telegram", "Telegram contact"))
+                    Text(AppText.tr("в Telegram", "on Telegram"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -268,22 +259,10 @@ private struct ContactCardView: View {
             }
 
             Spacer(minLength: 8)
-
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.systemBackground))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct ContactRowPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.spring(response: 0.26, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }

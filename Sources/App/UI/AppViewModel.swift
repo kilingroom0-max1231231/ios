@@ -89,6 +89,7 @@ final class AppViewModel: ObservableObject {
     }
     private var profileLoadTask: Task<Void, Never>?
     private var isTdlibConfigured = false
+    private var repositoryGeneration = 0
     private var isRefreshingChats = false
     private var needsAnotherChatRefresh = false
     private var chatListRefreshTask: Task<Void, Never>?
@@ -115,6 +116,37 @@ final class AppViewModel: ObservableObject {
     @Published var isContactsLoading = false
     @Published var isSyncingContacts = false
     @Published var deviceContactsAuthorization: DeviceContactsAuthorization = .notDetermined
+    @Published var activeSessions: [TgActiveSession] = []
+    @Published var isActiveSessionsLoading = false
+
+    var groupedFilteredContacts: [(letter: String, contacts: [TgContact])] {
+        let sorted = filteredContacts.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        var groups: [String: [TgContact]] = [:]
+        for contact in sorted {
+            let letter = Self.contactSectionLetter(for: contact.displayName)
+            groups[letter, default: []].append(contact)
+        }
+        return groups.keys.sorted(by: Self.contactSectionSort).map { letter in
+            (letter, groups[letter] ?? [])
+        }
+    }
+
+    private static func contactSectionLetter(for name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else { return "#" }
+        if first.isLetter {
+            return String(first).uppercased()
+        }
+        return "#"
+    }
+
+    private static func contactSectionSort(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == "#" { return false }
+        if rhs == "#" { return true }
+        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+    }
 
     var filteredContacts: [TgContact] {
         let query = contactsSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -374,7 +406,7 @@ final class AppViewModel: ObservableObject {
                 isTdlibConfigured = true
             }
             authState = repository.authState()
-            await applyPhase(for: authState)
+            await applyPhase(for: authState, force: true)
         } catch {
             let message = error.localizedDescription
             let upper = message.uppercased()
@@ -427,6 +459,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func signOut() {
+        repositoryGeneration += 1
         credentials.clear()
         apiIdText = ""
         apiHash = ""
@@ -443,13 +476,14 @@ final class AppViewModel: ObservableObject {
         messages = []
         selectedChatId = nil
         authState = .waitPhone
-        repository = nil
-        isTdlibConfigured = false
         bootstrapError = nil
         phase = .setup
         incomingNotificationsAllowed = false
         status = "Войдите снова — укажите API данные"
-        Task { await start() }
+        Task {
+            await teardownRepository()
+            await start()
+        }
     }
 
     func addAccount() {
@@ -466,15 +500,17 @@ final class AppViewModel: ObservableObject {
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
 
+        repositoryGeneration += 1
         let outgoingAccountId = accountSessions.activeAccountId
         persistChatFoldersCache(for: outgoingAccountId)
 
         clearAllTypingState()
         openChatCache.removeAll()
-        repository = nil
+        await teardownRepository()
         accountSessions.setActiveAccount(id: accountId)
         resetVolatileStateForAccountSwitch(to: accountId)
         selectMainTab(.chats)
+        phase = .loading
 
         await recreateRepository()
         await connect(saveCredentials: false)
@@ -492,12 +528,13 @@ final class AppViewModel: ObservableObject {
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
 
+        repositoryGeneration += 1
         let wasActive = accountSessions.activeAccountId == id
         if wasActive {
             persistChatFoldersCache(for: id)
             clearAllTypingState()
             openChatCache.removeAll()
-            repository = nil
+            await teardownRepository()
         }
 
         accountSessions.removeAccount(id: id)
@@ -506,6 +543,7 @@ final class AppViewModel: ObservableObject {
 
         resetVolatileStateForAccountSwitch(to: accountSessions.activeAccountId)
         selectMainTab(.chats)
+        phase = .loading
         await recreateRepository()
         await connect(saveCredentials: false)
     }
@@ -537,8 +575,18 @@ final class AppViewModel: ObservableObject {
         globalSearchMessageHits = []
         globalSearchQuery = ""
         isTdlibConfigured = false
+        authState = .waitPhone
         navigationTargetChatId = nil
         chatListPathResetId = UUID()
+    }
+
+    private func teardownRepository() async {
+        guard let repository else { return }
+        if isTdlibConfigured {
+            await repository.shutdown()
+        }
+        self.repository = nil
+        isTdlibConfigured = false
     }
 
     func refreshChats(folderGeneration: Int? = nil) async {
@@ -1270,6 +1318,55 @@ final class AppViewModel: ObservableObject {
         await loadMessagesFromCache(chatId: chatId)
     }
 
+    func openForwardOrigin(_ origin: TgForwardOrigin) async {
+        guard origin.isNavigable, let repository else { return }
+        switch origin.kind {
+        case .user(let userId):
+            do {
+                let chatId = try await repository.openPrivateChat(userId: userId)
+                await openChat(chatId: chatId)
+            } catch {
+                status = error.localizedDescription
+            }
+        case .chat(let chatId), .channel(let chatId):
+            await openChat(chatId: chatId)
+        case .hiddenUser:
+            break
+        }
+    }
+
+    func refreshActiveSessions() async {
+        guard let repository else { return }
+        isActiveSessionsLoading = true
+        defer { isActiveSessionsLoading = false }
+        do {
+            activeSessions = try await repository.loadActiveSessions()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func terminateActiveSession(_ session: TgActiveSession) async {
+        guard let repository else { return }
+        guard !session.isCurrent else { return }
+        do {
+            try await repository.terminateActiveSession(sessionId: session.id)
+            await refreshActiveSessions()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func terminateAllOtherActiveSessions() async {
+        guard let repository else { return }
+        do {
+            try await repository.terminateAllOtherActiveSessions()
+            await refreshActiveSessions()
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
     func loadProfilePhotoPaths(userId: Int64) async -> [String] {
         guard let repository else { return [] }
         do {
@@ -1623,6 +1720,7 @@ final class AppViewModel: ObservableObject {
             attachments: current.attachments,
             mediaAlbumId: current.mediaAlbumId,
             forwardedFrom: current.forwardedFrom,
+            forwardOrigin: current.forwardOrigin,
             senderUserId: current.senderUserId,
             senderName: current.senderName,
             senderAvatarPath: current.senderAvatarPath,
@@ -2292,34 +2390,40 @@ final class AppViewModel: ObservableObject {
     }
 
     private func wireRepository(_ repository: TelegramRepository) {
+        let generation = repositoryGeneration
         repository.onAuthStateChanged = { [weak self] state in
             Task { @MainActor in
-                self?.authState = state
-                await self?.applyPhase(for: state)
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.authState = state
+                await self.applyPhase(for: state)
             }
         }
 
         repository.onIncomingMessage = { [weak self] message in
             Task { @MainActor in
-                self?.handleIncomingMessage(message)
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.handleIncomingMessage(message)
             }
         }
 
         repository.onMessageUpserted = { [weak self] message in
             Task { @MainActor in
-                self?.applyUpsertedMessage(message)
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.applyUpsertedMessage(message)
             }
         }
 
         repository.onMessagesDeleted = { [weak self] chatId, messageIds in
             Task { @MainActor in
-                await self?.applyMessagesDeleted(chatId: chatId, messageIds: Set(messageIds))
+                guard let self, self.repositoryGeneration == generation else { return }
+                await self.applyMessagesDeleted(chatId: chatId, messageIds: Set(messageIds))
             }
         }
 
         repository.onMessageReplaced = { [weak self] chatId, oldMessageId, newMessage in
             Task { @MainActor in
-                guard let self, self.selectedChatId == chatId else { return }
+                guard let self, self.repositoryGeneration == generation else { return }
+                guard self.selectedChatId == chatId else { return }
                 var updated = self.messages.filter { $0.id != oldMessageId }
                 if let index = updated.firstIndex(where: { $0.id == newMessage.id }) {
                     let previous = updated[index]
@@ -2337,43 +2441,50 @@ final class AppViewModel: ObservableObject {
         repository.onMessagesChanged = { [weak self] chatId in
             guard let self else { return }
             Task { @MainActor in
+                guard self.repositoryGeneration == generation else { return }
                 self.scheduleMessagesReload(chatId: chatId)
             }
         }
 
         repository.onChatsChanged = { [weak self] in
             Task { @MainActor in
-                self?.scheduleDebouncedChatListRefresh()
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.scheduleDebouncedChatListRefresh()
             }
         }
 
         repository.onChatFoldersChanged = { [weak self] in
             Task { @MainActor in
-                await self?.reloadChatFolders(force: false)
+                guard let self, self.repositoryGeneration == generation else { return }
+                await self.reloadChatFolders(force: false)
             }
         }
 
         repository.onChatChanged = { [weak self] chatId in
             Task { @MainActor in
-                self?.scheduleChatPatches(for: [chatId])
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.scheduleChatPatches(for: [chatId])
             }
         }
 
         repository.onTypingChanged = { [weak self] update in
             Task { @MainActor in
-                self?.applyTypingUpdate(update)
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.applyTypingUpdate(update)
             }
         }
 
         repository.onUserStatusChanged = { [weak self] userId, statusText, isOnline in
             Task { @MainActor in
-                self?.applyUserStatusUpdate(userId: userId, statusText: statusText, isOnline: isOnline)
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.applyUserStatusUpdate(userId: userId, statusText: statusText, isOnline: isOnline)
             }
         }
 
         repository.onMessageInteractionUpdated = { [weak self] chatId, messageId, reactions, viewCount in
             Task { @MainActor in
-                self?.applyMessageInteractionUpdate(
+                guard let self, self.repositoryGeneration == generation else { return }
+                self.applyMessageInteractionUpdate(
                     chatId: chatId,
                     messageId: messageId,
                     reactions: reactions,
@@ -2405,6 +2516,7 @@ final class AppViewModel: ObservableObject {
             attachments: current.attachments,
             mediaAlbumId: current.mediaAlbumId,
             forwardedFrom: current.forwardedFrom,
+            forwardOrigin: current.forwardOrigin,
             senderUserId: current.senderUserId,
             senderName: current.senderName,
             senderAvatarPath: current.senderAvatarPath,
@@ -2433,7 +2545,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func applyPhase(for state: AuthState) async {
+    private func applyPhase(for state: AuthState, force: Bool = false) async {
         switch state {
         case .ready:
             if isReadyBootstrapping {
@@ -2468,6 +2580,9 @@ final class AppViewModel: ObservableObject {
             await refreshChats()
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:
+            if isSwitchingAccount && !force {
+                return
+            }
             phase = .login
             status = ""
         }
@@ -2599,11 +2714,11 @@ final class AppViewModel: ObservableObject {
     }
 
     private func recreateRepository() async {
+        await teardownRepository()
         do {
             let repo = try TelegramRepository.bootstrap(accountId: accountSessions.activeAccountId)
             repository = repo
             wireRepository(repo)
-            isTdlibConfigured = false
             bootstrapError = nil
         } catch {
             bootstrapError = error.localizedDescription
@@ -3096,6 +3211,7 @@ final class AppViewModel: ObservableObject {
                 attachments: mergedAttachments,
                 mediaAlbumId: message.mediaAlbumId,
                 forwardedFrom: message.forwardedFrom,
+                forwardOrigin: message.forwardOrigin,
                 senderUserId: message.senderUserId,
                 senderName: message.senderName,
                 senderAvatarPath: message.senderAvatarPath,
@@ -3151,6 +3267,7 @@ final class AppViewModel: ObservableObject {
                 attachments: message.attachments,
                 mediaAlbumId: message.mediaAlbumId,
                 forwardedFrom: message.forwardedFrom,
+                forwardOrigin: message.forwardOrigin,
                 senderUserId: message.senderUserId,
                 senderName: message.senderName,
                 senderAvatarPath: message.senderAvatarPath,
