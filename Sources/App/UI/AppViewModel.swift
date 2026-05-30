@@ -56,6 +56,7 @@ final class AppViewModel: ObservableObject {
     @Published var isBusy = false
     @Published var bootstrapError: String?
     @Published var navigationTargetChatId: Int64?
+    @Published var chatListPathResetId = UUID()
     @Published var peekChatId: Int64?
     @Published var peekMessages: [TgMessage] = []
     @Published var isPeekLoading = false
@@ -104,6 +105,7 @@ final class AppViewModel: ObservableObject {
     private var isLoadingPeekOlder = false
     private var toastDismissTask: Task<Void, Never>?
     private var toastDismissGeneration = 0
+    private var folderSelectionGeneration = 0
     private var incomingNotificationsAllowed = false
     private var lastIncomingSoundPlayedAt: Date?
     @Published var premiumUpsellContext: PremiumUpsellContext?
@@ -242,7 +244,7 @@ final class AppViewModel: ObservableObject {
             if let saved = credentials.load() {
                 apiIdText = String(saved.apiId)
                 apiHash = saved.apiHash
-                await connect(saveCredentials: false)
+                await connectWithRecovery(saveCredentials: false)
             } else {
                 phase = .setup
                 status = "Введите API ID и API Hash с my.telegram.org"
@@ -251,6 +253,58 @@ final class AppViewModel: ObservableObject {
             bootstrapError = error.localizedDescription
             phase = .setup
             status = "TDLib недоступен: \(error.localizedDescription)"
+        }
+    }
+
+    private func connectWithRecovery(saveCredentials: Bool) async {
+        let timedOut = await runWithTimeout(seconds: 40) {
+            await self.connect(saveCredentials: saveCredentials)
+        }
+
+        guard timedOut else { return }
+
+        status = AppText.tr(
+            "Долгий запуск TDLib. Пробуем восстановить соединение…",
+            "TDLib startup is taking too long. Trying to recover…"
+        )
+        isTdlibConfigured = false
+        await recreateRepository()
+
+        guard repository != nil else {
+            phase = .login
+            status = AppText.tr(
+                "Не удалось запустить клиент. Попробуйте войти снова.",
+                "Could not start the client. Try signing in again."
+            )
+            return
+        }
+
+        _ = await runWithTimeout(seconds: 25) {
+            await self.connect(saveCredentials: saveCredentials)
+        }
+
+        if phase == .loading {
+            authState = repository?.authState() ?? .waitPhone
+            selectedChatFolderId = nil
+            await applyPhase(for: authState)
+        }
+    }
+
+    @discardableResult
+    private func runWithTimeout(seconds: TimeInterval, operation: @escaping @MainActor () async -> Void) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask { @MainActor in
+                await operation()
+                return false
+            }
+            group.addTask {
+                let nanoseconds = UInt64(max(1, seconds) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                return true
+            }
+            let timedOut = await group.next() ?? false
+            group.cancelAll()
+            return timedOut
         }
     }
 
@@ -382,11 +436,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func addAccount() {
-        guard accountSessions.addAccount() != nil else {
+        guard let session = accountSessions.addAccount() else {
             status = AppText.tr("Можно добавить максимум 5 аккаунтов", "You can add up to 5 accounts")
             return
         }
-        status = AppText.tr("Аккаунт добавлен. Выберите его в списке выше.", "Account added. Choose it in the list above.")
+        Task { await switchAccount(to: session.id) }
     }
 
     func switchAccount(to accountId: String) async {
@@ -394,16 +448,58 @@ final class AppViewModel: ObservableObject {
         guard !isSwitchingAccount else { return }
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
-        clearAllTypingState()
-        openChatCache.removeAll()
 
         let outgoingAccountId = accountSessions.activeAccountId
-        if !chatFolders.isEmpty {
-            chatFoldersByAccount[outgoingAccountId] = chatFolders
-        }
-        accountSessions.setActiveAccount(id: accountId)
+        persistChatFoldersCache(for: outgoingAccountId)
 
-        // Reset volatile state before new repository bootstrap.
+        clearAllTypingState()
+        openChatCache.removeAll()
+        repository = nil
+        accountSessions.setActiveAccount(id: accountId)
+        resetVolatileStateForAccountSwitch(to: accountId)
+        selectMainTab(.chats)
+
+        await recreateRepository()
+        await connect(saveCredentials: false)
+    }
+
+    func removeAccount(id: String) async {
+        guard accountSessions.session(id: id) != nil else { return }
+
+        if accountSessions.sessions.count <= 1 {
+            signOut()
+            return
+        }
+
+        guard !isSwitchingAccount else { return }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+
+        let wasActive = accountSessions.activeAccountId == id
+        if wasActive {
+            persistChatFoldersCache(for: id)
+            clearAllTypingState()
+            openChatCache.removeAll()
+            repository = nil
+        }
+
+        accountSessions.removeAccount(id: id)
+
+        guard wasActive else { return }
+
+        resetVolatileStateForAccountSwitch(to: accountSessions.activeAccountId)
+        selectMainTab(.chats)
+        await recreateRepository()
+        await connect(saveCredentials: false)
+    }
+
+    private func persistChatFoldersCache(for accountId: String) {
+        if !chatFolders.isEmpty {
+            chatFoldersByAccount[accountId] = chatFolders
+        }
+    }
+
+    private func resetVolatileStateForAccountSwitch(to accountId: String) {
         chats = []
         chatFolders = chatFoldersByAccount[accountId] ?? []
         selectedChatFolderId = nil
@@ -412,19 +508,23 @@ final class AppViewModel: ObservableObject {
         archiveFullyLoaded = false
         chatListInitialLoadComplete = false
         messages = []
+        selectedChatId = nil
         chatProfile = nil
         chatMembers = []
         chatMediaMessages = []
         peekChatId = nil
         peekMessages = []
         me = nil
+        contacts = []
+        globalSearchChats = []
+        globalSearchMessageHits = []
+        globalSearchQuery = ""
         isTdlibConfigured = false
-
-        await recreateRepository()
-        await connect(saveCredentials: false)
+        navigationTargetChatId = nil
+        chatListPathResetId = UUID()
     }
 
-    func refreshChats() async {
+    func refreshChats(folderGeneration: Int? = nil) async {
         guard let repository, authState == .ready else { return }
         if isRefreshingChats {
             needsAnotherChatRefresh = true
@@ -435,9 +535,12 @@ final class AppViewModel: ObservableObject {
             isRefreshingChats = false
             if needsAnotherChatRefresh {
                 needsAnotherChatRefresh = false
-                Task { await refreshChats() }
+                Task { await refreshChats(folderGeneration: folderGeneration) }
             }
         }
+
+        let listKindAtStart = mainListKind
+        let folderAtStart = selectedChatFolderId
 
         if chats.isEmpty, selectedChatFolderId == nil {
             let cached = repository.cachedChats()
@@ -453,7 +556,15 @@ final class AppViewModel: ObservableObject {
 
         do {
             let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
-            let listChats = try await repository.loadChats(list: mainListKind, limit: chatListLimit)
+            let listChats = try await repository.loadChats(list: listKindAtStart, limit: chatListLimit)
+
+            if let folderGeneration, folderGeneration != self.folderSelectionGeneration {
+                return
+            }
+            if selectedChatFolderId != folderAtStart || mainListKind != listKindAtStart {
+                return
+            }
+
             chats = mergeChatsPreservingState(
                 sortChats(listChats),
                 previousById: previousById
@@ -464,6 +575,12 @@ final class AppViewModel: ObservableObject {
             scheduleChatMemberStatusRefresh()
             scheduleArchiveSummaryRefresh()
         } catch {
+            if let folderGeneration, folderGeneration != self.folderSelectionGeneration {
+                return
+            }
+            if selectedChatFolderId != folderAtStart || mainListKind != listKindAtStart {
+                return
+            }
             if chats.isEmpty {
                 status = error.localizedDescription
             }
@@ -475,7 +592,7 @@ final class AppViewModel: ObservableObject {
         guard let repository, authState == .ready else { return }
         do {
             let archived = try await repository.loadArchivedChats(limit: chatListLimit)
-            archivedChats = sortChats(archived)
+            archivedChats = applyKnownChatMetadata(to: sortChats(archived))
             archiveSummary = Self.makeArchiveSummary(from: archivedChats)
             archiveFullyLoaded = true
             scheduleChatAvatarRefresh()
@@ -498,9 +615,10 @@ final class AppViewModel: ObservableObject {
             do {
                 let archived = try await repository.loadArchivedChats(limit: self.archiveSummaryLimit)
                 guard !Task.isCancelled else { return }
-                self.archivedChats = sortChats(archived)
+                self.archivedChats = self.applyKnownChatMetadata(to: self.sortChats(archived))
                 self.archiveSummary = Self.makeArchiveSummary(from: archivedChats)
                 self.archiveFullyLoaded = archived.count < self.archiveSummaryLimit
+                self.scheduleChatAvatarRefresh()
             } catch {
                 // Archive preview is optional; keep the main list responsive.
             }
@@ -799,16 +917,46 @@ final class AppViewModel: ObservableObject {
         chatAvatarRefreshTask?.cancel()
         chatAvatarRefreshTask = Task { @MainActor [weak self] in
             guard let self, let repository = self.repository else { return }
-            let snapshot = self.chats
-            let needsRefresh = snapshot.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
-            guard needsRefresh else { return }
-            guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return }
+            await self.refreshMissingAvatars(in: &self.chats, repository: repository)
             guard !Task.isCancelled else { return }
-            let previousById = Dictionary(uniqueKeysWithValues: self.chats.map { ($0.id, $0) })
-            self.chats = self.mergeChatsPreservingState(
-                self.sortChats(enriched),
-                previousById: previousById
-            )
+            await self.refreshMissingAvatars(in: &self.archivedChats, repository: repository)
+            guard !Task.isCancelled else { return }
+            if !self.archivedChats.isEmpty {
+                self.archiveSummary = Self.makeArchiveSummary(from: self.archivedChats)
+            }
+        }
+    }
+
+    private func refreshMissingAvatars(
+        in chats: inout [TgChat],
+        repository: TelegramRepository
+    ) async {
+        let needsRefresh = chats.contains { ($0.avatarPath?.isEmpty ?? true) && $0.kind != .savedMessages }
+        guard needsRefresh else { return }
+        let snapshot = chats
+        guard let enriched = try? await repository.enrichChatAvatars(snapshot) else { return }
+        let previousById = Dictionary(uniqueKeysWithValues: chats.map { ($0.id, $0) })
+        chats = mergeChatsPreservingState(sortChats(enriched), previousById: previousById)
+    }
+
+    private func applyKnownChatMetadata(to chats: [TgChat]) -> [TgChat] {
+        let knownById = Dictionary(uniqueKeysWithValues: (self.chats + openChatCache.values).map { ($0.id, $0) })
+        return chats.map { chat in
+            guard let known = knownById[chat.id] else { return chat }
+            var updated = chat
+            if (updated.avatarPath?.isEmpty ?? true),
+               let path = known.avatarPath,
+               !path.isEmpty {
+                updated.avatarPath = path
+            }
+            preserveMemberStatus(from: known, into: &updated)
+            if updated.peerPremiumBadgePath == nil {
+                updated.peerPremiumBadgePath = known.peerPremiumBadgePath
+            }
+            if !updated.peerIsPremium {
+                updated.peerIsPremium = known.peerIsPremium
+            }
+            return updated
         }
     }
 
@@ -1618,12 +1766,25 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectChatFolder(_ folderId: Int32?) async {
+        if let folderId {
+            if chatFolders.isEmpty {
+                await ensureChatFoldersVisible()
+            }
+            if !chatFolders.contains(where: { $0.id == folderId }) {
+                selectedChatFolderId = nil
+                await refreshChats()
+                return
+            }
+        }
+
         guard selectedChatFolderId != folderId else { return }
+
+        folderSelectionGeneration += 1
+        let generation = folderSelectionGeneration
         selectedChatFolderId = folderId
         archiveFullyLoaded = false
         chatListInitialLoadComplete = false
-        chats = []
-        await refreshChats()
+        await refreshChats(folderGeneration: generation)
     }
 
     func refreshChatsPreservingFolder() async {
@@ -2197,7 +2358,11 @@ final class AppViewModel: ObservableObject {
                     chats = sortChats(cached)
                 }
             }
-            await reloadChatFolders(force: true)
+            await reloadChatFolders(force: false)
+            if let folderId = selectedChatFolderId,
+               !chatFolders.contains(where: { $0.id == folderId }) {
+                selectedChatFolderId = nil
+            }
             await refreshChats()
             await refreshMe()
         case .waitPhone, .waitCode, .waitPassword:

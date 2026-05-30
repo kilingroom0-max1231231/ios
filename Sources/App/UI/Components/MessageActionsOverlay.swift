@@ -68,7 +68,8 @@ struct MessageActionsOverlay: View {
 
     private let collapsedReactionsHeight: CGFloat = 56
     private let expandedRowHeight: CGFloat = 42
-    private let expandedMaxRowsVisible: CGFloat = 6
+    private let expandedMaxRowsVisible: CGFloat = 10
+    private let actionsMenuMaxHeight: CGFloat = 320
 
     private var reactionGridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
@@ -108,10 +109,12 @@ struct MessageActionsOverlay: View {
             ZStack {
                 backdrop
                     .opacity(backdropOpacity)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
                     .onTapGesture { dismiss() }
 
                 if let frame = localMessageFrame, frame.width > 1, frame.height > 1 {
-                    positionedContent(
+                    anchoredContent(
                         messageFrame: frame,
                         containerSize: size,
                         safeTop: safeTop,
@@ -160,7 +163,7 @@ struct MessageActionsOverlay: View {
     ) -> CGFloat {
         let available = containerHeight - safeTop - safeBottom
         let preferred = expandedMaxRowsVisible * expandedRowHeight + 36
-        return max(110, min(preferred, available * 0.62, 380))
+        return max(140, min(preferred, available * 0.78, 520))
     }
 
     private var backdrop: some View {
@@ -168,73 +171,6 @@ struct MessageActionsOverlay: View {
             VisualEffectBlur(style: .systemChromeMaterialDark)
             Color.black.opacity(0.45)
         }
-    }
-
-    @ViewBuilder
-    private func positionedContent(
-        messageFrame: CGRect,
-        containerSize: CGSize,
-        safeTop: CGFloat,
-        safeBottom: CGFloat,
-        maxExpandedReactionsHeight: CGFloat
-    ) -> some View {
-        scrollableStack(
-            messageFrame: messageFrame,
-            containerSize: containerSize,
-            safeTop: safeTop,
-            safeBottom: safeBottom,
-            maxExpandedReactionsHeight: maxExpandedReactionsHeight
-        )
-    }
-
-    private func scrollableStack(
-        messageFrame: CGRect,
-        containerSize: CGSize,
-        safeTop: CGFloat,
-        safeBottom: CGFloat,
-        maxExpandedReactionsHeight: CGFloat
-    ) -> some View {
-        let inset: CGFloat = 12
-        let reactionsWidth = min(containerSize.width - inset * 2, 340)
-        let actionsWidth = min(containerSize.width - inset * 2, 250)
-        let alignment: HorizontalAlignment = message.outgoing ? .trailing : .leading
-
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: alignment, spacing: 10) {
-                    reactionsPanel(
-                        width: reactionsWidth,
-                        maxExpandedHeight: maxExpandedReactionsHeight,
-                        embedInOuterScroll: true
-                    )
-                    .scaleEffect(reactionsScale, anchor: .bottom)
-                    .opacity(panelsOpacity)
-
-                    highlightedBubble(maxHeight: containerSize.height * 0.55, scrollable: true)
-                        .scaleEffect(bubbleScale)
-                        .frame(maxWidth: messageFrame.width, alignment: message.outgoing ? .trailing : .leading)
-
-                    actionsMenu(width: actionsWidth)
-                        .id("overlay-actions")
-                        .scaleEffect(actionsScale, anchor: .top)
-                        .opacity(panelsOpacity)
-                }
-                .frame(maxWidth: .infinity, alignment: message.outgoing ? .trailing : .leading)
-                .padding(.horizontal, inset)
-                .padding(.top, safeTop + 8)
-                .padding(.bottom, safeBottom + 8)
-            }
-            .frame(width: containerSize.width, height: containerSize.height)
-            .onChange(of: reactionsExpanded) { expanded in
-                guard expanded else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo("overlay-actions", anchor: .bottom)
-                    }
-                }
-            }
-        }
-        .animation(panelSpring, value: reactionsExpanded)
     }
 
     private func anchoredContent(
@@ -274,14 +210,13 @@ struct MessageActionsOverlay: View {
                     )
                     .position(x: layout.bubbleCenterX, y: layout.bubbleCenterY)
 
-                actionsMenu(width: layout.actionsWidth)
+                actionsMenu(width: layout.actionsWidth, maxHeight: actionsMenuMaxHeight)
                     .scaleEffect(actionsScale, anchor: .top)
                     .opacity(panelsOpacity)
                     .offset(y: -panelsOffset)
                     .position(x: layout.actionsCenterX, y: layout.actionsCenterY)
             }
         }
-        .allowsHitTesting(true)
         .animation(panelSpring, value: reactionsExpanded)
     }
 
@@ -289,44 +224,29 @@ struct MessageActionsOverlay: View {
         let inset: CGFloat = 12
         let reactionsWidth = min(size.width - inset * 2, 360)
         let actionsWidth = min(size.width - 48, 280)
-        let fallbackMaxReactionsH = min(152, size.height * 0.22)
+        let fallbackMaxReactionsH = min(280, size.height * 0.42)
 
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 12) {
-                    reactionsPanel(
-                        width: reactionsWidth,
-                        maxExpandedHeight: fallbackMaxReactionsH,
-                        embedInOuterScroll: true
-                    )
-                    .scaleEffect(reactionsScale, anchor: .bottom)
-                    .opacity(panelsOpacity)
-                    .offset(y: panelsOffset)
+        return VStack(spacing: 12) {
+            reactionsPanel(
+                width: reactionsWidth,
+                maxExpandedHeight: fallbackMaxReactionsH
+            )
+            .scaleEffect(reactionsScale, anchor: .bottom)
+            .opacity(panelsOpacity)
+            .offset(y: panelsOffset)
 
-                    highlightedBubble()
-                        .scaleEffect(bubbleScale)
-                        .padding(.horizontal, 12)
+            highlightedBubble(maxHeight: size.height * 0.34, scrollable: true)
+                .scaleEffect(bubbleScale)
+                .padding(.horizontal, 12)
 
-                    actionsMenu(width: actionsWidth)
-                        .id("overlay-actions")
-                        .scaleEffect(actionsScale, anchor: .top)
-                        .opacity(panelsOpacity)
-                        .offset(y: -panelsOffset)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, safeTop + 8)
-                .padding(.bottom, safeBottom + 8)
-            }
-            .frame(width: size.width, height: size.height)
-            .onChange(of: reactionsExpanded) { expanded in
-                guard expanded else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo("overlay-actions", anchor: .bottom)
-                    }
-                }
-            }
+            actionsMenu(width: actionsWidth, maxHeight: actionsMenuMaxHeight)
+                .scaleEffect(actionsScale, anchor: .top)
+                .opacity(panelsOpacity)
+                .offset(y: -panelsOffset)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.top, safeTop + 8)
+        .padding(.bottom, safeBottom + 8)
         .animation(panelSpring, value: reactionsExpanded)
     }
 
@@ -354,7 +274,7 @@ struct MessageActionsOverlay: View {
         let reactionsWidth = min(availableWidth, 340)
         let actionsWidth = min(availableWidth, 250)
         let reactionsH = reactionsPanelHeight(maxExpandedHeight: maxExpandedReactionsHeight)
-        let actionsH = actionsMenuHeight
+        let actionsH = min(actionsMenuHeight, actionsMenuMaxHeight)
         let gap: CGFloat = 10
         let topMargin = safeTop + 8
         let bottomMargin = safeBottom + 8
@@ -678,31 +598,34 @@ struct MessageActionsOverlay: View {
         return items
     }
 
-    private func actionsMenu(width: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(actionItems.enumerated()), id: \.offset) { index, item in
-                Button(role: item.role, action: item.handler) {
-                    HStack(spacing: 12) {
-                        Text(item.title)
-                            .font(.body)
-                        Spacer(minLength: 8)
-                        Image(systemName: item.icon)
-                            .font(.body)
-                            .frame(width: 22)
+    private func actionsMenu(width: CGFloat, maxHeight: CGFloat = 280) -> some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 0) {
+                ForEach(Array(actionItems.enumerated()), id: \.offset) { index, item in
+                    Button(role: item.role, action: item.handler) {
+                        HStack(spacing: 12) {
+                            Text(item.title)
+                                .font(.body)
+                            Spacer(minLength: 8)
+                            Image(systemName: item.icon)
+                                .font(.body)
+                                .frame(width: 22)
+                        }
+                        .foregroundStyle(item.role == .destructive ? Color.red : Color.primary)
+                        .padding(.horizontal, 16)
+                        .frame(height: actionRowHeight)
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(item.role == .destructive ? Color.red : Color.primary)
-                    .padding(.horizontal, 16)
-                    .frame(height: actionRowHeight)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(ActionRowButtonStyle())
+                    .buttonStyle(ActionRowButtonStyle())
 
-                if index < actionItems.count - 1 {
-                    Divider().padding(.leading, 16)
+                    if index < actionItems.count - 1 {
+                        Divider().padding(.leading, 16)
+                    }
                 }
             }
         }
         .frame(width: width)
+        .frame(maxHeight: maxHeight)
         .glassSurface(cornerRadius: 22)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
     }

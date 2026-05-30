@@ -4,7 +4,9 @@ struct SettingsView: View {
     @ObservedObject var vm: AppViewModel
     @ObservedObject private var appSettings = AppSettingsStore.shared
     @ObservedObject private var tabBar = MainTabBarStore.shared
+    @ObservedObject private var accountStore = AccountSessionStore.shared
     @EnvironmentObject private var languageStore: AppLanguageStore
+    @State private var accountPendingRemoval: AccountSession?
 
     var body: some View {
         List {
@@ -50,16 +52,18 @@ struct SettingsView: View {
                 .padding(.vertical, 6)
             }
 
-            Section(AppText.tr("Аккаунт", "Account")) {
-                Picker(AppText.tr("Аккаунт", "Account"), selection: Binding(
-                    get: { vm.activeAccountId },
-                    set: { newId in
-                        Task { await vm.switchAccount(to: newId) }
+            Section(AppText.tr("Аккаунты", "Accounts")) {
+                if vm.isSwitchingAccount {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text(AppText.tr("Переключение аккаунта…", "Switching account…"))
+                            .foregroundStyle(.secondary)
                     }
-                )) {
-                    ForEach(vm.accountList) { account in
-                        Text(account.title).tag(account.id)
-                    }
+                    .padding(.vertical, 4)
+                }
+
+                ForEach(accountStore.sessions) { account in
+                    accountRow(account)
                 }
 
                 Button {
@@ -211,8 +215,17 @@ struct SettingsView: View {
                 Button(role: .destructive) {
                     vm.signOut()
                 } label: {
-                    Label(AppText.tr("Выйти", "Logout"), systemImage: "rectangle.portrait.and.arrow.right")
+                    Label(
+                        AppText.tr("Сбросить приложение", "Reset app"),
+                        systemImage: "arrow.counterclockwise"
+                    )
                 }
+            } footer: {
+                Text(AppText.tr(
+                    "Удалит API-данные и все локальные сессии. Для выхода из одного аккаунта проведите по нему влево в списке выше.",
+                    "Removes API credentials and all local sessions. To sign out of one account, swipe it left in the list above."
+                ))
+                .font(.caption)
             }
         }
         .listStyle(.insetGrouped)
@@ -221,6 +234,88 @@ struct SettingsView: View {
         .mainTabNavigationBar(title: AppText.tr("Настройки", "Settings"))
         .task {
             await vm.refreshMe()
+        }
+        .alert(
+            AppText.tr("Выйти из аккаунта?", "Sign out of this account?"),
+            isPresented: Binding(
+                get: { accountPendingRemoval != nil },
+                set: { if !$0 { accountPendingRemoval = nil } }
+            ),
+            presenting: accountPendingRemoval
+        ) { account in
+            Button(AppText.tr("Выйти", "Sign out"), role: .destructive) {
+                Task { await vm.removeAccount(id: account.id) }
+            }
+            Button(AppText.tr("Отмена", "Cancel"), role: .cancel) {
+                accountPendingRemoval = nil
+            }
+        } message: { account in
+            Text(AppText.tr(
+                "Локальные данные «\(account.title)» будут удалены с этого устройства.",
+                "Local data for “\(account.title)” will be removed from this device."
+            ))
+        }
+    }
+
+    @ViewBuilder
+    private func accountRow(_ account: AccountSession) -> some View {
+        let isActive = account.id == accountStore.activeAccountId
+
+        Button {
+            guard !isActive, !vm.isSwitchingAccount else { return }
+            Task { await vm.switchAccount(to: account.id) }
+        } label: {
+            HStack(spacing: 12) {
+                AvatarView(
+                    title: account.title,
+                    identifier: account.userId ?? Int64(abs(account.id.hashValue)),
+                    imagePath: account.avatarPath,
+                    size: 44
+                )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(account.title)
+                            .font(.body.weight(isActive ? .semibold : .regular))
+                            .foregroundStyle(.primary)
+                        if isActive {
+                            Text(AppText.tr("активен", "active"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AppColors.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(AppColors.accent.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    if let phone = account.phone, !phone.isEmpty {
+                        Text(phone)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if isActive, let username = vm.me?.username, !username.isEmpty {
+                        UsernameLine(username: username, font: .caption, color: .secondary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if isActive {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppColors.accent)
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.isSwitchingAccount)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                accountPendingRemoval = account
+            } label: {
+                Label(AppText.tr("Выйти", "Sign out"), systemImage: "rectangle.portrait.and.arrow.right")
+            }
         }
     }
 

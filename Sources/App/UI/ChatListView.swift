@@ -51,6 +51,9 @@ struct ChatListView: View {
                 activePath.wrappedValue.append(ChatListRoute.chat(target))
                 vm.navigationTargetChatId = nil
             }
+            .onChange(of: vm.chatListPathResetId) { _ in
+                activePath.wrappedValue = NavigationPath()
+            }
         }
     }
 

@@ -66,14 +66,16 @@ final class AccountSessionStore: ObservableObject {
         let session = AccountSession(
             title: title ?? AppText.tr("Аккаунт \(index)", "Account \(index)")
         )
-        sessions.append(session)
+        var next = sessions
+        next.append(session)
+        sessions = next
         persist()
         return session
     }
 
     func removeAccount(id: String) {
         guard sessions.count > 1 else { return }
-        sessions.removeAll { $0.id == id }
+        sessions = sessions.filter { $0.id != id }
         if activeAccountId == id {
             activeAccountId = sessions[0].id
         }
@@ -94,10 +96,14 @@ final class AccountSessionStore: ObservableObject {
         avatarPath: String? = nil
     ) {
         guard let index = sessions.firstIndex(where: { $0.id == activeAccountId }) else { return }
-        if let title, !title.isEmpty { sessions[index].title = title }
-        if let phone { sessions[index].phone = phone }
-        if let userId { sessions[index].userId = userId }
-        if let avatarPath { sessions[index].avatarPath = avatarPath }
+        var updated = sessions[index]
+        if let title, !title.isEmpty { updated.title = title }
+        if let phone { updated.phone = phone }
+        if let userId { updated.userId = userId }
+        if let avatarPath { updated.avatarPath = avatarPath }
+        var next = sessions
+        next[index] = updated
+        sessions = next
         persist()
     }
 
