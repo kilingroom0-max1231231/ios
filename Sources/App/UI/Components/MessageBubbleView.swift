@@ -130,6 +130,17 @@ struct MessageBubbleView: View {
         return !message.attachments.isEmpty
             && message.attachments.allSatisfy { $0.kind == .sticker || $0.kind == .gift }
     }
+
+    /// Round video messages (кружки) float without a chat bubble, just like Telegram.
+    private var isVideoNoteOnly: Bool {
+        guard captionText == nil, !message.isDeleted else { return false }
+        return !message.attachments.isEmpty
+            && message.attachments.allSatisfy { $0.kind == .videoNote }
+    }
+
+    private var rendersWithoutBubble: Bool {
+        isStickerLikeOnly || isVideoNoteOnly
+    }
     private var hasHeaderContent: Bool {
         message.forwardedFrom != nil
             || message.replyToMessageId != nil
@@ -300,7 +311,7 @@ struct MessageBubbleView: View {
                 .padding(.bottom, appearance.compactBubbles ? 6 : 8)
         }
         .background(
-            isStickerLikeOnly
+            rendersWithoutBubble
                 ? Color.clear
                 : (message.outgoing
                     ? appearance.outgoingBubble(colorScheme: colorScheme)

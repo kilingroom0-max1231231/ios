@@ -373,6 +373,7 @@ struct MessageActionsOverlay: View {
             .padding(.vertical, 6)
             .frame(width: collapsedReactionsWidth(maxWidth: maxWidth))
             .glassSurface(cornerRadius: collapsedReactionsHeight / 2)
+            .contentShape(Capsule())
             .shadow(color: .black.opacity(0.18), radius: 8, y: 6)
             .frame(maxWidth: maxWidth, alignment: message.outgoing ? .trailing : .leading)
     }
@@ -392,6 +393,7 @@ struct MessageActionsOverlay: View {
         .padding(.vertical, 8)
         .frame(width: width, height: expandedHeight)
         .glassSurface(cornerRadius: 24)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
     }
 
@@ -460,6 +462,9 @@ struct MessageActionsOverlay: View {
             Label(AppText.tr("Свернуть", "Collapse"), systemImage: "chevron.up")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 24)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

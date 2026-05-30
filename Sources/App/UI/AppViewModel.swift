@@ -546,7 +546,12 @@ final class AppViewModel: ObservableObject {
     func reloadChatFolders(force: Bool = false) async {
         guard let repository, authState == .ready else { return }
         do {
-            chatFolders = try await repository.loadChatFolders(force: force)
+            let loaded = try await repository.loadChatFolders(force: force)
+            // Avoid clearing already-visible folders when a non-forced reload
+            // momentarily returns nothing (e.g. cache invalidation race).
+            if !loaded.isEmpty || force {
+                chatFolders = loaded
+            }
         } catch {
             if chatFolders.isEmpty {
                 status = error.localizedDescription
@@ -1790,6 +1795,12 @@ final class AppViewModel: ObservableObject {
         repository.onChatsChanged = { [weak self] in
             Task { @MainActor in
                 self?.scheduleDebouncedChatListRefresh()
+            }
+        }
+
+        repository.onChatFoldersChanged = { [weak self] in
+            Task { @MainActor in
+                await self?.reloadChatFolders(force: true)
             }
         }
 

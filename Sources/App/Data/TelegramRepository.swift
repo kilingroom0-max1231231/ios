@@ -19,6 +19,7 @@ final class TelegramRepository {
     var onAuthStateChanged: ((AuthState) -> Void)?
     var onMessagesChanged: ((Int64) -> Void)?
     var onChatsChanged: (() -> Void)?
+    var onChatFoldersChanged: (() -> Void)?
     var onChatChanged: ((Int64) -> Void)?
     var onTypingChanged: ((ChatTypingUpdate) -> Void)?
     var onIncomingMessage: ((TgMessage) -> Void)?
@@ -60,6 +61,8 @@ final class TelegramRepository {
                 self.onChatChanged?(chatId)
             case .chatsChanged:
                 self.onChatsChanged?()
+            case .chatFoldersChanged:
+                self.onChatFoldersChanged?()
             case .chatChanged(let chatId):
                 self.onChatChanged?(chatId)
             case .chatTypingChanged(let chatId, let userId, let actionKey):

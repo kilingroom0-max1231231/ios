@@ -348,6 +348,18 @@ final class AppAppearanceStore: ObservableObject {
 
     var accentColor: Color { accentStyle.color }
 
+    /// Changes whenever any palette-affecting setting changes. Use as a view `.id`
+    /// so the whole tree rebuilds and picks up new `AppColors` values immediately.
+    var paletteFingerprint: String {
+        [
+            accentStyle.rawValue,
+            bubbleStyle.rawValue,
+            chatListStyle.rawValue,
+            chatStyle.rawValue,
+            colorSchemePreference.rawValue
+        ].joined(separator: "|")
+    }
+
     func chatListColor(colorScheme: ColorScheme) -> Color {
         chatListStyle.color(colorScheme)
     }

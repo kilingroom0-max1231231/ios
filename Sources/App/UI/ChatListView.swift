@@ -10,8 +10,6 @@ struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
     @EnvironmentObject private var appSettings: AppSettingsStore
     var mode: Mode = .main
-    @State private var searchVisible = false
-    @FocusState private var searchFocused: Bool
     @State private var navigationPath = NavigationPath()
     @State private var showNewConversation = false
 
@@ -67,15 +65,16 @@ struct ChatListView: View {
             ChatDetailView(vm: vm, chatId: chatId)
         }
         .transparentNavigationBar()
+        .navigationTitle(isArchiveMode ? AppText.tr("Архив", "Archived") : AppText.tr("Чаты", "Chats"))
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $vm.chatSearch,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: AppText.tr("Поиск", "Search")
+        )
         .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                if !isArchiveMode, appSettings.showChatFolderTabs {
-                    ChatFolderTabsView(vm: vm)
-                }
-                if searchVisible || !vm.chatSearch.isEmpty {
-                    searchField
-                }
+            if !isArchiveMode, appSettings.showChatFolderTabs, !vm.chatFolders.isEmpty {
+                ChatFolderTabsView(vm: vm)
             }
         }
         .overlay {
@@ -107,24 +106,6 @@ struct ChatListView: View {
                     }
                     .accessibilityLabel(AppText.tr("Настройки папки", "Folder settings"))
                 }
-            }
-
-            ToolbarItem(placement: .principal) {
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                        searchVisible.toggle()
-                    }
-                    if searchVisible {
-                        searchFocused = true
-                    } else {
-                        searchFocused = false
-                    }
-                } label: {
-                    Text(isArchiveMode ? AppText.tr("Архив", "Archived") : AppText.tr("Чаты", "Chats"))
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                }
-                .buttonStyle(.plain)
             }
 
             if !isArchiveMode {
@@ -404,35 +385,6 @@ struct ChatListView: View {
         default:
             return AppText.tr("Удалить", "Delete")
         }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-
-            TextField(AppText.tr("Поиск", "Search"), text: $vm.chatSearch)
-                .focused($searchFocused)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            if !vm.chatSearch.isEmpty {
-                Button {
-                    vm.chatSearch = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .frame(maxWidth: 360)
-        .glassContainer(cornerRadius: 18)
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder

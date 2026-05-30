@@ -50,7 +50,7 @@ struct AppShellView: View {
                             Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
                         }
                     }
-                    .id(language.preferredLanguage)
+                    .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)")
                     .tint(appearance.accentColor)
                     .animation(.spring(response: 0.3, dampingFraction: 0.88), value: vm.mainTabIndex)
 

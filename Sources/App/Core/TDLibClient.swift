@@ -1873,28 +1873,25 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
             "chat_id": chatId
         ])
         let maxReadStoryId = int64Value(response["max_read_story_id"]) ?? 0
-        let stories = response["stories"] as? [[String: Any]] ?? []
+        // TDLib nests the active stories either at the root or under `active_stories`.
+        let active = (response["active_stories"] as? [String: Any]) ?? response
+        let stories = (active["stories"] as? [[String: Any]])
+            ?? (response["stories"] as? [[String: Any]])
+            ?? []
 
-        return await withTaskGroup(of: TgStoryItem?.self) { group in
-            for story in stories {
-                group.addTask { [weak self] in
-                    guard let self else { return nil }
-                    return await self.buildStoryItem(
-                        summary: story,
-                        chatId: chatId,
-                        maxReadStoryId: maxReadStoryId
-                    )
-                }
+        // Sequential to stay consistent with the serialized TDLib request model
+        // (concurrent getStory calls were a source of crashes).
+        var items: [TgStoryItem] = []
+        for story in stories {
+            if let item = await buildStoryItem(
+                summary: story,
+                chatId: chatId,
+                maxReadStoryId: maxReadStoryId
+            ) {
+                items.append(item)
             }
-
-            var items: [TgStoryItem] = []
-            for await item in group {
-                if let item {
-                    items.append(item)
-                }
-            }
-            return items.sorted { $0.date < $1.date }
         }
+        return items.sorted { $0.date < $1.date }
     }
 
     private func buildStoryItem(
@@ -1903,7 +1900,8 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         maxReadStoryId: Int64
     ) async -> TgStoryItem? {
         guard let storyId = int64Value(summary["story_id"]) ?? int64Value(summary["id"]) else { return nil }
-        let dateUnix = (summary["send_date"] as? Double)
+        let dateUnix = (summary["posted_date"] as? Double)
+            ?? (summary["send_date"] as? Double)
             ?? (summary["date"] as? Double)
             ?? Date().timeIntervalSince1970
         let isViewed = maxReadStoryId > 0 && storyId <= maxReadStoryId
@@ -1912,13 +1910,23 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         var isVideo = false
         var caption = ""
 
-        guard let full = try? await sendRequest([
+        // TDLib renamed the parameter from `story_sender_chat_id` to
+        // `story_poster_chat_id`; try the newer name, then fall back to the older one.
+        var full = try? await sendRequest([
             "@type": "getStory",
-            "story_sender_chat_id": chatId,
             "story_poster_chat_id": chatId,
             "story_id": storyId,
             "only_local": false
-        ]) else {
+        ])
+        if full == nil {
+            full = try? await sendRequest([
+                "@type": "getStory",
+                "story_sender_chat_id": chatId,
+                "story_id": storyId,
+                "only_local": false
+            ])
+        }
+        guard let full else {
             return TgStoryItem(
                 id: storyId,
                 chatId: chatId,
@@ -2357,17 +2365,21 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         if type == "updateChatFolders" {
             Task {
-                let folders: [TgChatFolder]
+                var folders: [TgChatFolder] = []
                 if let infos = obj["chat_folders"] as? [[String: Any]] {
                     folders = await self.loadChatFoldersFromInfos(infos)
                 } else if let raw = obj["chat_folders"] as? [String: Any] {
                     folders = (try? await self.resolveChatFolders(from: raw)) ?? []
-                } else {
-                    folders = []
+                }
+                // The update payload may be partial or in an unexpected shape; fall back to
+                // an authoritative fetch so existing folders never silently disappear.
+                if folders.isEmpty {
+                    folders = (try? await self.fetchChatFolders(forceRefresh: true)) ?? []
                 }
                 self.syncQueue.async {
                     self.cachedChatFolders = folders
                 }
+                self.eventHandler?(.chatFoldersChanged)
                 self.eventHandler?(.chatsChanged)
             }
             return

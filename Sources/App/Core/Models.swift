@@ -653,6 +653,7 @@ enum TelegramEvent {
     case messageReplaced(chatId: Int64, oldMessageId: Int64, newMessage: TgMessage)
     case messagesDeleted(chatId: Int64, messageIds: [Int64])
     case chatsChanged
+    case chatFoldersChanged
     case chatChanged(Int64)
     case chatTypingChanged(chatId: Int64, userId: Int64?, actionKey: String?)
     case messageInteractionUpdated(chatId: Int64, messageId: Int64, reactions: [TgMessageReaction], viewCount: Int?)

@@ -58,12 +58,23 @@ struct StickerMediaView: View {
 
     @ViewBuilder
     private var staticPreviewContent: some View {
+        // Dense grids must stay cheap: prefer a raster thumbnail and only decode the
+        // (expensive) TGS/Lottie when no static image is available.
+        if let staticRasterPath {
+            CachedLocalImage(path: staticRasterPath, contentMode: .fit) {
+                tgsStaticFallback
+            }
+        } else {
+            tgsStaticFallback
+        }
+    }
+
+    @ViewBuilder
+    private var tgsStaticFallback: some View {
         if let tgsPath {
             LottieStickerView(tgsPath: tgsPath, maxSide: maxSide ?? 96, isPlaying: false)
         } else {
-            CachedLocalImage(path: staticRasterPath, contentMode: .fit) {
-                loadingPlaceholder
-            }
+            loadingPlaceholder
         }
     }
 
