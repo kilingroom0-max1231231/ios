@@ -66,12 +66,22 @@ struct ChatDetailView: View {
         if let typing = AppText.typingStatus(selectedChat?.typingText) {
             return typing
         }
-        return selectedChat?.statusText ?? AppText.tr("был(а) недавно", "last seen recently")
+        if let status = selectedChat?.statusText, !status.isEmpty {
+            return status
+        }
+        switch selectedChat?.kind {
+        case .channel:
+            return AppText.tr("канал", "channel")
+        case .supergroup, .basicGroup:
+            return AppText.tr("группа", "group")
+        default:
+            return AppText.tr("был(а) недавно", "last seen recently")
+        }
     }
 
     private var subtitleColor: Color {
         if isPeerTyping { return .green }
-        if selectedChat?.isOnline == true { return .green }
+        if selectedChat?.kind == .private, selectedChat?.isOnline == true { return .green }
         return .secondary
     }
 

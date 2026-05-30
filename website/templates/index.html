@@ -1,0 +1,241 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<!-- HERO -->
+<section class="relative mx-auto max-w-6xl px-5 pt-36 pb-20 md:pt-44">
+    <div class="grid items-center gap-12 lg:grid-cols-2">
+        <div class="reveal">
+            <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-brand-200 backdrop-blur">
+                <span class="h-2 w-2 rounded-full bg-brand-400 animate-pulse"></span>
+                <span data-i18n="hero_badge">Дизайн iOS 26 · Liquid Glass</span>
+            </span>
+
+            <h1 class="mt-6 text-5xl font-black leading-[1.05] tracking-tight md:text-6xl">
+                <span data-i18n="hero_title_1">Твой Telegram.</span><br />
+                <span class="bg-gradient-to-r from-brand-300 via-cyan-300 to-brand-500 bg-clip-text text-transparent" data-i18n="hero_title_2">Только красивее.</span>
+            </h1>
+
+            <p class="mt-6 max-w-lg text-lg text-slate-300" data-i18n="hero_sub">
+                Неофициальный клиент Telegram для iOS — стеклянный интерфейс, реакции, папки чатов
+                и молниеносная скорость даже на огромных аккаунтах.
+            </p>
+
+            <div class="mt-8 flex flex-wrap items-center gap-4">
+                <a href="#download" class="group rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 px-6 py-3.5 font-semibold text-white shadow-xl shadow-brand-600/30 transition hover:brightness-110">
+                    <span data-i18n="hero_cta">Скачать для iOS</span>
+                    <span class="ml-1 inline-block transition group-hover:translate-x-1">→</span>
+                </a>
+                <a href="#features" class="rounded-2xl border border-white/10 bg-white/5 px-6 py-3.5 font-semibold text-slate-100 backdrop-blur transition hover:bg-white/10" data-i18n="hero_cta2">
+                    Узнать больше
+                </a>
+            </div>
+
+            <div class="mt-10 flex items-center gap-8 text-sm text-slate-400">
+                <div><span class="block text-2xl font-bold text-white">100%</span><span data-i18n="stat_native">нативный SwiftUI</span></div>
+                <div class="h-8 w-px bg-white/10"></div>
+                <div><span class="block text-2xl font-bold text-white">TDLib</span><span data-i18n="stat_engine">официальный движок</span></div>
+                <div class="h-8 w-px bg-white/10"></div>
+                <div><span class="block text-2xl font-bold text-white">0₽</span><span data-i18n="stat_price">бесплатно</span></div>
+            </div>
+        </div>
+
+        <!-- phone mockup -->
+        <div class="reveal relative mx-auto w-full max-w-xs">
+            <div class="absolute inset-0 -z-10 scale-110 rounded-[3rem] bg-gradient-to-br from-brand-500/40 to-cyan-400/20 blur-2xl"></div>
+            <div class="relative rounded-[2.8rem] border border-white/10 bg-slate-900/80 p-3 shadow-2xl backdrop-blur-xl">
+                <div class="overflow-hidden rounded-[2.2rem] border border-white/5 bg-gradient-to-b from-slate-950 to-ink">
+                    <!-- status bar -->
+                    <div class="flex items-center justify-between px-6 pt-4 text-[11px] font-semibold text-slate-300">
+                        <span>9:41</span>
+                        <span class="flex items-center gap-1.5 text-slate-300">
+                            <svg class="h-3 w-3.5" fill="currentColor" viewBox="0 0 24 24"><rect x="1" y="15" width="3.2" height="6" rx="1"/><rect x="7" y="11" width="3.2" height="10" rx="1"/><rect x="13" y="7" width="3.2" height="14" rx="1"/><rect x="19" y="3" width="3.2" height="18" rx="1" opacity="0.45"/></svg>
+                            <svg class="h-3 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path stroke-linecap="round" d="M3 9.5a13 13 0 0 1 18 0M6 13a8 8 0 0 1 12 0"/><circle cx="12" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg>
+                            <svg class="h-3 w-5" fill="none" stroke="currentColor" stroke-width="1.4" viewBox="0 0 26 14"><rect x="1" y="1.5" width="20" height="11" rx="3"/><rect x="3" y="3.5" width="13" height="7" rx="1.5" fill="currentColor"/><path d="M23.5 5v4" stroke-linecap="round"/></svg>
+                        </span>
+                    </div>
+                    <!-- header -->
+                    <div class="mt-2 flex items-center gap-3 border-b border-white/5 px-5 pb-3">
+                        <div class="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-400 to-cyan-400 text-sm font-bold text-white">M</div>
+                        <div>
+                            <div class="text-sm font-semibold">Mase Chat</div>
+                            <div class="text-[10px] text-brand-300">в сети</div>
+                        </div>
+                    </div>
+                    <!-- messages -->
+                    <div class="space-y-3 px-4 py-5">
+                        <div class="flex">
+                            <div class="max-w-[78%] rounded-2xl rounded-bl-md bg-white/8 px-3.5 py-2 text-sm backdrop-blur">Видел новый клиент? Интерфейс — огонь</div>
+                        </div>
+                        <div class="flex justify-end">
+                            <div class="max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-br from-brand-500 to-brand-600 px-3.5 py-2 text-sm shadow-lg shadow-brand-600/30">Да, всё на стекле и летает</div>
+                        </div>
+                        <div class="flex flex-col items-start">
+                            <div class="max-w-[78%] rounded-2xl rounded-bl-md bg-white/8 px-3.5 py-2 text-sm backdrop-blur">И реакции работают как надо</div>
+                            <div class="mt-1.5 flex gap-1.5">
+                                <span class="inline-flex items-center gap-1 rounded-full bg-brand-500/20 px-2 py-0.5 text-[11px] font-medium text-brand-200">
+                                    <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-10-9.3C.6 8.9 2 5.5 5.2 5c1.9-.3 3.6.7 4.8 2.1C11.2 5.7 12.9 4.7 14.8 5 18 5.5 19.4 8.9 18 11.7 15.5 16.4 12 21 12 21z"/></svg> 12
+                                </span>
+                                <span class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-slate-200">
+                                    <svg class="h-3 w-3 text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2c1.5 3 1 5-1 6.5C8.5 10.5 8 13 9 15c-2-.5-3.5-2.5-3.5-5C4 11.5 3.5 14 4 16.5 4.7 20 7.8 22 12 22c4.4 0 7.5-2.8 7.5-7 0-4.5-3-7-4.5-9 .2 2.2-.8 3.6-2 4-.2-3-1-5-1-8z"/></svg> 8
+                                </span>
+                            </div>
+                        </div>
+                        <div class="flex justify-end">
+                            <div class="max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-br from-brand-500 to-brand-600 px-3.5 py-2 text-sm shadow-lg shadow-brand-600/30">Уже качаю, спасибо</div>
+                        </div>
+                    </div>
+                    <!-- input -->
+                    <div class="flex items-center gap-2 border-t border-white/5 px-4 py-3">
+                        <div class="flex-1 rounded-full bg-white/8 px-4 py-2 text-xs text-slate-400 backdrop-blur">Сообщение…</div>
+                        <div class="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-white">
+                            <svg class="h-4 w-4 -translate-x-px" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" class="mx-auto max-w-6xl px-5 py-20">
+    <div class="reveal mx-auto max-w-2xl text-center">
+        <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl" data-i18n="features_title">Всё, что нужно. Ничего лишнего.</h2>
+        <p class="mt-4 text-slate-400" data-i18n="features_sub">Каждая деталь воссоздана по образу официального клиента — и доведена до блеска.</p>
+    </div>
+
+    <div class="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {% for f in features %}
+        <div class="reveal group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl transition hover:border-brand-400/40 hover:bg-white/[0.07]">
+            <div class="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-brand-500/20 blur-2xl opacity-0 transition group-hover:opacity-100"></div>
+            <div class="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-brand-200 ring-1 ring-white/10">
+                {% include 'partials/icons.html' %}
+            </div>
+            <h3 class="mt-5 text-lg font-bold" data-i18n="feature_{{ loop.index }}_title">{{ f.title.ru }}</h3>
+            <p class="mt-2 text-sm leading-relaxed text-slate-400" data-i18n="feature_{{ loop.index }}_desc">{{ f.desc.ru }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- PREVIEW -->
+<section id="preview" class="mx-auto max-w-6xl px-5 py-20">
+    <div class="reveal overflow-hidden rounded-[2.5rem] border border-white/10 bg-gradient-to-br from-brand-600/15 via-slate-900/40 to-cyan-500/10 p-8 backdrop-blur-xl md:p-14">
+        <div class="grid items-center gap-10 md:grid-cols-2">
+            <div>
+                <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl" data-i18n="preview_title">Интерфейс, который ощущается родным</h2>
+                <p class="mt-4 text-slate-300" data-i18n="preview_sub">
+                    Стеклянные панели, живые меню реакций по долгому тапу, плавные переходы и тёмная тема —
+                    всё в духе iOS 26.
+                </p>
+                <ul class="mt-6 space-y-3 text-sm">
+                    {% set bullets = [
+                        ('preview_b1','Папки чатов с вкладками'),
+                        ('preview_b2','Кастомные премиум-эмодзи и реакции'),
+                        ('preview_b3','Истории, видео-кружки и медиа'),
+                        ('preview_b4','Кликабельные ссылки и @упоминания')
+                    ] %}
+                    {% for key, text in bullets %}
+                    <li class="flex items-center gap-3 text-slate-200">
+                        <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-500/20 text-brand-300">
+                            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m5 12 5 5 9-11"/></svg>
+                        </span>
+                        <span data-i18n="{{ key }}">{{ text }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="space-y-4">
+                    <div class="group rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur transition hover:border-brand-400/40">
+                        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-brand-200 ring-1 ring-white/10">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-5.2A8 8 0 1 1 21 12z"/></svg>
+                        </div>
+                        <div class="mt-3 text-sm font-semibold" data-i18n="card_chats">Чаты</div>
+                        <div class="text-xs text-slate-400" data-i18n="card_chats_sub">мгновенный поиск</div>
+                    </div>
+                    <div class="group rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur transition hover:border-brand-400/40">
+                        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-brand-200 ring-1 ring-white/10">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 20s-7-4.3-9.3-8.5C1.3 8.7 2.7 5.6 5.7 5.2c1.9-.3 3.5.8 4.6 2.2 1.1-1.4 2.7-2.5 4.6-2.2 3 .4 4.4 3.5 3 6.3C19 15.7 12 20 12 20z"/></svg>
+                        </div>
+                        <div class="mt-3 text-sm font-semibold" data-i18n="card_reactions">Реакции</div>
+                        <div class="text-xs text-slate-400" data-i18n="card_reactions_sub">долгий тап</div>
+                    </div>
+                </div>
+                <div class="mt-6 space-y-4">
+                    <div class="group rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur transition hover:border-brand-400/40">
+                        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-brand-200 ring-1 ring-white/10">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                        </div>
+                        <div class="mt-3 text-sm font-semibold" data-i18n="card_folders">Папки</div>
+                        <div class="text-xs text-slate-400" data-i18n="card_folders_sub">с вкладками</div>
+                    </div>
+                    <div class="group rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur transition hover:border-brand-400/40">
+                        <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-400/20 to-brand-600/20 text-brand-200 ring-1 ring-white/10">
+                            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 3 4 14h7l-1 7 9-11h-7z"/></svg>
+                        </div>
+                        <div class="mt-3 text-sm font-semibold" data-i18n="card_speed">Скорость</div>
+                        <div class="text-xs text-slate-400" data-i18n="card_speed_sub">без лагов</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section id="download" class="mx-auto max-w-6xl px-5 py-20">
+    <div class="reveal relative overflow-hidden rounded-[2.5rem] border border-white/10 bg-white/5 p-10 text-center backdrop-blur-xl md:p-16">
+        <div class="absolute inset-x-0 -top-24 -z-10 mx-auto h-48 w-2/3 rounded-full bg-brand-500/30 blur-3xl"></div>
+        <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl" data-i18n="dl_title">Установи за пару минут</h2>
+        <p class="mx-auto mt-4 max-w-xl text-slate-300" data-i18n="dl_sub">
+            Клиент распространяется как IPA для сайдлоадинга через AltStore или SideStore.
+        </p>
+
+        <div class="mx-auto mt-10 grid max-w-3xl gap-4 sm:grid-cols-3 text-left">
+            {% set steps = [
+                ('1','dl_s1','Установи AltStore','Поставь AltStore / SideStore на iPhone и Mac/PC.'),
+                ('2','dl_s2','Скачай IPA','Загрузи последнюю сборку из релизов на GitHub.'),
+                ('3','dl_s3','Открой через AltStore','Поставь IPA и войди в свой аккаунт Telegram.')
+            ] %}
+            {% for num, key, title, text in steps %}
+            <div class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur">
+                <div class="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold">{{ num }}</div>
+                <div class="mt-3 font-semibold" data-i18n="{{ key }}_t">{{ title }}</div>
+                <div class="mt-1 text-sm text-slate-400" data-i18n="{{ key }}_d">{{ text }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="mt-10 flex flex-wrap justify-center gap-4">
+            <a href="#" class="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 px-7 py-3.5 font-semibold text-white shadow-xl shadow-brand-600/30 transition hover:brightness-110">
+                <svg class="h-4.5 w-4.5" style="height:1.15rem;width:1.15rem" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16"/></svg>
+                <span data-i18n="dl_btn">Скачать IPA</span>
+            </a>
+            <a href="https://altstore.io" target="_blank" rel="noopener" class="rounded-2xl border border-white/10 bg-white/5 px-7 py-3.5 font-semibold backdrop-blur transition hover:bg-white/10" data-i18n="dl_altstore">
+                Что такое AltStore?
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="mx-auto max-w-3xl px-5 py-20">
+    <div class="reveal text-center">
+        <h2 class="text-3xl font-extrabold tracking-tight md:text-4xl" data-i18n="faq_title">Частые вопросы</h2>
+    </div>
+    <div class="mt-10 space-y-3">
+        {% for item in faq %}
+        <div class="reveal overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur">
+            <button class="faq-q flex w-full items-center justify-between gap-4 px-5 py-4 text-left font-semibold transition hover:bg-white/5">
+                <span data-i18n="faq_{{ loop.index }}_q">{{ item.q.ru }}</span>
+                <span class="faq-icon shrink-0 text-brand-300 transition">+</span>
+            </button>
+            <div class="faq-a max-h-0 overflow-hidden px-5 text-sm text-slate-400 transition-all duration-300">
+                <p class="pb-4" data-i18n="faq_{{ loop.index }}_a">{{ item.a.ru }}</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

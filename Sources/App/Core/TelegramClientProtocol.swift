@@ -10,6 +10,7 @@ protocol TelegramClientProtocol {
 
     func fetchChats(list: TgChatListKind, limit: Int) async throws -> [TgChat]
     func fetchChat(chatId: Int64, listKind: TgChatListKind) async throws -> TgChat?
+    func fetchChatDetails(chatId: Int64, listKind: TgChatListKind) async throws -> TgChat?
     func fetchChatFolders(forceRefresh: Bool) async throws -> [TgChatFolder]
     func fetchChatFolderIncludedChatIds(folderId: Int32) async throws -> [Int64]
     func renameChatFolder(folderId: Int32, title: String) async throws
@@ -78,6 +79,7 @@ protocol TelegramClientProtocol {
     func importDeviceContacts(_ entries: [(phone: String, firstName: String, lastName: String)]) async throws -> Int
     func enrichChatsWithAvatarPaths(_ chats: [TgChat]) async throws -> [TgChat]
     func enrichChatsWithPremiumBadges(_ chats: [TgChat]) async throws -> [TgChat]
+    func enrichChatsWithMemberStatus(_ chats: [TgChat]) async throws -> [TgChat]
     func registerPushDevice(token: Data, sandbox: Bool) async throws
     func processPushNotification() async
 }

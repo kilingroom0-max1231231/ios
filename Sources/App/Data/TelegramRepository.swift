@@ -120,6 +120,10 @@ final class TelegramRepository {
         try await client.fetchChat(chatId: chatId, listKind: listKind)
     }
 
+    func loadChatDetails(chatId: Int64, listKind: TgChatListKind) async throws -> TgChat? {
+        try await client.fetchChatDetails(chatId: chatId, listKind: listKind)
+    }
+
     func loadArchivedChats(limit: Int = 80) async throws -> [TgChat] {
         try await loadChats(list: .archive, limit: limit)
     }
@@ -158,6 +162,12 @@ final class TelegramRepository {
 
     func enrichChatAvatars(_ chats: [TgChat]) async throws -> [TgChat] {
         let enriched = try await client.enrichChatsWithAvatarPaths(chats)
+        try? chatStore.write(chats: enriched)
+        return enriched
+    }
+
+    func enrichChatMemberStatus(_ chats: [TgChat]) async throws -> [TgChat] {
+        let enriched = try await client.enrichChatsWithMemberStatus(chats)
         try? chatStore.write(chats: enriched)
         return enriched
     }

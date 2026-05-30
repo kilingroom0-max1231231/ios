@@ -147,6 +147,7 @@ final class AppViewModel: ObservableObject {
     var selectedChat: TgChat? {
         guard let selectedChatId else { return nil }
         return chats.first(where: { $0.id == selectedChatId })
+            ?? archivedChats.first(where: { $0.id == selectedChatId })
     }
 
     var accountList: [AccountSession] {
@@ -411,6 +412,7 @@ final class AppViewModel: ObservableObject {
             status = ""
             chatListInitialLoadComplete = true
             scheduleChatAvatarRefresh()
+            scheduleChatMemberStatusRefresh()
             scheduleArchiveSummaryRefresh()
         } catch {
             if chats.isEmpty {
@@ -428,6 +430,7 @@ final class AppViewModel: ObservableObject {
             archiveSummary = Self.makeArchiveSummary(from: archivedChats)
             archiveFullyLoaded = true
             scheduleChatAvatarRefresh()
+            scheduleChatMemberStatusRefresh()
         } catch {
             status = error.localizedDescription
         }
@@ -541,6 +544,7 @@ final class AppViewModel: ObservableObject {
         if !updated.peerIsPremium {
             updated.peerIsPremium = previous?.peerIsPremium ?? false
         }
+        preserveMemberStatus(from: previous, into: &updated)
         return updated
     }
 
@@ -620,6 +624,51 @@ final class AppViewModel: ObservableObject {
     }
 
     private var chatAvatarRefreshTask: Task<Void, Never>?
+    private var chatMemberStatusRefreshTask: Task<Void, Never>?
+
+    private func scheduleChatMemberStatusRefresh() {
+        chatMemberStatusRefreshTask?.cancel()
+        chatMemberStatusRefreshTask = Task { @MainActor [weak self] in
+            guard let self, let repository = self.repository else { return }
+            let snapshot = self.chats + self.archivedChats
+            let needsRefresh = snapshot.contains { TDLibClient.needsMemberStatusEnrichment($0) }
+            guard needsRefresh else { return }
+            guard let enriched = try? await repository.enrichChatMemberStatus(snapshot) else { return }
+            guard !Task.isCancelled else { return }
+            self.applyEnrichedMemberStatus(enriched)
+        }
+    }
+
+    private func applyEnrichedMemberStatus(_ enriched: [TgChat]) {
+        let byId = Dictionary(uniqueKeysWithValues: enriched.map { ($0.id, $0) })
+        chats = chats.map { chat in
+            mergeMemberStatus(from: byId[chat.id], into: chat)
+        }
+        archivedChats = archivedChats.map { chat in
+            mergeMemberStatus(from: byId[chat.id], into: chat)
+        }
+    }
+
+    private func mergeMemberStatus(from updated: TgChat?, into chat: TgChat) -> TgChat {
+        guard let updated else { return chat }
+        guard TDLibClient.memberStatusLooksComplete(updated.statusText) else { return chat }
+        var merged = chat
+        merged.statusText = updated.statusText
+        merged.isOnline = updated.isOnline
+        merged.kind = updated.kind
+        return merged
+    }
+
+    private func preserveMemberStatus(from previous: TgChat?, into chat: inout TgChat) {
+        guard let previous else { return }
+        guard TDLibClient.memberStatusLooksComplete(previous.statusText),
+              !TDLibClient.memberStatusLooksComplete(chat.statusText) else { return }
+        chat.statusText = previous.statusText
+        chat.isOnline = previous.isOnline ?? chat.isOnline
+        if previous.kind == .channel || chat.kind == .supergroup {
+            chat.kind = previous.kind
+        }
+    }
 
     private func scheduleChatAvatarRefresh() {
         chatAvatarRefreshTask?.cancel()
@@ -655,6 +704,7 @@ final class AppViewModel: ObservableObject {
                 updated.avatarPath = previousPath
             }
             updated.typingText = typingByChat[chat.id] ?? previousById[chat.id]?.typingText
+            preserveMemberStatus(from: previousById[chat.id], into: &updated)
             return updated
         }
     }
@@ -679,6 +729,7 @@ final class AppViewModel: ObservableObject {
             selectedChatPeerIsBot = false
         }
         selectedChatId = chatId
+        await refreshSelectedChatSummary(chatId: chatId)
         await refreshChatSendPermissions(chatId: chatId)
         await loadMessagesFromCache(chatId: chatId)
         await refreshMessages(force: true)
@@ -705,6 +756,21 @@ final class AppViewModel: ObservableObject {
             await refreshChats()
         } catch {
             status = error.localizedDescription
+        }
+    }
+
+    private func refreshSelectedChatSummary(chatId: Int64) async {
+        guard let repository else { return }
+        guard let updated = try? await repository.loadChatDetails(chatId: chatId, listKind: mainListKind) else { return }
+        guard selectedChatId == chatId else { return }
+        updateLocalChat(chatId) { chat in
+            chat.statusText = updated.statusText
+            chat.isOnline = updated.isOnline
+            chat.kind = updated.kind
+            chat.peerUsername = updated.peerUsername ?? chat.peerUsername
+            chat.peerIsPremium = updated.peerIsPremium
+            chat.isBlockedByMe = updated.isBlockedByMe
+            chat.isBlockedByPeer = updated.isBlockedByPeer
         }
     }
 

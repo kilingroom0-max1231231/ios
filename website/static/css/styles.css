@@ -1,0 +1,70 @@
+/* Custom layer on top of Tailwind CDN */
+
+:root {
+    color-scheme: dark;
+}
+
+html {
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Scroll reveal */
+.reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+                transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity, transform;
+}
+.reveal.is-visible {
+    opacity: 1;
+    transform: none;
+}
+
+/* Nav shrink on scroll */
+#nav.scrolled nav {
+    padding-top: 0.6rem;
+    padding-bottom: 0.6rem;
+}
+#nav.scrolled {
+    background: rgba(7, 11, 20, 0.72);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* FAQ accordion */
+.faq-a.open {
+    max-height: 320px;
+}
+.faq-icon.open {
+    transform: rotate(45deg);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 10px;
+}
+::-webkit-scrollbar-track {
+    background: #070b14;
+}
+::-webkit-scrollbar-thumb {
+    background: #1f2b45;
+    border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #2a7fff;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .reveal {
+        opacity: 1;
+        transform: none;
+        transition: none;
+    }
+    .animate-float-slow,
+    .animate-float-slower {
+        animation: none;
+    }
+}

@@ -167,6 +167,15 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         return try await parseChatSummary(chatResp, listKind: listKind, mode: .list)
     }
 
+    /// Full chat summary with member counts, online status and permissions.
+    func fetchChatDetails(chatId: Int64, listKind: TgChatListKind = .main) async throws -> TgChat? {
+        let chatResp = try await sendRequest([
+            "@type": "getChat",
+            "chat_id": chatId
+        ])
+        return try await parseChatSummary(chatResp, listKind: listKind, mode: .full)
+    }
+
     func fetchChatFolders(forceRefresh: Bool = false) async throws -> [TgChatFolder] {
         if !forceRefresh {
             let cached = syncQueue.sync { cachedChatFolders }
@@ -1212,6 +1221,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                 let members = (group["member_count"] as? Int) ?? (fullInfo?["members"] as? [Any])?.count
                 let desc = (fullInfo?["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let invite = (fullInfo?["invite_link"] as? [String: Any])?["invite_link"] as? String
+                let memberStatus = members.map { memberCountLabel($0, isChannel: false) }
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
@@ -1220,7 +1230,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     username: nil,
                     description: (desc?.isEmpty ?? true) ? nil : desc,
                     membersCount: members,
-                    statusText: nil,
+                    statusText: memberStatus,
                     inviteLink: invite
                 )
             }
@@ -1236,11 +1246,16 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     "supergroup_id": sgId
                 ])
                 let isChannel = (sg["is_channel"] as? Bool) ?? false
+                rememberSupergroup(sg, supergroupId: sgId)
                 let username = activeUsername(from: sg)
-                let members = (fullInfo?["member_count"] as? Int)
+                var members = (fullInfo?["member_count"] as? Int)
                     ?? (sg["member_count"] as? Int)
+                if (members ?? 0) <= 0, let fullInfo {
+                    members = memberCount(from: fullInfo)
+                }
                 let desc = (fullInfo?["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let invite = (fullInfo?["invite_link"] as? [String: Any])?["invite_link"] as? String
+                let memberStatus = members.map { memberCountLabel($0, isChannel: isChannel) }
                 return ChatProfile(
                     chatId: chatId,
                     title: title,
@@ -1249,7 +1264,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
                     username: username,
                     description: (desc?.isEmpty ?? true) ? nil : desc,
                     membersCount: members,
-                    statusText: nil,
+                    statusText: memberStatus,
                     inviteLink: invite
                 )
             }
@@ -3161,7 +3176,7 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
 
         if mode == .list {
             kind = quickChatKind(from: chat)
-            statusInfo = quickStatusInfo(for: kind)
+            statusInfo = quickStatusInfo(for: kind, chat: chat)
             sendInfo = (nil, nil)
             if kind == .private,
                let chatType = chat["type"] as? [String: Any],
@@ -3282,7 +3297,15 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         }
     }
 
-    private func quickStatusInfo(for kind: ChatKind) -> (text: String?, isOnline: Bool?) {
+    private func quickStatusInfo(for kind: ChatKind, chat: [String: Any]) -> (text: String?, isOnline: Bool?) {
+        if let type = chat["type"] as? [String: Any],
+           (type["@type"] as? String) == "chatTypeSupergroup",
+           let supergroupId = int64Value(type["supergroup_id"]),
+           let cached = supergroupCache[supergroupId],
+           cached.memberCount > 0 {
+            return (memberCountLabel(cached.memberCount, isChannel: cached.isChannel), false)
+        }
+
         switch kind {
         case .channel:
             return (AppText.tr("канал", "channel"), false)
@@ -3291,6 +3314,54 @@ final class TDLibClient: TelegramClientProtocol, @unchecked Sendable {
         default:
             return (nil, nil)
         }
+    }
+
+    func enrichChatsWithMemberStatus(_ chats: [TgChat]) async throws -> [TgChat] {
+        let targets = chats.filter(Self.needsMemberStatusEnrichment)
+        guard !targets.isEmpty else { return chats }
+
+        var updates: [Int64: (statusText: String?, isOnline: Bool?, kind: ChatKind)] = [:]
+        updates.reserveCapacity(targets.count)
+
+        for chat in targets {
+            guard let chatResp = try? await sendRequest([
+                "@type": "getChat",
+                "chat_id": chat.id
+            ]) else { continue }
+
+            let statusInfo = (try? await resolveChatStatusInfo(chatResp)) ?? (nil, nil)
+            let resolvedKind = (try? await resolveChatKind(chatResp)) ?? chat.kind
+            updates[chat.id] = (statusInfo.text, statusInfo.isOnline, resolvedKind)
+        }
+
+        return chats.map { chat in
+            guard let update = updates[chat.id] else { return chat }
+            var updated = chat
+            if let text = update.statusText, !text.isEmpty {
+                updated.statusText = text
+            }
+            if let isOnline = update.isOnline {
+                updated.isOnline = isOnline
+            }
+            updated.kind = update.kind
+            return updated
+        }
+    }
+
+    static func needsMemberStatusEnrichment(_ chat: TgChat) -> Bool {
+        switch chat.kind {
+        case .channel, .supergroup, .basicGroup:
+            return !memberStatusLooksComplete(chat.statusText)
+        default:
+            return false
+        }
+    }
+
+    static func memberStatusLooksComplete(_ status: String?) -> Bool {
+        guard let status = status?.trimmingCharacters(in: .whitespacesAndNewlines), !status.isEmpty else {
+            return false
+        }
+        return status.contains(where: \.isNumber)
     }
 
     private func rememberSupergroup(_ supergroup: [String: Any], supergroupId: Int64) {

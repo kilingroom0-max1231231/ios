@@ -426,7 +426,7 @@ private struct ChatCardView: View {
                     size: 52,
                     isSavedMessages: chat.kind == .savedMessages
                 )
-                if chat.kind != .savedMessages {
+                if chat.kind == .private {
                     Circle()
                         .fill((chat.isOnline ?? false) ? Color.green : Color.gray.opacity(0.75))
                         .frame(width: 12, height: 12)
@@ -504,7 +504,7 @@ private struct ChatCardView: View {
                 } else if let status = chat.statusText, !status.isEmpty, chat.kind != .savedMessages {
                     Text(status)
                         .font(.caption)
-                        .foregroundStyle((chat.isOnline ?? false) ? .green : .secondary)
+                        .foregroundStyle((chat.kind == .private && (chat.isOnline ?? false)) ? .green : .secondary)
                         .lineLimit(1)
                 }
             }

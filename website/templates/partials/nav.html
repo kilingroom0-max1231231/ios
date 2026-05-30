@@ -1,0 +1,39 @@
+<header id="nav" class="fixed inset-x-0 top-0 z-50 transition-all duration-300">
+    <nav class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
+        <a href="/" class="flex items-center gap-2.5 font-extrabold tracking-tight">
+            <span class="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-700 shadow-lg shadow-brand-600/30">
+                <svg class="h-4.5 w-4.5 -translate-x-px text-white" style="height:1.15rem;width:1.15rem" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+            </span>
+            <span class="text-lg">{{ app_name }}</span>
+        </a>
+
+        <div class="hidden items-center gap-8 text-sm font-medium text-slate-300 md:flex">
+            <a href="/#features" class="transition hover:text-white" data-i18n="nav_features">Возможности</a>
+            <a href="/#preview" class="transition hover:text-white" data-i18n="nav_preview">Интерфейс</a>
+            <a href="/#download" class="transition hover:text-white" data-i18n="nav_download">Установка</a>
+            <a href="/#faq" class="transition hover:text-white" data-i18n="nav_faq">FAQ</a>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button id="lang-toggle" class="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-200 backdrop-blur transition hover:bg-white/10">
+                EN
+            </button>
+            <a href="/#download" class="hidden rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-brand-600/30 transition hover:brightness-110 sm:inline-block" data-i18n="nav_cta">
+                Скачать
+            </a>
+            <button id="menu-btn" class="grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/5 md:hidden" aria-label="menu">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+        </div>
+    </nav>
+
+    <!-- mobile menu -->
+    <div id="mobile-menu" class="hidden border-t border-white/10 bg-ink/90 backdrop-blur-xl md:hidden">
+        <div class="mx-auto flex max-w-6xl flex-col gap-1 px-5 py-4 text-sm font-medium">
+            <a href="/#features" class="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-white/5" data-i18n="nav_features">Возможности</a>
+            <a href="/#preview" class="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-white/5" data-i18n="nav_preview">Интерфейс</a>
+            <a href="/#download" class="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-white/5" data-i18n="nav_download">Установка</a>
+            <a href="/#faq" class="rounded-lg px-3 py-2.5 text-slate-300 hover:bg-white/5" data-i18n="nav_faq">FAQ</a>
+        </div>
+    </div>
+</header>
