@@ -3,10 +3,9 @@ import UIKit
 
 struct ContactsListView: View {
     @ObservedObject var vm: AppViewModel
-    @State private var navigationPath = NavigationPath()
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
+        NavigationStack {
             Group {
                 switch vm.deviceContactsAuthorization {
                 case .denied, .restricted:
@@ -14,9 +13,6 @@ struct ContactsListView: View {
                 default:
                     contactsList
                 }
-            }
-            .navigationDestination(for: Int64.self) { chatId in
-                ChatDetailView(vm: vm, chatId: chatId)
             }
         }
         .task {
@@ -212,7 +208,7 @@ struct ContactsListView: View {
     private func contactRow(_ contact: TgContact) -> some View {
         Button {
             vm.prepareChatFromContact(contact)
-            navigationPath.append(contact.privateChatId)
+            Task { await vm.openChat(chatId: contact.privateChatId) }
         } label: {
             ContactCardView(
                 contact: contact,

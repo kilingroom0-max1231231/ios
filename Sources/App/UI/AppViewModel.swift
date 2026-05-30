@@ -850,17 +850,25 @@ final class AppViewModel: ObservableObject {
             selectedChatPeerIsBot = false
         }
         selectedChatId = chatId
-        await refreshSelectedChatSummary(chatId: chatId)
-        await refreshChatSendPermissions(chatId: chatId)
         await loadMessagesFromCache(chatId: chatId)
-        await refreshMessages(force: true)
-        if visibleChatId == chatId {
-            await markChatRead(chatId)
-        }
-        if let repository {
-            let isBot = (try? await repository.chatPeerIsBot(chatId: chatId)) ?? false
-            if selectedChatId == chatId {
-                selectedChatPeerIsBot = isBot
+
+        let shouldForceRefresh = messages.isEmpty
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self.refreshSelectedChatSummary(chatId: chatId) }
+                group.addTask { await self.refreshChatSendPermissions(chatId: chatId) }
+                group.addTask { await self.refreshMessages(force: shouldForceRefresh) }
+            }
+            guard self.selectedChatId == chatId else { return }
+            if self.visibleChatId == chatId {
+                await self.markChatRead(chatId)
+            }
+            if let repository = self.repository {
+                let isBot = (try? await repository.chatPeerIsBot(chatId: chatId)) ?? false
+                if self.selectedChatId == chatId {
+                    self.selectedChatPeerIsBot = isBot
+                }
             }
         }
     }
@@ -882,7 +890,11 @@ final class AppViewModel: ObservableObject {
 
     private func refreshSelectedChatSummary(chatId: Int64) async {
         guard let repository else { return }
-        guard let updated = try? await repository.loadChatDetails(chatId: chatId, listKind: mainListKind) else { return }
+        var listKind = mainListKind
+        if archivedChats.contains(where: { $0.id == chatId }) {
+            listKind = .archive
+        }
+        guard let updated = try? await repository.loadChatDetails(chatId: chatId, listKind: listKind) else { return }
         guard selectedChatId == chatId else { return }
         applyLoadedChatSummary(updated)
     }
@@ -1040,14 +1052,11 @@ final class AppViewModel: ObservableObject {
         selectMainTab(.chats)
         if selectedChatId != chatId {
             messages = []
+            selectedChatPeerIsBot = false
         }
         selectedChatId = chatId
         navigationTargetChatId = chatId
         await loadMessagesFromCache(chatId: chatId)
-        await refreshMessages(force: true)
-        if visibleChatId == chatId {
-            await markChatRead(chatId)
-        }
     }
 
     func loadProfilePhotoPaths(userId: Int64) async -> [String] {

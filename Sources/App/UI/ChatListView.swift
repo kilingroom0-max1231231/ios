@@ -1,6 +1,11 @@
 import SwiftUI
 import UIKit
 
+enum ChatListRoute: Hashable {
+    case archive
+    case chat(Int64)
+}
+
 struct ChatListView: View {
     enum Mode {
         case main
@@ -10,22 +15,40 @@ struct ChatListView: View {
     @ObservedObject var vm: AppViewModel
     @EnvironmentObject private var appSettings: AppSettingsStore
     var mode: Mode = .main
+    var externalNavigationPath: Binding<NavigationPath>?
     @State private var navigationPath = NavigationPath()
     @State private var showNewConversation = false
 
     private var isArchiveMode: Bool { mode == .archive }
     private var listKind: TgChatListKind { isArchiveMode ? .archive : vm.mainListKind }
 
+    private var activePath: Binding<NavigationPath> {
+        externalNavigationPath ?? $navigationPath
+    }
+
     var body: some View {
         if isArchiveMode {
             chatListContent
         } else {
-            NavigationStack(path: $navigationPath) {
+            NavigationStack(path: activePath) {
                 chatListContent
+                    .navigationDestination(for: ChatListRoute.self) { route in
+                        switch route {
+                        case .archive:
+                            ChatListView(
+                                vm: vm,
+                                mode: .archive,
+                                externalNavigationPath: activePath
+                            )
+                        case .chat(let chatId):
+                            ChatDetailView(vm: vm, chatId: chatId)
+                        }
+                    }
             }
             .onChange(of: vm.navigationTargetChatId) { target in
                 guard let target else { return }
-                navigationPath.append(target)
+                activePath.wrappedValue = NavigationPath()
+                activePath.wrappedValue.append(ChatListRoute.chat(target))
                 vm.navigationTargetChatId = nil
             }
         }
@@ -43,9 +66,7 @@ struct ChatListView: View {
             }
 
             if !isArchiveMode, let summary = vm.archiveSummary {
-                NavigationLink {
-                    ChatListView(vm: vm, mode: .archive)
-                } label: {
+                NavigationLink(value: ChatListRoute.archive) {
                     ArchiveChatRowView(summary: summary)
                 }
                 .buttonStyle(ChatRowPressStyle())
@@ -70,9 +91,6 @@ struct ChatListView: View {
         .scrollContentBackground(.hidden)
         .background(ChatListScreenBackground())
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: displayedChats)
-        .navigationDestination(for: Int64.self) { chatId in
-            ChatDetailView(vm: vm, chatId: chatId)
-        }
         .transparentNavigationBar()
         .navigationTitle(isArchiveMode ? AppText.tr("Архив", "Archived") : AppText.tr("Чаты", "Chats"))
         .navigationBarTitleDisplayMode(.inline)
@@ -173,7 +191,7 @@ struct ChatListView: View {
     }
 
     private func chatRow(_ chat: TgChat) -> some View {
-        NavigationLink(value: chat.id) {
+        NavigationLink(value: ChatListRoute.chat(chat.id)) {
             ChatCardView(
                 chat: chat,
                 vm: vm,
