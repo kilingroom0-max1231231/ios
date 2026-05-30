@@ -185,6 +185,14 @@ final class TelegramRepository {
         return enriched
     }
 
+    func enrichMessages(_ messages: [TgMessage]) async throws -> [TgMessage] {
+        let enriched = try await client.enrichMessages(messages)
+        if !enriched.isEmpty {
+            try store.upsert(messages: enriched)
+        }
+        return enriched
+    }
+
     func enrichChatMemberStatus(_ chats: [TgChat]) async throws -> [TgChat] {
         let enriched = try await client.enrichChatsWithMemberStatus(chats)
         try? chatStore.write(chats: enriched)
