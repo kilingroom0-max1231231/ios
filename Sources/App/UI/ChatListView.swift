@@ -89,6 +89,8 @@ struct ChatListView: View {
         .task {
             if isArchiveMode {
                 await vm.refreshArchivedChatsIfNeeded()
+            } else {
+                await vm.ensureChatFoldersVisible()
             }
         }
         .refreshable {

@@ -186,7 +186,7 @@ struct NewConversationView: View {
 
     private func finish(with chatId: Int64) {
         dismiss()
-        vm.mainTabIndex = 0
+        vm.selectMainTab(.chats)
         vm.navigationTargetChatId = chatId
         Task { await vm.refreshChats() }
     }

@@ -56,7 +56,6 @@ final class AppViewModel: ObservableObject {
     @Published var isBusy = false
     @Published var bootstrapError: String?
     @Published var navigationTargetChatId: Int64?
-    @Published var mainTabIndex = 0
     @Published var peekChatId: Int64?
     @Published var peekMessages: [TgMessage] = []
     @Published var isPeekLoading = false
@@ -602,6 +601,9 @@ final class AppViewModel: ObservableObject {
     func reloadChatFolders(force: Bool = false) async {
         guard let repository, authState == .ready else { return }
         let accountId = activeAccountId
+        let previous = !chatFolders.isEmpty
+            ? chatFolders
+            : (chatFoldersByAccount[accountId] ?? [])
         do {
             var loaded = try await repository.loadChatFolders(force: force)
             if loaded.isEmpty, force {
@@ -609,21 +611,50 @@ final class AppViewModel: ObservableObject {
                 loaded = (try? await repository.loadChatFolders(force: true)) ?? []
             }
             if !loaded.isEmpty {
-                chatFolders = loaded
-                chatFoldersByAccount[accountId] = loaded
+                assignChatFolders(loaded, accountId: accountId)
+            } else if !previous.isEmpty {
+                assignChatFolders(previous, accountId: accountId)
             } else if chatFolders.isEmpty,
                       let cached = chatFoldersByAccount[accountId],
                       !cached.isEmpty {
                 chatFolders = cached
             }
         } catch {
-            if chatFolders.isEmpty,
-               let cached = chatFoldersByAccount[accountId],
-               !cached.isEmpty {
+            if !previous.isEmpty {
+                assignChatFolders(previous, accountId: accountId)
+            } else if chatFolders.isEmpty,
+                      let cached = chatFoldersByAccount[accountId],
+                      !cached.isEmpty {
                 chatFolders = cached
             } else if chatFolders.isEmpty {
                 status = error.localizedDescription
             }
+        }
+    }
+
+    func ensureChatFoldersVisible() async {
+        let accountId = activeAccountId
+        if chatFolders.isEmpty,
+           let cached = chatFoldersByAccount[accountId],
+           !cached.isEmpty {
+            chatFolders = cached
+        }
+        if chatFolders.isEmpty {
+            await reloadChatFolders(force: false)
+        }
+    }
+
+    func selectMainTab(_ tab: MainTab) {
+        MainTabBarStore.shared.selectedTab = tab
+        if tab == .chats {
+            Task { await ensureChatFoldersVisible() }
+        }
+    }
+
+    private func assignChatFolders(_ folders: [TgChatFolder], accountId: String? = nil) {
+        chatFolders = folders
+        if !folders.isEmpty {
+            chatFoldersByAccount[accountId ?? activeAccountId] = folders
         }
     }
 
@@ -1006,7 +1037,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func openChat(chatId: Int64) async {
-        mainTabIndex = 0
+        selectMainTab(.chats)
         if selectedChatId != chatId {
             messages = []
         }
@@ -2053,7 +2084,7 @@ final class AppViewModel: ObservableObject {
 
         repository.onChatFoldersChanged = { [weak self] in
             Task { @MainActor in
-                await self?.reloadChatFolders(force: true)
+                await self?.reloadChatFolders(force: false)
             }
         }
 

@@ -115,7 +115,7 @@ struct SettingsView: View {
                 }
 
                 Button {
-                    vm.mainTabIndex = 1
+                    vm.selectMainTab(.contacts)
                 } label: {
                     settingsLinkLabel(
                         icon: "person.2.fill",

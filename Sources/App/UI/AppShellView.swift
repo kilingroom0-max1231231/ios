@@ -6,7 +6,9 @@ struct AppShellView: View {
     @StateObject private var language = AppLanguageStore.shared
     @StateObject private var swipeSettings = MessageSwipeSettingsStore.shared
     @StateObject private var appSettings = AppSettingsStore.shared
+    @StateObject private var tabBar = MainTabBarStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showTabBarCustomization = false
 
     var body: some View {
         Group {
@@ -23,36 +25,37 @@ struct AppShellView: View {
                 }
             case .main:
                 ZStack(alignment: .top) {
-                    TabView(selection: $vm.mainTabIndex) {
-                        ChatListView(vm: vm)
-                            .tag(0)
-                            .tabItem {
-                                Label(AppText.tr("Чаты", "Chats"), systemImage: "bubble.left.and.bubble.right")
+                    VStack(spacing: 0) {
+                        ZStack {
+                            tabContent(isActive: tabBar.selectedTab == .chats) {
+                                ChatListView(vm: vm)
                             }
 
-                        ContactsListView(vm: vm)
-                            .tag(1)
-                            .tabItem {
-                                Label(AppText.tr("Контакты", "Contacts"), systemImage: "person.2.fill")
+                            tabContent(isActive: tabBar.selectedTab == .contacts) {
+                                ContactsListView(vm: vm)
                             }
 
-                        GlobalSearchView(vm: vm)
-                            .tag(2)
-                            .tabItem {
-                                Label(AppText.tr("Поиск", "Search"), systemImage: "magnifyingglass")
+                            tabContent(isActive: tabBar.selectedTab == .search) {
+                                GlobalSearchView(vm: vm)
                             }
 
-                        NavigationStack {
-                            SettingsView(vm: vm)
+                            tabContent(isActive: tabBar.selectedTab == .settings) {
+                                NavigationStack {
+                                    SettingsView(vm: vm)
+                                }
+                            }
                         }
-                        .tag(3)
-                        .tabItem {
-                            Label(AppText.tr("Настройки", "Settings"), systemImage: "gearshape")
-                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)")
+
+                        CustomMainTabBar(
+                            store: tabBar,
+                            accent: appearance.accentColor,
+                            onCustomize: { showTabBarCustomization = true }
+                        )
                     }
-                    .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)")
                     .tint(appearance.accentColor)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.88), value: vm.mainTabIndex)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.88), value: tabBar.selectedTab)
 
                     if let toast = vm.incomingToast {
                         IncomingMessageToastView(
@@ -73,9 +76,16 @@ struct AppShellView: View {
                 .sheet(item: $vm.premiumUpsellContext) { context in
                     PremiumUpsellSheet(context: context)
                 }
+                .sheet(isPresented: $showTabBarCustomization) {
+                    TabBarCustomizationView(store: tabBar)
+                }
                 .onAppear {
-                    ChromeAppearance.configureTabBar()
                     ChromeAppearance.configureNavigationBar()
+                }
+                .onChange(of: tabBar.selectedTab) { tab in
+                    if tab == .chats {
+                        Task { await vm.ensureChatFoldersVisible() }
+                    }
                 }
             }
         }
@@ -95,6 +105,14 @@ struct AppShellView: View {
                 Task { await vm.configurePushAndBackground() }
             }
         }
+    }
+
+    @ViewBuilder
+    private func tabContent<Content: View>(isActive: Bool, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .opacity(isActive ? 1 : 0)
+            .allowsHitTesting(isActive)
+            .accessibilityHidden(!isActive)
     }
 }
 
