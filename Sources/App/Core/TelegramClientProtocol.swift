@@ -2,6 +2,7 @@ import Foundation
 
 protocol TelegramClientProtocol {
     func configure(apiId: Int, apiHash: String) async throws
+    func shutdown() async
     func currentAuthState() -> AuthState
     func setEventHandler(_ handler: @escaping (TelegramEvent) -> Void)
     func submitPhone(_ phone: String) async throws

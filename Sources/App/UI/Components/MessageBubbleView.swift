@@ -417,11 +417,13 @@ struct MessageBubbleView: View {
             : appearance.accentColor
 
         if let origin, origin.isNavigable, onForwardOriginTap != nil {
-            (Text(prefix + " ")
-                .foregroundStyle(.secondary)
-            + Text(name)
-                .foregroundStyle(accent)
-                .fontWeight(.semibold))
+            HStack(spacing: 0) {
+                Text(prefix + " ")
+                    .foregroundStyle(.secondary)
+                Text(name)
+                    .foregroundStyle(accent)
+                    .fontWeight(.semibold)
+            }
             .font(.caption2)
             .onTapGesture {
                 onForwardOriginTap?(origin)
