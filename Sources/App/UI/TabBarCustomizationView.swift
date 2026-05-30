@@ -10,8 +10,8 @@ struct TabBarCustomizationView: View {
             List {
                 Section {
                     Text(AppText.tr(
-                        "Удерживайте нижнюю панель, чтобы открыть эти настройки. Перетаскивайте вкладки для изменения порядка.",
-                        "Long-press the bottom bar to open these settings. Drag tabs to reorder them."
+                        "Удерживайте нижнюю панель или откройте этот экран в Настройках. Перетаскивайте вкладки для изменения порядка.",
+                        "Long-press the bottom bar or open this screen in Settings. Drag tabs to reorder them."
                     ))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

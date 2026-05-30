@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var vm: AppViewModel
     @ObservedObject private var appSettings = AppSettingsStore.shared
+    @ObservedObject private var tabBar = MainTabBarStore.shared
     @EnvironmentObject private var languageStore: AppLanguageStore
 
     var body: some View {
@@ -167,6 +168,16 @@ struct SettingsView: View {
                         icon: "paintpalette.fill",
                         title: AppText.tr("Оформление", "Appearance"),
                         subtitle: AppText.tr("Тема, фоны, пузыри", "Theme, backgrounds, bubbles")
+                    )
+                }
+
+                NavigationLink {
+                    TabBarCustomizationView(store: tabBar)
+                } label: {
+                    settingsLinkLabel(
+                        icon: "dock.rectangle",
+                        title: AppText.tr("Панель вкладок", "Tab bar"),
+                        subtitle: AppText.tr("Видимость и порядок вкладок", "Tab visibility and order")
                     )
                 }
 

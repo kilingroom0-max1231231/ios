@@ -25,37 +25,21 @@ struct AppShellView: View {
                 }
             case .main:
                 ZStack(alignment: .top) {
-                    VStack(spacing: 0) {
-                        ZStack {
-                            tabContent(isActive: tabBar.selectedTab == .chats) {
-                                ChatListView(vm: vm)
-                            }
-
-                            tabContent(isActive: tabBar.selectedTab == .contacts) {
-                                ContactsListView(vm: vm)
-                            }
-
-                            tabContent(isActive: tabBar.selectedTab == .search) {
-                                GlobalSearchView(vm: vm)
-                            }
-
-                            tabContent(isActive: tabBar.selectedTab == .settings) {
-                                NavigationStack {
-                                    SettingsView(vm: vm)
+                    TabView(selection: $tabBar.selectedTab) {
+                        ForEach(tabBar.visibleTabs) { tab in
+                            tabRoot(for: tab)
+                                .tag(tab)
+                                .tabItem {
+                                    Label(tab.title, systemImage: tab.systemImage)
                                 }
-                            }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)")
-
-                        CustomMainTabBar(
-                            store: tabBar,
-                            accent: appearance.accentColor,
-                            onCustomize: { showTabBarCustomization = true }
-                        )
                     }
+                    .id("\(language.preferredLanguage)|\(appearance.paletteFingerprint)|\(tabBar.layoutFingerprint)")
                     .tint(appearance.accentColor)
                     .animation(.spring(response: 0.3, dampingFraction: 0.88), value: tabBar.selectedTab)
+                    .tabBarLongPressLifecycle(
+                        refreshToken: "\(language.preferredLanguage)|\(appearance.paletteFingerprint)|\(tabBar.layoutFingerprint)|\(tabBar.selectedTab.rawValue)"
+                    )
 
                     if let toast = vm.incomingToast {
                         IncomingMessageToastView(
@@ -80,9 +64,20 @@ struct AppShellView: View {
                     TabBarCustomizationView(store: tabBar)
                 }
                 .onAppear {
+                    ChromeAppearance.configureTabBar()
                     ChromeAppearance.configureNavigationBar()
+                    TabBarLongPressInstaller.shared.refresh()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .openTabBarCustomization)) { _ in
+                    showTabBarCustomization = true
+                }
+                .onChange(of: showTabBarCustomization) { isPresented in
+                    if !isPresented {
+                        TabBarLongPressInstaller.shared.refresh()
+                    }
                 }
                 .onChange(of: tabBar.selectedTab) { tab in
+                    TabBarLongPressInstaller.shared.refresh()
                     if tab == .chats {
                         Task { await vm.ensureChatFoldersVisible() }
                     }
@@ -99,6 +94,9 @@ struct AppShellView: View {
         }
         .onChange(of: scenePhase) { phase in
             vm.handleScenePhase(phase)
+            if phase == .active {
+                TabBarLongPressInstaller.shared.refresh()
+            }
         }
         .onChange(of: appSettings.enablePushNotifications) { enabled in
             if enabled {
@@ -108,11 +106,19 @@ struct AppShellView: View {
     }
 
     @ViewBuilder
-    private func tabContent<Content: View>(isActive: Bool, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .opacity(isActive ? 1 : 0)
-            .allowsHitTesting(isActive)
-            .accessibilityHidden(!isActive)
+    private func tabRoot(for tab: MainTab) -> some View {
+        switch tab {
+        case .chats:
+            ChatListView(vm: vm)
+        case .contacts:
+            ContactsListView(vm: vm)
+        case .search:
+            GlobalSearchView(vm: vm)
+        case .settings:
+            NavigationStack {
+                SettingsView(vm: vm)
+            }
+        }
     }
 }
 

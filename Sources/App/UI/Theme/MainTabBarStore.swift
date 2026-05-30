@@ -87,6 +87,12 @@ final class MainTabBarStore: ObservableObject {
         tabOrder.filter { !hiddenTabs.contains($0) }
     }
 
+    var layoutFingerprint: String {
+        let order = tabOrder.map(\.rawValue).joined(separator: ",")
+        let hidden = hiddenTabs.map(\.rawValue).sorted().joined(separator: ",")
+        return "\(order)|\(hidden)"
+    }
+
     private enum Key {
         static let tabOrder = "app.mainTabBar.tabOrder"
         static let hiddenTabs = "app.mainTabBar.hiddenTabs"
@@ -124,16 +130,23 @@ final class MainTabBarStore: ObservableObject {
 
     func setVisible(_ tab: MainTab, visible: Bool) {
         if visible {
-            hiddenTabs.remove(tab)
+            guard hiddenTabs.contains(tab) else { return }
+            var updated = hiddenTabs
+            updated.remove(tab)
+            hiddenTabs = updated
             return
         }
         guard visibleTabs.count > 1 else { return }
-        hiddenTabs.insert(tab)
-        normalizeSelection()
+        guard !hiddenTabs.contains(tab) else { return }
+        var updated = hiddenTabs
+        updated.insert(tab)
+        hiddenTabs = updated
     }
 
     func moveTabs(from source: IndexSet, to destination: Int) {
-        tabOrder.move(fromOffsets: source, toOffset: destination)
+        var updated = tabOrder
+        updated.move(fromOffsets: source, toOffset: destination)
+        tabOrder = updated
     }
 
     func selectLegacyIndex(_ index: Int) {
