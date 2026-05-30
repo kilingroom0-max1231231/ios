@@ -135,12 +135,12 @@ struct UserPrivacyRules: Identifiable, Equatable {
     }
 
     /// Whether the Always Allow exceptions row is shown (Telegram-style).
-    func showsAlwaysAllowSection -> Bool {
+    var showsAlwaysAllowSection: Bool {
         baseVisibility == .nobody || baseVisibility == .contacts
     }
 
     /// Whether the Never Allow exceptions row is shown.
-    func showsNeverAllowSection -> Bool {
+    var showsNeverAllowSection: Bool {
         baseVisibility == .everybody || baseVisibility == .contacts
     }
 }
